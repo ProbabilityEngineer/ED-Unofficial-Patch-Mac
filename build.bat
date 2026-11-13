@@ -717,7 +717,7 @@ python tools\compile_cache.py --prune --keep thunks.obj --keep weapon_ui_getter_
     "src\d3d11\exposure_fix.cpp" "src\d3d11\vscreen.cpp" ^
     "src\d3d11\glitch_frame.cpp" ^
     "src\d3d11\transition_flash_eye_base.cpp" ^
-    "src\d3d11\native_on_foot_hooks.cpp" "src\d3d11\native_preview_camera.cpp" "src\d3d11\native_on_foot.cpp" "src\d3d11\onfoot_recorder.cpp" ^
+    "src\d3d11\native_preview_camera.cpp" ^
     "src\d3d11\vscreen_res.cpp" "src\common\vscreen_auto_state.cpp" "src\d3d11\vscreen_footprint.cpp" ^
     "src\d3d11\binding_shadow.cpp" ^
     "src\d3d11\vr_runtime.cpp" ^
