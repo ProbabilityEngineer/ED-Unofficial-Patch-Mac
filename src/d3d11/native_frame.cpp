@@ -691,7 +691,7 @@ void nativeFrameSetNowPose(uint32_t mode) {
     const uint32_t was = g_nowPoseMode.exchange(mode, std::memory_order_relaxed);
     if (!logged || was != mode) {
         logged = true;
-        edvr::Log::get().note("now pose: %s (live, fix.now_pose)", kNames[mode]);
+        edvr::Log::get().note("now pose: %s", kNames[mode]);   // ed-metalfx: its key went with the on-foot system
     }
 }
 void nativeFrameSetEyeAlign(const float o[3], uint32_t serial) {
