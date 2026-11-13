@@ -3,7 +3,7 @@
 #include "../common/gpu_frame_protocol.h"
 #include "../common/log.h"
 #include "../common/guard.h"
-#include "../openxr/native_cpu_trace.h"
+#include "../common/native_cpu_trace.h"
 #include <atomic>
 #include <algorithm>
 #include <limits>

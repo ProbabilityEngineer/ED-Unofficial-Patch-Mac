@@ -3,20 +3,15 @@
 # Untagged runs package the runner-only 0.0.0-ci proof version.
 name: Native Windows build
 
+# ed-metalfx: run by hand only, and only the graphics DLL route (stage 1 of the strip
+# removed the VR runtime the full build still names). No push, tag or PR builds.
 on:
-  push:
-    branches:
-      - main
-      - 'codex/release-*'
-    tags:
-      - 'v*'
-  pull_request:
   workflow_dispatch:
     inputs:
       graphics_only:
-        description: 'Diagnostic compile only: d3d11.dll, no other EDVR binaries or packages'
+        description: 'Diagnostic compile only: d3d11.dll (the only route ed-metalfx builds for now)'
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
@@ -37,7 +32,7 @@ jobs:
   # required checks: each pull request runs exactly one of them. A release
   # branch's push builds its head, while its pull request tests the merge with main.
   changes:
-    if: ${{ !inputs.graphics_only }}
+    if: ${{ false }}   # ed-metalfx: the full build is disabled until a later strip stage rewrites it
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -102,7 +97,7 @@ jobs:
 
   build:
     needs: changes
-    if: ${{ !inputs.graphics_only && needs.changes.outputs.build == 'true' }}
+    if: ${{ false }}   # ed-metalfx: the full build is disabled until a later strip stage rewrites it
     runs-on: windows-2022
     timeout-minutes: 180
     defaults:
@@ -395,7 +390,7 @@ jobs:
 
   graphics_compile_only:
     name: d3d11.dll only (diagnostic, unvalidated)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.graphics_only && github.repository == 'ProbabilityEngineer/edvr-unofficial-patch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.graphics_only && github.repository == 'ProbabilityEngineer/ed-metalfx' }}
     runs-on: windows-2022
     timeout-minutes: 60
     defaults:

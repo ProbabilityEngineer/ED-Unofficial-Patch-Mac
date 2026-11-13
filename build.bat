@@ -98,6 +98,14 @@ if defined EDVR_GRAPHICS_ONLY if defined EDVR_RIG (
     echo [edvr] ERROR: --graphics-only cannot run test rigs
     exit /b 1
 )
+REM ed-metalfx (stage 1 of the strip): the VR runtime, its OpenXR/OpenVR sources and
+REM their test rigs are gone, so only the graphics DLL route builds. The full build,
+REM the rigs and the installer below still name the removed files; they are
+REM unreachable until a later stage rewrites them.
+if not defined EDVR_GRAPHICS_ONLY (
+    echo [edvr] ERROR: ed-metalfx builds only with --compile-only --graphics-only for now
+    exit /b 1
+)
 if defined EDVR_DLL_ONLY if defined DO_CLEAN (
     echo [edvr] ERROR: --dll-only cannot be combined with --clean
     exit /b 1
@@ -422,18 +430,14 @@ if not exist "%OBJ%\temporalshader" mkdir "%OBJ%\temporalshader"
     "tools\temporal_shader_build\temporal_shader_build.cpp" ^
     /link /INCREMENTAL:NO
 if errorlevel 1 ( echo [edvr] ERROR: temporal shader compiler build failed & exit /b 1 )
-REM The native runtime's stereo-renderer shaders (src\openxr\stereo_shader_source.h; five from F106) are compiled here too, into a header of their own
+REM (ed-metalfx: the VR runtime's stereo-renderer shaders are no longer compiled here; the note below is history.)
+REM The native runtime's stereo-renderer shaders (src\openxr\stereo_shader_source.h; five from F106) were compiled here too, into a header of their own
 REM (--stereo-output), so edvr_openxr_runtime.dll creates them from bytes and carries no HLSL compiler: it imported d3dcompiler_47.dll until 2026-10-01
 REM for four D3DCompile calls. The runtime and the two rigs that compile d3d11_stereo.cpp find the header through /I"%GEN%"; the PE gate below fails the
 REM build if either DLL imports the compiler again.
 "%OBJ%\temporalshader\temporal_shader_build.exe" --self-test || exit /b 1
-if defined EDVR_GRAPHICS_ONLY (
-    "%OBJ%\temporalshader\temporal_shader_build.exe" --output "%GEN%\temporal_shader_bytecode.h" --dry-run || exit /b 1
-    "%OBJ%\temporalshader\temporal_shader_build.exe" --output "%GEN%\temporal_shader_bytecode.h" || exit /b 1
-) else (
-    "%OBJ%\temporalshader\temporal_shader_build.exe" --output "%GEN%\temporal_shader_bytecode.h" --stereo-output "%GEN%\openxr_stereo_shader_bytecode.h" --dry-run || exit /b 1
-    "%OBJ%\temporalshader\temporal_shader_build.exe" --output "%GEN%\temporal_shader_bytecode.h" --stereo-output "%GEN%\openxr_stereo_shader_bytecode.h" || exit /b 1
-)
+"%OBJ%\temporalshader\temporal_shader_build.exe" --output "%GEN%\temporal_shader_bytecode.h" --dry-run || exit /b 1
+"%OBJ%\temporalshader\temporal_shader_build.exe" --output "%GEN%\temporal_shader_bytecode.h" || exit /b 1
 
 python tools\build_phases.py --mark "%PHASES%" "shader generation"
 echo [edvr] === d3d11.dll ===
@@ -785,15 +789,10 @@ REM this is the cheap, honest way to look like one: say who built it and what
 REM it is. Generated, like the installer's own block, so the version string
 REM stays git describe's and nothing here hand-maintains it.
 if not exist "%OBJ%\d3d11" mkdir "%OBJ%\d3d11"
-if not exist "%OBJ%\openxr_module" mkdir "%OBJ%\openxr_module"
 python "tools\gen_installer_rc.py" --version-rc graphics --version "%EDVR_VER%" --out "%GEN%"
 if errorlevel 1 ( echo [edvr] ERROR: graphics version resource generation failed & exit /b 1 )
-python "tools\gen_installer_rc.py" --version-rc runtime --version "%EDVR_VER%" --out "%GEN%"
-if errorlevel 1 ( echo [edvr] ERROR: runtime version resource generation failed & exit /b 1 )
 rc.exe /nologo /fo "%OBJ%\d3d11\version.res" "%GEN%\version_graphics.rc"
 if errorlevel 1 ( echo [edvr] ERROR: rc.exe failed on the graphics version resource & exit /b 1 )
-rc.exe /nologo /fo "%OBJ%\openxr_module\version.res" "%GEN%\version_runtime.rc"
-if errorlevel 1 ( echo [edvr] ERROR: rc.exe failed on the runtime version resource & exit /b 1 )
 
 link.exe /nologo /DLL /MACHINE:X64 /INCREMENTAL:NO %EDVR_CPU_LINK% /PDB:"%BUILD%\d3d11.pdb" ^
     /DEF:"%GEN%\edvr_d3d11.def" /OUT:"%BUILD%\d3d11.dll" ^

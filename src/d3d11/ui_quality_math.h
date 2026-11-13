@@ -21,7 +21,7 @@
 #include <cmath>
 #include <cstdint>
 
-#include "../openxr/game_render_size.h"  // gameFacingDimension: what the game is told
+#include "../common/game_render_size.h"  // gameFacingDimension: what the game is told
 
 namespace edvr {
 
