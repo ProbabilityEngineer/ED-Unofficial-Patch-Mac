@@ -501,11 +501,7 @@ python "tools\gen_exports.py" --source "%SystemRoot%\System32\d3d11.dll" ^
     --extra-export edvrPluginDispatchUpdate ^
     --extra-export edvrPluginDispatchRenderEye ^
     --extra-export edvrPluginDispatchFilterInput ^
-    --extra-export edvrPluginHasActivePlugins ^
-    --extra-export edvrNoteNativeEyeShare ^
-    --extra-export edvrNoteNativeViewCircle ^
-    --extra-export edvrNoteNativeScopeZoom ^
-    --extra-export edvrOnFootRecordPush
+    --extra-export edvrPluginHasActivePlugins
 if errorlevel 1 ( echo [edvr] ERROR: export generation failed & exit /b 1 )
 
 REM Both halves link "%OBJ%\<half>\*.obj" -- a wildcard -- and every build
