@@ -109,8 +109,6 @@ struct LegacyContract {
 #include "fixed_shield_ripple_variants.h"
 #include "fixed_glow_feed_variants.h"
 #include "fixed_visor_axis_variants.h"
-#include "fixed_desktop_window_variants.h"
-#include "fixed_scope_zoom_variants.h"
 #include "fixed_srv_turret_variants.h"
 #include "fixed_galaxy_map_variants.h"
 #include "fixed_cockpit_glass_variants.h"
@@ -339,10 +337,6 @@ static std::vector<Variant> fixedVariants(const std::string& core) {
     variants.insert(variants.end(), glowFeed.begin(), glowFeed.end());
     const auto visorAxis = visorAxisVariants();
     variants.insert(variants.end(), visorAxis.begin(), visorAxis.end());
-    const auto desktopWindow = desktopWindowVariants();
-    variants.insert(variants.end(), desktopWindow.begin(), desktopWindow.end());
-    const auto scopeZoom = scopeZoomVariants();
-    variants.insert(variants.end(), scopeZoom.begin(), scopeZoom.end());
     const auto srvTurret = srvTurretHudVariants();
     variants.insert(variants.end(), srvTurret.begin(), srvTurret.end());
     const auto galaxyMap = galaxyMapVariants();
@@ -612,7 +606,7 @@ static void selfTest() {
     coreLegacy.insert(coreLegacy.end(), originalCore.begin(), originalCore.end());
     coreLegacy.insert(coreLegacy.end(), originalExtra.begin(), originalExtra.end());
     auto coreFixed = fixedVariants(extractCore(edvr::kTemporalCsHlsl));
-    check(originalCore.size() == 28 && originalExtra.size() == 12 && coreFixed.size() == 107 && coreLegacy.size() + 60 == coreFixed.size(),
+    check(originalCore.size() == 28 && originalExtra.size() == 12 && coreFixed.size() == 102 && coreLegacy.size() + 55 == coreFixed.size(),
           "all original fixed shader contracts, three bounded diagnostics, six flat foreground shaders, the supercruise bars' geometry shader, the foreground map's four sibling-pass compute shaders (donor, fit and the shadow's two), the sky ring's compute shader, the UI layer's in-place composite, the explosion billboards' five facing transcriptions the sharp weapons' two source-pass shaders, the shield ripple's door pass, the HUD bloom feed pass, the star light pass, the visor's axis-centred vertex shader, the desktop window's two draw shaders, the scope lens's three compute passes, the SRV turret HUD's eleven geometry shaders, the VR maps' twelve (five transcribed vertex shaders, the probe's vertex and pixel shader, the sprites' depth issue's two pixel shaders, the System Map's marker vertex shader and the cut-out's vertex and pixel shader) and the legacy cockpit glass's three pixel shaders (intact, ice overlay, condensation overlay) are registered");
     for(size_t i=0;i<coreFixed.size();++i)for(size_t j=0;j<i;++j)
         check(std::strcmp(coreFixed[i].symbol,coreFixed[j].symbol)!=0,"generated shader symbols do not collide");
@@ -1057,92 +1051,6 @@ static void selfTest() {
         }
     }
 
-    // visual.desktop_window's draw (src/d3d11/desktop_window_shaders.h): new, held to its own contract -- the symbols, source names, entry, profile and flags, the text
-    // each compiles, the vertex stage (SV_VertexID in, position and UV out, no resource) and the pixel stage (the eye texture at t0, a sampler at s0 and the one
-    // constant buffer Shown at b0 holding the bounds and the destination pixel's step, 32 bytes).
-    {
-        struct Src { const char* symbol; const char* sourceName; const char* source; const char* profile; };
-        const Src src[2] = {{"kDesktopWindowVsBytecode", "desktop_window_vs", edvr::kDesktopWindowVsHlsl, "vs_5_0"},
-                            {"kDesktopWindowPsBytecode", "desktop_window_ps", edvr::kDesktopWindowPsHlsl, "ps_5_0"}};
-        for (size_t i = 0; i < 2; ++i) {
-            auto& shader = coreFixed[coreLegacy.size() + 27 + i];
-            check(!std::strcmp(shader.symbol, src[i].symbol) && !std::strcmp(shader.sourceName, src[i].sourceName) &&
-                  !std::strcmp(shader.entry, "main") && !std::strcmp(shader.profile, src[i].profile) && shader.alternate == src[i].source &&
-                  shader.macros == nullptr && !shader.flags1 && !shader.flags2,
-                  "each desktop window shader has its distinct symbol and exact source/stage contract");
-            check(compile(compiler.fn, shader.alternate, shader, true) && shader.bytes.size() > 4 && !std::memcmp(shader.bytes.data(), "DXBC", 4),
-                  "each desktop window shader compiles to fixed DXBC");
-            if (reflect && !shader.bytes.empty()) {
-                ComPtr<ID3D11ShaderReflection> reflection;
-                D3D11_SHADER_DESC desc{};
-                const HRESULT hr = reflect(shader.bytes.data(), shader.bytes.size(), __uuidof(ID3D11ShaderReflection),
-                                           reinterpret_cast<void**>(reflection.GetAddressOf()));
-                const D3D11_SHADER_VERSION_TYPE want = i == 0 ? D3D11_SHVER_VERTEX_SHADER : D3D11_SHVER_PIXEL_SHADER;
-                bool ok = SUCCEEDED(hr) && reflection && SUCCEEDED(reflection->GetDesc(&desc)) &&
-                          D3D11_SHVER_GET_TYPE(desc.Version) == want && D3D11_SHVER_GET_MAJOR(desc.Version) == 5;
-                if (i == 0) {
-                    ok = ok && desc.ConstantBuffers == 0 && desc.BoundResources == 0;
-                } else if (ok) {
-                    D3D11_SHADER_INPUT_BIND_DESC eye{}, smp{}, cb{};
-                    D3D11_SHADER_BUFFER_DESC bufferDesc{};
-                    ID3D11ShaderReflectionConstantBuffer* cbuffer = reflection->GetConstantBufferByName("Shown");
-                    ok = desc.ConstantBuffers == 1 && desc.BoundResources == 3 &&
-                         SUCCEEDED(reflection->GetResourceBindingDescByName("Eye", &eye)) && eye.Type == D3D_SIT_TEXTURE && eye.BindPoint == 0 &&
-                         SUCCEEDED(reflection->GetResourceBindingDescByName("Linear", &smp)) && smp.Type == D3D_SIT_SAMPLER && smp.BindPoint == 0 &&
-                         SUCCEEDED(reflection->GetResourceBindingDescByName("Shown", &cb)) && cb.Type == D3D_SIT_CBUFFER && cb.BindPoint == 0 &&
-                         cbuffer && SUCCEEDED(cbuffer->GetDesc(&bufferDesc)) && bufferDesc.Size == 32;
-                }
-                check(ok, "the desktop window shaders: the vertex shader binds nothing, the pixel shader reads the eye at t0 with a sampler at s0 and the 32-byte Shown buffer at b0");
-            }
-        }
-    }
-
-    // The scope lens's three compute passes (src/d3d11/scope_zoom_shaders.h; src/d3d11/scope_zoom.cpp; the third is B3's magnify pass with the left eye's zoomed picture and the depth): new, held to their own contract -- the symbols, source names, entry, profile
-    // and flags, the text each compiles, the group each is dispatched with (128 threads in one group for the rays; 32x8 for the magnify) and the bindings scope_zoom.cpp sets: the
-    // rays pass reads the depth at t0 and fills the raw buffer at u0 with its 80-byte block at b0; the magnify pass reads the window's copy at t0 and the raw buffer at t1, writes
-    // the picture as a typed UAV at u0, filters with the sampler at s0 and has its 48-byte block at b0.
-    {
-        struct Binding { const char* name; D3D_SHADER_INPUT_TYPE type; UINT slot; };
-        struct Pass { const char* symbol; const char* sourceName; const char* source; UINT gx, gy; UINT cbSize; std::vector<Binding> bindings; };
-        const Pass passes[3] = {
-            {"kScopeZoomRaysBytecode", "scope_zoom_rays_cs", edvr::kScopeZoomRaysCsHlsl, 128, 1, sizeof(edvr::ScopeZoomRaysParams),
-             {{"Z", D3D_SIT_TEXTURE, 0}, {"Lens", D3D_SIT_UAV_RWBYTEADDRESS, 0}, {"P", D3D_SIT_CBUFFER, 0}}},
-            {"kScopeZoomMagnifyBytecode", "scope_zoom_magnify_cs", edvr::kScopeZoomMagnifyCsHlsl, 32, 8, sizeof(edvr::ScopeZoomMagnifyParams),
-             {{"Copy", D3D_SIT_TEXTURE, 0}, {"Lens", D3D_SIT_BYTEADDRESS, 1}, {"Frame", D3D_SIT_UAV_RWTYPED, 0}, {"Lin", D3D_SIT_SAMPLER, 0}, {"P", D3D_SIT_CBUFFER, 0}}},
-            {"kScopeZoomMagnifyB3Bytecode", "scope_zoom_magnify_b3_cs", edvr::kScopeZoomMagnifyB3CsHlsl, 32, 8, sizeof(edvr::ScopeZoomMagnifyB3Params),
-             {{"Copy", D3D_SIT_TEXTURE, 0}, {"Lens", D3D_SIT_BYTEADDRESS, 1}, {"Z", D3D_SIT_TEXTURE, 2}, {"Left", D3D_SIT_TEXTURE, 3}, {"Frame", D3D_SIT_UAV_RWTYPED, 0},
-              {"Lin", D3D_SIT_SAMPLER, 0}, {"P", D3D_SIT_CBUFFER, 0}}}};
-        for (size_t i = 0; i < 3; ++i) {
-            auto& shader = coreFixed[coreLegacy.size() + 29 + i];
-            check(!std::strcmp(shader.symbol, passes[i].symbol) && !std::strcmp(shader.sourceName, passes[i].sourceName) &&
-                  !std::strcmp(shader.entry, "main") && !std::strcmp(shader.profile, "cs_5_0") && shader.alternate == passes[i].source &&
-                  shader.macros == nullptr && !shader.flags1 && !shader.flags2,
-                  "each scope lens pass has its distinct symbol and exact source/stage contract");
-            check(compile(compiler.fn, shader.alternate, shader, true) && shader.bytes.size() > 4 && !std::memcmp(shader.bytes.data(), "DXBC", 4),
-                  "each scope lens pass compiles to fixed DXBC");
-            if (reflect && !shader.bytes.empty()) {
-                ComPtr<ID3D11ShaderReflection> reflection;
-                D3D11_SHADER_DESC desc{};
-                const HRESULT hr = reflect(shader.bytes.data(), shader.bytes.size(), __uuidof(ID3D11ShaderReflection),
-                                           reinterpret_cast<void**>(reflection.GetAddressOf()));
-                UINT x = 0, y = 0, z = 0;
-                if (reflection) reflection->GetThreadGroupSize(&x, &y, &z);
-                bool ok = SUCCEEDED(hr) && reflection && SUCCEEDED(reflection->GetDesc(&desc)) &&
-                          D3D11_SHVER_GET_TYPE(desc.Version) == D3D11_SHVER_COMPUTE_SHADER && D3D11_SHVER_GET_MAJOR(desc.Version) == 5 &&
-                          x == passes[i].gx && y == passes[i].gy && z == 1;
-                for (size_t j = 0; ok && j < passes[i].bindings.size(); ++j) {
-                    D3D11_SHADER_INPUT_BIND_DESC bind{};
-                    ok = SUCCEEDED(reflection->GetResourceBindingDescByName(passes[i].bindings[j].name, &bind)) && bind.Type == passes[i].bindings[j].type &&
-                         bind.BindPoint == passes[i].bindings[j].slot && bind.BindCount == 1;
-                }
-                D3D11_SHADER_BUFFER_DESC bufferDesc{};
-                ID3D11ShaderReflectionConstantBuffer* cbuffer = ok ? reflection->GetConstantBufferByName("P") : nullptr;
-                check(ok && cbuffer && SUCCEEDED(cbuffer->GetDesc(&bufferDesc)) && bufferDesc.Size == passes[i].cbSize,
-                      "the scope lens passes keep their group sizes, their inputs and outputs at the slots scope_zoom.cpp sets them at, and their parameter blocks at b0");
-            }
-        }
-    }
-
     // The SRV turret HUD's eleven pass-through geometry shaders (src/d3d11/srv_turret_hud_shader.h; issue 140): new, so held to their own contract -- the symbol, source name, entry,
     // profile and flags, the text each compiles, and what its DXBC reflects: a Shader Model 5 geometry shader that takes triangles, emits at most three vertices as a triangle
     // strip, takes the output signature of its family's vertex shader element for element and register for register (srv_turret_math.h kSignatures, read from the fxc disassembly
@@ -1167,7 +1075,7 @@ static void selfTest() {
             {"kSrvTurretHudGsKBytecode", "srv turret hud pass-through K", edvr::kSrvTurretHudGsK},
         };
         for (size_t i = 0; i < stm::kSignatureCount; ++i) {
-            auto& shader = coreFixed[coreLegacy.size() + 32 + i];
+            auto& shader = coreFixed[coreLegacy.size() + 27 + i];
             check(!std::strcmp(shader.symbol, contracts[i].symbol) && !std::strcmp(shader.sourceName, contracts[i].name) &&
                   !std::strcmp(shader.entry, "main") && !std::strcmp(shader.profile, "gs_5_0") && shader.alternate == contracts[i].source &&
                   shader.macros == nullptr && !shader.flags1 && !shader.flags2,
@@ -1264,7 +1172,7 @@ static void selfTest() {
             {"kMapProbeStickyPsBytecode", "map_probe_sticky_ps", edvr::kMapProbeStickyPS, "ps_5_0", 0, 0, 0, 0, false, 1},
         };
         for (size_t i = 0; i < 14; ++i) {
-            auto& shader = coreFixed[coreLegacy.size() + 43 + i];
+            auto& shader = coreFixed[coreLegacy.size() + 38 + i];
             check(!std::strcmp(shader.symbol, maps[i].symbol) && !std::strcmp(shader.sourceName, maps[i].sourceName) && !std::strcmp(shader.entry, "main") &&
                   !std::strcmp(shader.profile, maps[i].profile) && shader.alternate == maps[i].source && shader.macros == nullptr && !shader.flags1 && !shader.flags2,
                   "each Galaxy Map shader has its distinct symbol and exact source/stage contract");
@@ -1333,7 +1241,7 @@ static void selfTest() {
             {"kCockpitGlassCondensationOverlayPsBytecode", "cockpit_glass_condensation_overlay_ps", condensationMacros, true, 7, 11},
         };
         for (size_t v = 0; v < 3; ++v) {
-            auto& shader = coreFixed[coreLegacy.size() + 57 + v];
+            auto& shader = coreFixed[coreLegacy.size() + 52 + v];
             const GlassContract& want = contracts[v];
             check(!std::strcmp(shader.symbol, want.symbol) && !std::strcmp(shader.sourceName, want.sourceName) &&
                   !std::strcmp(shader.entry, "main") && !std::strcmp(shader.profile, "ps_5_0") && shader.alternate == edvr::kCockpitGlassLegacyPsHlsl &&
