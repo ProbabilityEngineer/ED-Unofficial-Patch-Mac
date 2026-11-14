@@ -1,5 +1,6 @@
 #pragma once
 #include "../../src/d3d11/flat_forward_light.h"
+#include "../../src/d3d11/flat_om_generation.h"
 #include <cstdio>
 #include <fstream>
 #include <iterator>
@@ -95,7 +96,19 @@ inline int run() {
     const auto inOrderIn=[](const std::string& t,const char* a,const char* b){const auto x=t.find(a),y=t.find(b);return x!=std::string::npos&&y!=std::string::npos&&x<y;};
     expect(key.find("flatOmSetGeneration()")!=std::string::npos&&key.find("bindingGeneration(BindSlot::Rtv0)")!=std::string::npos&&
            key.find("bindingGeneration(BindSlot::Dsv0)")!=std::string::npos&&key.find("s.prefix.frame")!=std::string::npos,
-           "the held output-merger answers are keyed on the setter, render-target and depth generations and the frame");
+           "the held written targets are keyed on the setter, render-target and depth generations and the frame");
+    // Since 2026-11-14 the depth answer has its own key: target sets move its view half, depth-stencil sets its
+    // state half, blend sets neither; a depth-stencil set the owner's hook recorded replaces the held state.
+    const auto depthKeyBegin=source.find("ForwardDepthKey forwardDepthKey(const State& s)");
+    const std::string depthKey=depthKeyBegin!=std::string::npos?source.substr(depthKeyBegin,300):std::string{};
+    expect(depthKey.find("flatOmTargetGeneration()")!=std::string::npos&&depthKey.find("flatOmDepthStateGeneration()")!=std::string::npos&&
+           depthKey.find("bindingGeneration(BindSlot::Rtv0)")!=std::string::npos&&depthKey.find("bindingGeneration(BindSlot::Dsv0)")!=std::string::npos&&
+           depthKey.find("s.prefix.frame")!=std::string::npos&&depthKey.find("flatOmSetGeneration()")==std::string::npos,
+           "the held depth answer is keyed on the target and depth-state counters, the binding generations and the frame");
+    expect(inOrderIn(om,"f.depthKey.sameView(key)&&f.depthKey.depthState!=key.depthState","flatOmDepthStateRecorded(s.context.Get(),recorded)")&&
+           inOrderIn(om,"flatOmDepthStateRecorded(s.context.Get(),recorded)","f.depthState=f.depthView?")&&
+           inOrderIn(om,"f.depthKey.depthState=key.depthState;","f.depthKey==key"),
+           "only a recorded depth-stencil set on the same context replaces the held state, and only with the view half held");
     expect(inOrderIn(om,"const bool cacheable=flatOmSetTracked();","f.depthKey==key")&&
            inOrderIn(om,"f.depthKey==key","flatQueryCut().plan(FlatQuery::ForwardDepth)")&&
            inOrderIn(om,"FlatQueryPlan::Shortcut","OMGetRenderTargets(0,nullptr,&dsv)")&&
@@ -105,14 +118,20 @@ inline int run() {
            "the depth view and state are asked whenever the key moved, untracked hooks always ask, and a sampled check compares");
     // The held answers are only as good as the generation: every path that can change output-merger state must
     // move it before the real call. Each real call of such a setter in the two files that make them must sit in a
-    // function that called flatOmSetNote() first (a function starts at the last column-0 line before the call).
+    // function that called flatOmSetNote first (a function starts at the last column-0 line before the call), with
+    // a kind that covers what the setter changes: the no-argument form (every counter) always does.
+    struct Setter {const char* call;const char* kind;};
     unsigned setterCalls=0,unnoted=0;std::string firstUnnoted;
     for(const char* file:{"src/d3d11/vscreen.cpp","src/d3d11/exposure_fix.cpp"}) {
         std::ifstream in(file,std::ios::binary);
         const std::string text((std::istreambuf_iterator<char>(in)),{});
-        for(const char* setter:{"realOMSetRenderTargets(","realOMSetRtvAndUav(","realOMSetBlendState(","realOMSetDepthStencilState(",
-                                "realClearState(","realExecuteCommandList(","realSwapDeviceContextState("}) {
-            for(auto at=text.find(setter);at!=std::string::npos;at=text.find(setter,at+1)) {
+        for(const Setter setter:{Setter{"realOMSetRenderTargets(","flatOmSetNote(kFlatOmTargets)"},
+                                 Setter{"realOMSetRtvAndUav(","flatOmSetNote(kFlatOmTargets)"},
+                                 Setter{"realOMSetBlendState(","flatOmSetNote(kFlatOmBlend)"},
+                                 Setter{"realOMSetDepthStencilState(","flatOmSetNote(kFlatOmDepthState)"},
+                                 Setter{"realClearState(",nullptr},Setter{"realExecuteCommandList(",nullptr},
+                                 Setter{"realSwapDeviceContextState(",nullptr}}) {
+            for(auto at=text.find(setter.call);at!=std::string::npos;at=text.find(setter.call,at+1)) {
                 size_t line=text.rfind('\n',at);size_t head=std::string::npos;
                 while(line!=std::string::npos&&line>0) {
                     const char c=text[line+1];
@@ -120,7 +139,9 @@ inline int run() {
                     line=text.rfind('\n',line-1);
                 }
                 ++setterCalls;
-                if(head==std::string::npos||text.substr(head,at-head).find("flatOmSetNote();")==std::string::npos) {
+                const std::string fn=head==std::string::npos?std::string{}:text.substr(head,at-head);
+                const bool noted=fn.find("flatOmSetNote();")!=std::string::npos||(setter.kind&&fn.find(setter.kind)!=std::string::npos);
+                if(!noted) {
                     ++unnoted;if(firstUnnoted.empty())firstUnnoted=std::string(file)+": "+text.substr(head==std::string::npos?at:head,80);
                 }
             }
@@ -132,6 +153,30 @@ inline int run() {
     const std::string vs((std::istreambuf_iterator<char>(vsIn)),{});
     expect(vs.find("flatOmSetHooksComplete(depthHook && swapHook);")!=std::string::npos,
            "without the depth-state or context-swap hook the held answers are never used");
+    {
+        const auto hook=vs.find("void STDMETHODCALLTYPE hookedOMSetDepthStencilState(");
+        const std::string body=hook!=std::string::npos?vs.substr(hook,700):std::string{};
+        expect(inOrderIn(body,"const uint32_t depthStateSet = flatOmSetNote(kFlatOmDepthState);","g_state->realOMSetDepthStencilState(self, state, ref);")&&
+               inOrderIn(body,"g_state->realOMSetDepthStencilState(self, state, ref);",
+                         "if (!foreignContext(self)) flatOmDepthStateRecord(self, state, depthStateSet);"),
+               "the hooked depth-stencil setter records the owner context's state after the real call, tied to its own counter value");
+        // The record's own rules (flat_om_generation.h), driven directly.
+        using namespace edvr;
+        edvr::g_flatOmDepthStateRecord.generation.store(0);
+        int ctxA=0,ctxB=0,stateX=0,stateY=0;void* got=nullptr;
+        const uint32_t g1=flatOmSetNote(kFlatOmDepthState);flatOmDepthStateRecord(&ctxA,&stateX,g1);
+        expect(flatOmDepthStateRecorded(&ctxA,got)&&got==&stateX,"a fresh record names the bound state");
+        expect(!flatOmDepthStateRecorded(&ctxB,got),"another context's question is not answered from the record");
+        const uint32_t blendTargets=flatOmTargetGeneration();flatOmSetNote(kFlatOmBlend);
+        expect(flatOmDepthStateRecorded(&ctxA,got)&&flatOmTargetGeneration()==blendTargets,"a blend set moves neither the record nor the target counter");
+        flatOmSetNote(kFlatOmTargets);
+        expect(flatOmDepthStateRecorded(&ctxA,got),"a target set leaves the depth-stencil record standing (the view half of the key moves)");
+        flatOmSetNote(kFlatOmDepthState);
+        expect(!flatOmDepthStateRecorded(&ctxA,got),"an unrecorded depth-stencil set (raw, foreign) retires the record");
+        const uint32_t g2=flatOmSetNote(kFlatOmDepthState);flatOmDepthStateRecord(&ctxA,&stateY,g2);flatOmSetNote();
+        expect(!flatOmDepthStateRecorded(&ctxA,got),"ClearState, command lists and swaps (every counter) retire the record");
+        edvr::g_flatOmDepthStateRecord.generation.store(0);
+    }
     const auto begin=source.find("bool forwardDsvActual(State& s,");
     const auto end=source.find("bool forwardDsv(State& s,",begin);
     const std::string body=begin!=std::string::npos&&end!=std::string::npos?source.substr(begin,end-begin):std::string{};

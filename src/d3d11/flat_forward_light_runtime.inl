@@ -48,13 +48,26 @@ ForwardOmKey forwardOmKey(const State& s) {
 void forwardShortcutWrong(FlatQuery q,const char* detail) {
     char line[400];flatQueryFallbackLine(line,sizeof(line),q,detail);Log::get().note("%s",line);
 }
-// The bound depth view and depth-stencil state: asked of the context once per output-merger binding
-// (flat_om_generation.h), then the held answer, checked against the context one frame in 64.
+ForwardDepthKey forwardDepthKey(const State& s) {
+    return {flatOmTargetGeneration(),flatOmDepthStateGeneration(),bindingGeneration(BindSlot::Rtv0),bindingGeneration(BindSlot::Dsv0),
+            s.prefix.frame,true};
+}
+// The bound depth view and depth-stencil state: asked of the context once per target binding (flat_om_generation.h),
+// then the held answer, checked against the context one frame in 64. A blend set leaves it held; a depth-stencil set
+// the owner context's hook recorded replaces the held state without asking (the view, when none is bound, keeps the
+// state unasked and null, as the ask below does).
 void forwardOmDepth(State& s,Ptr<ID3D11DepthStencilView>& dsv,Ptr<ID3D11DepthStencilState>& state,flatcpu::CopyCounter& counts) {
     auto& f=s.forwardLight;
     const bool cacheable=flatOmSetTracked();
-    const ForwardOmKey key=forwardOmKey(s);
+    const ForwardDepthKey key=forwardDepthKey(s);
     FlatQueryPlan plan=FlatQueryPlan::Ask;
+    if(cacheable&&f.depthKey.sameView(key)&&f.depthKey.depthState!=key.depthState) {
+        void* recorded=nullptr;
+        if(flatOmDepthStateRecorded(s.context.Get(),recorded)) {
+            f.depthState=f.depthView?static_cast<ID3D11DepthStencilState*>(recorded):nullptr;
+            f.depthKey.depthState=key.depthState;
+        }
+    }
     if(cacheable&&f.depthKey==key) {
         plan=flatQueryCut().plan(FlatQuery::ForwardDepth);
         if(plan==FlatQueryPlan::Shortcut){dsv=f.depthView;state=f.depthState;return;}

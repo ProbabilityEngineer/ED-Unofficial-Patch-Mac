@@ -3112,7 +3112,7 @@ void STDMETHODCALLTYPE hookedGenerateMips(ID3D11DeviceContext* self,
 void STDMETHODCALLTYPE hookedOMSetRenderTargets(ID3D11DeviceContext* self, UINT n,
                                                 ID3D11RenderTargetView* const* rtvs,
                                                 ID3D11DepthStencilView* dsv) {
-    flatOmSetNote();   // the forward-light watch's output-merger answer is stale (flat_om_generation.h)
+    flatOmSetNote(kFlatOmTargets);   // the forward-light watch's output-merger answer is stale (flat_om_generation.h)
     if (!foreignContext(self)) flatIssueEpochBumpRt();
     if (g_flatComputeInternal) { g_state->realOMSetRenderTargets(self, n, rtvs, dsv); return; }
     ++g_state->thunkHits[kHitOmSet];
@@ -3161,7 +3161,7 @@ void STDMETHODCALLTYPE hookedOMSetRtvAndUav(ID3D11DeviceContext* self, UINT n,
                                             UINT uavCount,
                                             ID3D11UnorderedAccessView* const* uavs,
                                             const UINT* counts) {
-    flatOmSetNote();   // UAV-only sets too (flat_om_generation.h)
+    flatOmSetNote(kFlatOmTargets);   // UAV-only sets too (flat_om_generation.h)
     // 0xFFFFFFFF keeps the current targets. Anything else can replace the depth view.
     if (!foreignContext(self) && n != 0xFFFFFFFFu) flatIssueEpochBumpRt();
     if (g_flatComputeInternal) { g_state->realOMSetRtvAndUav(self, n, rtvs, dsv, uavStart, uavCount, uavs, counts); return; }
@@ -3315,9 +3315,12 @@ void STDMETHODCALLTYPE hookedSetPredication(ID3D11DeviceContext* self, ID3D11Pre
     g_state->realSetPredication(self, predicate, value);
 }
 void STDMETHODCALLTYPE hookedOMSetDepthStencilState(ID3D11DeviceContext* self, ID3D11DepthStencilState* state, UINT ref) {
-    flatOmSetNote();
+    const uint32_t depthStateSet = flatOmSetNote(kFlatOmDepthState);
     if (!foreignContext(self)) flatIssueEpochBumpDepth();
     g_state->realOMSetDepthStencilState(self, state, ref);
+    // The owner context's state is now `state`: the forward-light depth answer reads it from here until another
+    // depth-state set moves the counter (flat_om_generation.h).
+    if (!foreignContext(self)) flatOmDepthStateRecord(self, state, depthStateSet);
 }
 void STDMETHODCALLTYPE hookedVSSetConstantBuffers1(ID3D11DeviceContext* self, UINT start, UINT n,
                                                    ID3D11Buffer* const* bufs, const UINT* first, const UINT* counts) {
@@ -3356,7 +3359,7 @@ void STDMETHODCALLTYPE hookedSwapDeviceContextState(ID3D11DeviceContext* self, I
 // for a substituted pool draw is then known to be replaced (engine_velocity).
 void STDMETHODCALLTYPE hookedOMSetBlendState(ID3D11DeviceContext* self, ID3D11BlendState* state,
                                              const FLOAT factor[4], UINT sampleMask) {
-    flatOmSetNote();
+    flatOmSetNote(kFlatOmBlend);
     if (g_flatComputeInternal) { g_state->realOMSetBlendState(self, state, factor, sampleMask); return; }
     if (!foreignContext(self)) {
         // Only engine velocity reads Blend (draw_fast_path.h): not recorded while the AA is off.
@@ -5086,7 +5089,7 @@ static inline void nativeOnFootMarkerTee(ID3D11DeviceContext* self, uint32_t ins
 // is put back before anything else looks). A slot that was never hooked (realOMSetDepthStencilState stays null on a vtable too short for it) is the
 // context's own method.
 static void STDMETHODCALLTYPE stationMaskSetBlend(ID3D11DeviceContext* ctx, ID3D11BlendState* state, const FLOAT factor[4], UINT sampleMask) {
-    flatOmSetNote();
+    flatOmSetNote(kFlatOmBlend);
     if (g_state->realOMSetBlendState) g_state->realOMSetBlendState(ctx, state, factor, sampleMask);
     else ctx->OMSetBlendState(state, factor, sampleMask);
 }
@@ -5095,7 +5098,7 @@ static void STDMETHODCALLTYPE concoursePaneSetPs(ID3D11DeviceContext* ctx, ID3D1
     else ctx->PSSetShader(ps, instances, count);
 }
 static void STDMETHODCALLTYPE stationMaskSetDepth(ID3D11DeviceContext* ctx, ID3D11DepthStencilState* state, UINT stencilRef) {
-    flatOmSetNote();
+    flatOmSetNote(kFlatOmDepthState);
     if (g_state->realOMSetDepthStencilState) g_state->realOMSetDepthStencilState(ctx, state, stencilRef);
     else ctx->OMSetDepthStencilState(state, stencilRef);
 }
@@ -6489,7 +6492,7 @@ void vScreenSetRenderTargetsRaw(ID3D11DeviceContext* ctx, uint32_t n,
                                 ID3D11RenderTargetView* const* rtvs,
                                 ID3D11DepthStencilView* dsv) {
     if (!g_state || !g_state->realOMSetRenderTargets || !ctx) return;
-    flatOmSetNote();
+    flatOmSetNote(kFlatOmTargets);
     flatIssueEpochBumpRt();
     g_state->realOMSetRenderTargets(ctx, n, rtvs, dsv);
 }
@@ -6516,13 +6519,13 @@ void vScreenPSSetShaderRaw(ID3D11DeviceContext* ctx, ID3D11PixelShader* ps,
 void vScreenOMSetBlendStateRaw(ID3D11DeviceContext* ctx, ID3D11BlendState* state,
                                const float blendFactor[4], uint32_t sampleMask) {
     if (!g_state || !g_state->realOMSetBlendState || !ctx) return;
-    flatOmSetNote();
+    flatOmSetNote(kFlatOmBlend);
     g_state->realOMSetBlendState(ctx, state, blendFactor, sampleMask);
 }
 
 void vScreenOMSetDepthStencilStateRaw(ID3D11DeviceContext* ctx, ID3D11DepthStencilState* state, uint32_t stencilRef) {
     if (!ctx) return;
-    flatOmSetNote();
+    flatOmSetNote(kFlatOmDepthState);
     if (g_state && g_state->realOMSetDepthStencilState) g_state->realOMSetDepthStencilState(ctx, state, stencilRef);
     else ctx->OMSetDepthStencilState(state, stencilRef);
 }

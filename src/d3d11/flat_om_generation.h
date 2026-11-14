@@ -25,9 +25,58 @@ inline std::atomic<uint32_t> g_flatOmSets{1};
 // only on a Context1 vtable (vscreen.cpp's issueSlot): without them a set could go unseen, and the reader asks every time.
 inline std::atomic<bool> g_flatOmHooksComplete{false};
 
-inline void flatOmSetNote() noexcept { g_flatOmSets.fetch_add(1, std::memory_order_relaxed); }
+// What a set can change, for readers that hold only part of the output-merger state (2026-11-14). The forward-light
+// depth answer (the bound depth view and depth-stencil state) was asked again after every set, and Elite sets blend or
+// depth-stencil state before nearly every draw: about 1360 of 1720 answers a frame were asks at a busy station. A blend
+// set cannot change the depth answer, and a depth-stencil set on the owner context names its state (recorded below).
+// The no-argument form moves every counter: ClearState, command lists, context swaps, and any caller not classified.
+enum FlatOmSetKind : unsigned {
+    kFlatOmBlend = 1u,         // OMSetBlendState
+    kFlatOmDepthState = 2u,    // OMSetDepthStencilState
+    kFlatOmTargets = 4u,       // OMSetRenderTargets and OMSetRenderTargetsAndUnorderedAccessViews: the views, depth included
+    kFlatOmAll = 7u,
+};
+inline std::atomic<uint32_t> g_flatOmDepthStateSets{1};
+inline std::atomic<uint32_t> g_flatOmTargetSets{1};
+
+// Moves the all-sets counter and the counters of what the set can change. Returns the depth-state counter's new value
+// when the set moved it (the recorder below ties its value to it), else 0.
+inline uint32_t flatOmSetNote(unsigned kind = kFlatOmAll) noexcept {
+    g_flatOmSets.fetch_add(1, std::memory_order_relaxed);
+    if (kind & kFlatOmTargets) g_flatOmTargetSets.fetch_add(1, std::memory_order_relaxed);
+    return (kind & kFlatOmDepthState) ? g_flatOmDepthStateSets.fetch_add(1, std::memory_order_relaxed) + 1u : 0u;
+}
 inline uint32_t flatOmSetGeneration() noexcept { return g_flatOmSets.load(std::memory_order_relaxed); }
+inline uint32_t flatOmTargetGeneration() noexcept { return g_flatOmTargetSets.load(std::memory_order_relaxed); }
+inline uint32_t flatOmDepthStateGeneration() noexcept { return g_flatOmDepthStateSets.load(std::memory_order_relaxed); }
 inline void flatOmSetHooksComplete(bool complete) noexcept { g_flatOmHooksComplete.store(complete, std::memory_order_relaxed); }
 inline bool flatOmSetTracked() noexcept { return g_flatOmHooksComplete.load(std::memory_order_relaxed); }
+
+// The depth-stencil state the owner context's hooked OMSetDepthStencilState bound, tied to the depth-state counter value
+// that set produced. It names the bound state only while that counter has not moved since: any other depth-state set (a
+// foreign context's, EDVR's raw setter, ClearState, a command list, a context swap) moves it, and the reader asks the
+// context instead. Identities only: the state is alive while bound, and the reader takes its own reference. Written and
+// read on the owner context's thread; the generation is cleared first and stored last so a torn record is never used.
+struct FlatOmDepthStateRecord {
+    std::atomic<const void*> context{nullptr};
+    std::atomic<void*> state{nullptr};
+    std::atomic<uint32_t> generation{0};
+};
+inline FlatOmDepthStateRecord g_flatOmDepthStateRecord;
+// After the hooked setter's flatOmSetNote(kFlatOmDepthState): `generation` is what that call returned.
+inline void flatOmDepthStateRecord(const void* context, void* state, uint32_t generation) noexcept {
+    g_flatOmDepthStateRecord.generation.store(0, std::memory_order_release);
+    g_flatOmDepthStateRecord.context.store(context, std::memory_order_relaxed);
+    g_flatOmDepthStateRecord.state.store(state, std::memory_order_relaxed);
+    g_flatOmDepthStateRecord.generation.store(generation, std::memory_order_release);
+}
+// True, with the state, when the record names what `context` has bound now.
+inline bool flatOmDepthStateRecorded(const void* context, void*& state) noexcept {
+    const uint32_t generation = g_flatOmDepthStateRecord.generation.load(std::memory_order_acquire);
+    if (!generation || generation != flatOmDepthStateGeneration()) return false;
+    if (g_flatOmDepthStateRecord.context.load(std::memory_order_relaxed) != context) return false;
+    state = g_flatOmDepthStateRecord.state.load(std::memory_order_relaxed);
+    return g_flatOmDepthStateRecord.generation.load(std::memory_order_acquire) == generation;
+}
 
 }  // namespace edvr

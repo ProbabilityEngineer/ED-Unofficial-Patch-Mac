@@ -243,6 +243,13 @@ struct ForwardOmKey {
     uint32_t om=0,rtv=0,dsv=0;uint64_t frame=0;bool valid=false;
     bool operator==(const ForwardOmKey& o) const {return valid&&o.valid&&om==o.om&&rtv==o.rtv&&dsv==o.dsv&&frame==o.frame;}
 };
+// The depth answer's key (forwardOmDepth): the view half moves with target sets (and the binding shadow's render-target
+// and depth generations and the frame), the state half with depth-stencil state sets only. Blend sets move neither.
+struct ForwardDepthKey {
+    uint32_t targets=0,depthState=0,rtv=0,dsv=0;uint64_t frame=0;bool valid=false;
+    bool sameView(const ForwardDepthKey& o) const {return valid&&o.valid&&targets==o.targets&&rtv==o.rtv&&dsv==o.dsv&&frame==o.frame;}
+    bool operator==(const ForwardDepthKey& o) const {return sameView(o)&&depthState==o.depthState;}
+};
 // One written resource of the watched draw: a render target with colour writes on, or an OM UAV.
 struct ForwardOmWrite {
     uintptr_t resource=0;bool uav=false;
@@ -267,7 +274,7 @@ struct ForwardRuntime {
     uint64_t reasons[static_cast<unsigned>(forward_light::Reason::Count)]{};
     forward_light::Reason last=forward_light::Reason::Never;
     // The last answers to the output-merger questions (forwardDrawWrites, forwardOmDepth). Cleared at every reset.
-    ForwardOmKey writesKey,depthKey;
+    ForwardOmKey writesKey;ForwardDepthKey depthKey;
     ForwardOmWrite writes[kForwardOmWrites];unsigned writeCount=0;
     Ptr<ID3D11DepthStencilView> depthView;Ptr<ID3D11DepthStencilState> depthState;
 };
