@@ -33,8 +33,9 @@
 namespace edvr {
 
 // F2: target 7 (kSkinTarget) joins the slot target for the skinned characters' E: skinMode 0 leaves target 7 as the game's state has it
-// (flat, and any pass without the skin target), 1 turns target 7's writes off (a pixel shader that exports nothing there must not leave
-// undefined values in it), 2 writes all four channels unblended (the pixel shader exports E and its valid flag).
+// (a pixel shader that exports nothing there, in a pass without the skin target), 1 turns target 7's writes off (a pixel shader that exports
+// nothing there must not leave undefined values in it, and one that does must not write into a target the game holds at 7), 2 writes all
+// four channels unblended (the pixel shader exports E and its valid flag).
 //
 // The derived state's description.
 inline D3D11_BLEND_DESC engineVelocityDerivedBlend(const D3D11_BLEND_DESC& game, int skinMode = 0) {

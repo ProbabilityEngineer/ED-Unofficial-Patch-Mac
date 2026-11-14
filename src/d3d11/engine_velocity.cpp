@@ -225,6 +225,16 @@ bool g_skinDeclinedFlat = false;         // armSkinLocked ran in the flat profil
 std::atomic<bool> g_skinFlatWanted{false};
 // Whether this profile may take the second skin: VR always (as before), flat only with fix.character_motion on.
 inline bool skinProfileAllows() noexcept { return !runtimeFlatProfile() || g_skinFlatWanted.load(std::memory_order_acquire); }
+// The second skin's own GPU work (the join, its clear, the pose table) in the flat profile: run as EDVR's internal compute, so flat's dispatch and
+// binding hooks pass it straight through and do not take it for the game's (FlatRuntimeDispatchScope, the CS binding shadow). VR: unchanged.
+struct SkinGpuWorkScope {
+    bool flat = runtimeFlatProfile();
+    bool previous = g_flatComputeInternal;
+    SkinGpuWorkScope() noexcept { if (flat) g_flatComputeInternal = true; }
+    ~SkinGpuWorkScope() { if (flat) g_flatComputeInternal = previous; }
+    SkinGpuWorkScope(const SkinGpuWorkScope&) = delete;
+    SkinGpuWorkScope& operator=(const SkinGpuWorkScope&) = delete;
+};
 uint32_t g_skinPoseFrame = ~0u;          // the present frame whose first pool snapshot owes a pose table (built at the frame boundary), and that snapshot's eye
 int g_skinPoseEye = -1;
 // The frame's list of the instance-stream entries its skinned draws read (skin_join.h, "the pose table's CPU reference"): every skinned family's substituted
@@ -1690,7 +1700,25 @@ bool bindTarget(ID3D11DeviceContext* ctx, Eye& e, ID3D11DepthStencilView* dsv) {
     e.skinBound = false;
     if (e.skinRtv && skinProfileAllows() && g_skinWanted.load(std::memory_order_acquire)) {
         if (!gameRt7) { rt[kSkinTarget] = e.skinRtv.Get(); e.skinBound = true; }
-        else ++g_skinStats.slotTaken;
+        else {
+            ++g_skinStats.slotTaken;
+            // Once a session: what the game holds at target 7, so a log says whether the second skin needs another slot.
+            static bool described = false;
+            if (!described) {
+                described = true;
+                D3D11_RENDER_TARGET_VIEW_DESC d{};
+                gameRt7->GetDesc(&d);
+                Ptr<ID3D11Resource> res;
+                gameRt7->GetResource(&res);
+                Ptr<ID3D11Texture2D> tex;
+                D3D11_TEXTURE2D_DESC td{};
+                if (res && SUCCEEDED(res.As(&tex))) tex->GetDesc(&td);
+                Log::get().note("skin join: target 7 taken by the game (first): format %u, dimension %u, %ux%u (eye target %ux%u), profile %s; "
+                                "the second skin skips that pass binding and its patched draws write nothing to target 7.",
+                                unsigned(d.Format), unsigned(d.ViewDimension), td.Width, td.Height, e.width, e.height,
+                                runtimeFlatProfile() ? "flat" : "VR");
+            }
+        }
     }
     // All eight slots: whatever the game has at 7 stays bound.
     vScreenSetRenderTargetsRaw(ctx, 8, rt, dsv);
@@ -2035,7 +2063,10 @@ void slowPath(ID3D11DeviceContext* ctx, bool rtv0Eye) {
     // writes it (a skinned family's pixel shader: E, or "no history") or not (a rigid family's, which would leave undefined values
     // there): when only that changed under a derived state still bound, it is derived again from the game's own state it kept.
     // A rigid family's substituted draw turns target 7's writes off: it would otherwise leave undefined values there, and pay the bandwidth of writing them.
-    const int skinMode = e.skinBound ? ((exportsE || zeroes) ? 2 : 1) : 0;
+    // A pixel shader that exports to target 7 while EDVR's target is NOT there (the game holds slot 7, or the pass took no target 7) has its
+    // target 7 writes turned off too: the game's own pixel shader never writes target 6 or above (the patch refuses one that does), so a game
+    // target at 7 must come out of this draw exactly as it went in.
+    const int skinMode = e.skinBound ? ((exportsE || zeroes) ? 2 : 1) : ((exportsE || zeroes) ? 1 : 0);
     const bool derivedBound = g_bound.derivedBlend && bindingGeneration(BindSlot::Blend) == g_bound.blendGen;
     if (!derivedBound || g_bound.skinMode != skinMode) {
         Ptr<ID3D11BlendState> game;
@@ -2166,7 +2197,7 @@ void slowPath(ID3D11DeviceContext* ctx, bool rtv0Eye) {
     // F2: the three views the cloned vertex shader reads (t108 the previous palette, t109 the join, t110 the previous pose), bound once
     // with it; with no live join they are the empty table, so every valid flag is 0 (no stale answer). Released by restore().
     if (skinDraw && useVs != vs) {
-        g_skin.flush(ctx, frame);   // the frame's chain dispatches are all in by the first skinned draw (F13 ledger: the palette is final at the first pool draw): the one join runs now
+        { SkinGpuWorkScope internal; g_skin.flush(ctx, frame); }   // the frame's chain dispatches are all in by the first skinned draw (F13 ledger: the palette is final at the first pool draw): the one join runs now
         const SkinViews sv = g_skin.views(frame);
         ID3D11ShaderResourceView* skinViews[3] = {sv.prevPalette, sv.join, sv.prevPose};
         ctx->VSSetShaderResources(kSkinPrevPaletteSlot, 3, skinViews);
@@ -2310,6 +2341,7 @@ void skinBuildPoseLocked(ID3D11DeviceContext* ctx) {
             refs.stream = listed ? c.stream.Get() : nullptr;
             refs.streamOffset = listed ? c.streamOffset : 0u;
             refs.why = listed ? c.why : "";
+            SkinGpuWorkScope internal;
             g_skin.buildPose(ctx, e.poolSrv.Get(), e.poolBytes / emit::kItemBytes, ended, refs);
         }
     }
@@ -3493,7 +3525,7 @@ void engineVelocityFrameBoundary(ID3D11DeviceContext* ctx) {
     ++g_draw.frames;
     // The frame's palette-chain dispatches are joined once: at the first skinned draw that needed the views, or here when no draw did (the history chain must
     // not skip a frame because a character was out of view).
-    if (ctx) g_skin.flushPending(ctx);
+    if (ctx) { SkinGpuWorkScope internal; g_skin.flushPending(ctx); }
     skinBuildPoseLocked(ctx);     // F2: the frame's pose table, now that every draw has said which records it read
     if (ctx) pollCaptures(ctx);   // the eye-pass capture's GPU timers, without waiting
     // The on-foot source's slot target lives only while the source is drawn:

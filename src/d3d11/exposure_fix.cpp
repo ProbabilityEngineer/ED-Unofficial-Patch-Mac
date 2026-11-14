@@ -730,6 +730,10 @@ void STDMETHODCALLTYPE hookedDispatch(ID3D11DeviceContext* self, UINT x, UINT y,
     if (runtimeFlatProfile()) {
         ++g_state->thunkHits[kHitDispatch];
         if (self == g_state->ownerCtx && flatTemporalCapturing()) flatTemporalDispatch(self, x, y, z);
+        // F2 in flat (fix.character_motion): the palette chain's dispatch feeds the join here too, before the game's dispatch runs, as the VR
+        // path below does. EDVR's own compute (g_flatComputeInternal, the join itself among it) is not the game's chain.
+        if (self == g_state->ownerCtx && !g_flatComputeInternal && engineVelocitySkinWanted() && skinChainBound())
+            engineVelocityNoteChainDispatch(self, x);
         FlatRuntimeDispatchScope flatDispatch(self);
         g_state->realDispatch(self, x, y, z);
         return;
