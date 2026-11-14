@@ -4614,7 +4614,7 @@ void flatRuntimePresent(IDXGISwapChain* swap, uint64_t frame, HRESULT hr, UINT f
         }
         // fix.character_motion (Visual tab), live: the second skin gives skinned characters (on-foot NPCs) their own motion in the
         // flat profile too; engine_velocity.cpp arms or stands it down when the key changes, and logs it.
-        if (engineVelocitySetFlatSkin(Config::get().getBool("fix.character_motion", false))) s.pairFacts.clear();
+        if (engineVelocitySetFlatSkin(Config::get().getBool("fix.character_motion", true))) s.pairFacts.clear();
         const bool censusWasRunning = s.census.running();
         s.census.onFrame(censusNow, censusFreq, endedPaused);
         // Always drained, so the priming frame (or a census that was stopped) leaves no backlog to

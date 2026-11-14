@@ -216,7 +216,7 @@ inline int flatPairFactsTests() {
         }
         std::ifstream rt("src/d3d11/flat_runtime.cpp", std::ios::binary);
         const std::string runtime((std::istreambuf_iterator<char>(rt)), {});
-        expect(runtime.find("if (engineVelocitySetFlatSkin(Config::get().getBool(\"fix.character_motion\", false))) s.pairFacts.clear();") != std::string::npos,
+        expect(runtime.find("if (engineVelocitySetFlatSkin(Config::get().getBool(\"fix.character_motion\", true))) s.pairFacts.clear();") != std::string::npos,
                "the flat runtime clears the pair facts whenever fix.character_motion changes");
         evf::g_flatSkinnedFamilies.store(was);
     }
