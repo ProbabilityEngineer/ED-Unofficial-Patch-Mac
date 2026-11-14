@@ -159,7 +159,8 @@ def self_test():
                batch.index('copy /y "%BUILD%\\d3d11.dll" "%BUILD%\\edvr_openxr_graphics.dll"'),
                "graphics-only must exit after the graphics link and before the other DLLs")
         finish = batch.split(":graphics_compile_only_finish\n", 1)[1].split(":compile_only_finish\n", 1)[0]
-        expect('--graphics "%BUILD%\\d3d11.dll" --forbid-import d3dcompiler_47.dll' in finish and
+        # ed-metalfx (stage 2b): the import ban only; there is no OpenXR runtime to provide exports for.
+        expect('--graphics "%BUILD%\\d3d11.dll" --imports-only --forbid-import d3dcompiler_47.dll' in finish and
                'NOT Windows validated and NOT a release asset' in finish and 'exit /b 0' in finish and
                "build_receipt.py" not in finish,
                "graphics-only must check the PE and remain explicitly unvalidated")
