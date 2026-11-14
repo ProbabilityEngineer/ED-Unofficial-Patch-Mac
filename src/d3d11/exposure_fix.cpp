@@ -653,6 +653,7 @@ void STDMETHODCALLTYPE hookedCSSetUAVs(ID3D11DeviceContext* self, UINT start, UI
 // memory. vscreen.cpp hit the same thing and hooks this for the same reason.
 void STDMETHODCALLTYPE hookedClearState(ID3D11DeviceContext* self) {
     flatOmSetNote();   // flat_om_generation.h, whichever ClearState hook runs first
+    flatOmTargetSiteNote(kFlatOmSiteExposureClear);
     // The VR world route's resolver isolates the context (SwapDeviceContextState, ClearState) around its own work: the game's
     // bindings are not forgotten by that (vscreen's hook on this slot steps aside for the same scope, and this one must not
     // run first and wipe the shadow).

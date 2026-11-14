@@ -57,6 +57,8 @@ ForwardDepthKey forwardDepthKey(const State& s) {
 // then the held answer, checked against the context one frame in 64. A blend set leaves it held; a depth-stencil set
 // the owner context's hook recorded replaces the held state without asking (the view, when none is bound, keeps the
 // state unasked and null, as the ask below does).
+static_assert(flatcpu::kCopyDepthViewStaleSiteLast-flatcpu::kCopyDepthViewStaleSite0+1==kFlatOmSites,
+              "the stale-site counts follow FlatOmTargetSite's order");
 static_assert(flatcpu::kCopyDepthAskTargetGame+kFlatOmTargetSources==flatcpu::kCopyDepthAskBinding&&
               flatcpu::kCopyDepthAskTargetForeign-flatcpu::kCopyDepthAskTargetGame==kFlatOmTargetForeign,
               "the target-set ask counts follow FlatOmTargetSource's order");
@@ -70,7 +72,11 @@ void forwardOmDepth(State& s,Ptr<ID3D11DepthStencilView>& dsv,Ptr<ID3D11DepthSte
     if(cacheable&&f.depthKey.valid&&f.depthKey.frame==key.frame&&f.depthKey.targets!=key.targets) {
         void* view=nullptr;
         const FlatOmTargetsMiss miss=flatOmTargetsRecordedWhy(s.context.Get(),key.rtv,key.dsv,view);
-        if(miss==FlatOmTargetsMiss::Stale)counts.add(flatcpu::kCopyDepthViewStale);
+        if(miss==FlatOmTargetsMiss::Stale) {
+            counts.add(flatcpu::kCopyDepthViewStale);
+            counts.add(!flatOmTargetsEverRecorded()?flatcpu::kCopyDepthViewNever:
+                static_cast<flatcpu::CopyCount>(flatcpu::kCopyDepthViewStaleSite0+flatOmTargetSiteLast()));
+        }
         else if(miss==FlatOmTargetsMiss::Context)counts.add(flatcpu::kCopyDepthViewContext);
         else if(miss==FlatOmTargetsMiss::Binding)counts.add(flatcpu::kCopyDepthViewBinding);
         if(miss==FlatOmTargetsMiss::None) {

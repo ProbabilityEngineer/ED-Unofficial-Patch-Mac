@@ -116,6 +116,20 @@ inline void flatOmTargetsRecord(const void* context, void* dsv, uint32_t rtvBind
     g_flatOmTargetsRecord.dsvBinding.store(dsvBinding, std::memory_order_relaxed);
     g_flatOmTargetsRecord.generation.store(generation, std::memory_order_release);
 }
+// Which code moved the target counter last (a diagnostic, 2026-11-14: at Lintott City, 4d8dd5fc, every one of about 1000
+// depth asks a window found the target record stale with the game named as the last setter). Each target-moving
+// flatOmSetNote site notes itself after the note; the depth answer counts its stale misses by the last site.
+enum FlatOmTargetSite : uint32_t {
+    kFlatOmSiteUnknown = 0, kFlatOmSiteRenderTargets, kFlatOmSiteRtvAndUav, kFlatOmSiteRaw, kFlatOmSiteSwap, kFlatOmSiteClearState,
+    kFlatOmSiteExecuteList, kFlatOmSiteListReplay, kFlatOmSiteExposureClear, kFlatOmSites
+};
+inline std::atomic<uint32_t> g_flatOmTargetSite{kFlatOmSiteUnknown};
+inline void flatOmTargetSiteNote(uint32_t site) noexcept { g_flatOmTargetSite.store(site, std::memory_order_relaxed); }
+inline uint32_t flatOmTargetSiteLast() noexcept {
+    const uint32_t s = g_flatOmTargetSite.load(std::memory_order_relaxed);
+    return s < kFlatOmSites ? s : kFlatOmSiteUnknown;
+}
+inline bool flatOmTargetsEverRecorded() noexcept { return g_flatOmTargetsRecord.generation.load(std::memory_order_acquire) != 0; }
 // Whether the record names the latest target set (taken before a set that keeps the targets, to carry it over).
 inline bool flatOmTargetsRecordCurrent() noexcept {
     const uint32_t generation = g_flatOmTargetsRecord.generation.load(std::memory_order_acquire);

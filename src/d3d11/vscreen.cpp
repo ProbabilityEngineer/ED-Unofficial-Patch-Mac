@@ -3130,6 +3130,7 @@ void STDMETHODCALLTYPE hookedOMSetRenderTargets(ID3D11DeviceContext* self, UINT 
                                                 ID3D11RenderTargetView* const* rtvs,
                                                 ID3D11DepthStencilView* dsv) {
     const uint32_t targetSet = flatOmSetNote(kFlatOmTargets);   // the forward-light watch's output-merger answer is stale (flat_om_generation.h)
+    flatOmTargetSiteNote(kFlatOmSiteRenderTargets);
     flatOmTargetSourceNote(flatOmTargetSourceOf(self, _ReturnAddress()));
     if (!foreignContext(self)) flatIssueEpochBumpRt();
     if (g_flatComputeInternal) { g_state->realOMSetRenderTargets(self, n, rtvs, dsv); return; }
@@ -3186,6 +3187,7 @@ void STDMETHODCALLTYPE hookedOMSetRtvAndUav(ID3D11DeviceContext* self, UINT n,
     // A set that keeps the targets leaves the depth view: a record current before it carries over (below).
     const bool recordBefore = !foreignContext(self) && n == 0xFFFFFFFFu && flatOmTargetsRecordCurrent();
     const uint32_t targetSet = flatOmSetNote(kFlatOmTargets);   // UAV-only sets too (flat_om_generation.h)
+    flatOmTargetSiteNote(kFlatOmSiteRtvAndUav);
     flatOmTargetSourceNote(flatOmTargetSourceOf(self, _ReturnAddress()));
     // 0xFFFFFFFF keeps the current targets. Anything else can replace the depth view.
     if (!foreignContext(self) && n != 0xFFFFFFFFu) flatIssueEpochBumpRt();
@@ -3382,6 +3384,7 @@ void STDMETHODCALLTYPE hookedDiscardView(ID3D11DeviceContext* self, ID3D11View* 
 void STDMETHODCALLTYPE hookedSwapDeviceContextState(ID3D11DeviceContext* self, ID3DDeviceContextState* state,
                                                     ID3DDeviceContextState** previous) {
     flatOmSetNote();   // every binding is replaced, and the shadow is not told
+    flatOmTargetSiteNote(kFlatOmSiteSwap);
     if (!foreignContext(self)) flatIssueEpochRevoke();
     if (self == g_state->ownerCtx) uiLayerMapRunEnd(self);   // the state this swap puts away must hold the game's targets (ui_layer.h)
     g_state->realSwapDeviceContextState(self, state, previous);
@@ -3488,6 +3491,7 @@ void forgetBindings(State*) { bindingForgetAll(); }
 // count looks right" into evidence, on whatever machine the log came from.
 void STDMETHODCALLTYPE hookedClearState(ID3D11DeviceContext* self) {
     flatOmSetNote();
+    flatOmTargetSiteNote(kFlatOmSiteClearState);
     if (!foreignContext(self)) flatIssueEpochRevoke();
     if (g_flatComputeInternal) { g_state->realClearState(self); return; }
     gpuFrameCommandIfLive(self);
@@ -3518,6 +3522,7 @@ void STDMETHODCALLTYPE hookedExecuteCommandList(ID3D11DeviceContext* self,
                                                 ID3D11CommandList* list,
                                                 BOOL restoreContextState) {
     flatOmSetNote();
+    flatOmTargetSiteNote(kFlatOmSiteExecuteList);
     if (!foreignContext(self)) flatIssueEpochRevoke();
     gpuFrameCommandIfLive(self);
     State* s = g_state;
@@ -6525,6 +6530,7 @@ void vScreenSetRenderTargetsRaw(ID3D11DeviceContext* ctx, uint32_t n,
                                 ID3D11DepthStencilView* dsv) {
     if (!g_state || !g_state->realOMSetRenderTargets || !ctx) return;
     flatOmSetNote(kFlatOmTargets);
+    flatOmTargetSiteNote(kFlatOmSiteRaw);
     flatOmTargetSourceNote(kFlatOmTargetRaw);
     flatIssueEpochBumpRt();
     g_state->realOMSetRenderTargets(ctx, n, rtvs, dsv);
@@ -8056,6 +8062,7 @@ bool vScreenHooksSawExecuteCommandList() {
 }
 void vScreenExecuteCommandListRaw(ID3D11DeviceContext* ctx,ID3D11CommandList* list,int restore) {
     flatOmSetNote();   // a list replayed without restore leaves its own output-merger state (flat_om_generation.h)
+    flatOmTargetSiteNote(kFlatOmSiteListReplay);
     if(g_state && ctx==g_state->ownerCtx && g_state->realExecuteCommandList)g_state->realExecuteCommandList(ctx,list,restore!=0);
     else ctx->ExecuteCommandList(list,restore!=0);
 }

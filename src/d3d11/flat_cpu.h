@@ -132,6 +132,8 @@ enum CopyCount : unsigned {
     kCopyDepthAskUntracked, kCopyDepthAskFrame, kCopyDepthAskTargetGame, kCopyDepthAskTargetEdvr, kCopyDepthAskTargetRaw,
     kCopyDepthAskTargetForeign, kCopyDepthAskBinding, kCopyDepthAskState, kCopyDepthAskSample, kCopyDepthStateAdopted,
     kCopyDepthViewAdopted, kCopyDepthViewStale, kCopyDepthViewContext, kCopyDepthViewBinding,
+    // A stale record, by the code that moved the target counter last (FlatOmTargetSite order), or never written.
+    kCopyDepthViewNever, kCopyDepthViewStaleSite0, kCopyDepthViewStaleSiteLast = kCopyDepthViewStaleSite0 + 8,
     // Why the forward-light written-targets answer was asked (forwardDrawWrites), likewise.
     kCopyWritesAskUncached, kCopyWritesAskFrame, kCopyWritesAskTarget, kCopyWritesAskBlend, kCopyWritesAskBinding, kCopyWritesAskSample,
     // The game's resource writes the runtime observes (flatRuntimeMap/Unmap/Update/Written), by entry, and what EDVR holds
@@ -1021,12 +1023,28 @@ inline void formatCopyWindow(const WindowReport& r, uint64_t completedFrame, Lin
             "depth asks: EDVR raw target set","depth asks: other-context target set","depth asks: binding generation",
             "depth asks: unrecorded depth-state set","depth asks: sampled check","recorded depth-state adoptions",
             "recorded depth-view adoptions","depth-view record stale","depth-view record other context","depth-view record binding moved",
+            "depth-view record never written","stale after: unclassified","stale after: OMSetRenderTargets hook",
+            "stale after: RTV+UAV hook","stale after: raw target setter","stale after: context swap","stale after: ClearState",
+            "stale after: ExecuteCommandList","stale after: command list replay","stale after: ClearState (exposure fix)",
             "target asks: uncached","target asks: new frame or reset","target asks: target set","target asks: blend set",
             "target asks: binding generation","target asks: sampled check",
             "writes: Map","writes: Unmap","writes: Update","writes: other","writes to camera buffers","writes to tracked buffers",
             "writes to prefix targets","writes to none of these"};
-        for (unsigned c = 0; c < kCopyCounts; ++c)
-            tk.add(c ? ", " : "; ", "%s=%llu", names[c], static_cast<unsigned long long>(r.copy[c]));
+        // Several counts to a token (each holds 320 characters, and the line's tokens are bounded by kMaxTokens): a count
+        // goes to the next token when it would not fit, so no name is cut and the figures stay in this order.
+        char group[300]; size_t used = 0; bool first = true;
+        for (unsigned c = 0; c < kCopyCounts; ++c) {
+            char item[128];
+            const int len = std::snprintf(item, sizeof(item), "%s%s=%llu", used ? ", " : "", names[c],
+                                          static_cast<unsigned long long>(r.copy[c]));
+            if (len <= 0) continue;
+            if (used && used + static_cast<size_t>(len) >= sizeof(group)) {
+                tk.add(first ? "; " : ", ", "%s", group); first = false; used = 0;
+                std::snprintf(item, sizeof(item), "%s=%llu", names[c], static_cast<unsigned long long>(r.copy[c]));
+            }
+            used += static_cast<size_t>(std::snprintf(group + used, sizeof(group) - used, "%s", item));
+        }
+        if (used) tk.add(first ? "; " : ", ", "%s", group);
         tk.add("; ", "zero calls means not run in sampled frames; output scan includes guard CPU; inactive-ledger scan time is zero after guard (skips untimed, not measured savings); query counting not floor-corrected");
     }
     packLines(tk,out);
