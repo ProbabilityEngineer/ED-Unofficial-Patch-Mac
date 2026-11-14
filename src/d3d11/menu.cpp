@@ -241,6 +241,10 @@ struct State {
     sgb::Watch  starGlowBloom;
     uint32_t    starGlowBloomGen = 0;
     bool        starGlowBloomGenSeen = false;
+    // The dimmed rows' states the page was last drawn with (dimRowsTick), looked at again when the config's generation moves.
+    uint32_t    dimRowsGen = 0;
+    bool        dimRowsGenSeen = false;
+    unsigned    dimRows = 0;
     // Elite's Supersampling below 1.0 in VR (vr_supersample_notice.h, design section 83): the headset toast is said once a
     // session, the Status line and the settings pages' note whenever vScreen has measured it. Never in a flat session.
     bool        vrSupersamplingToasted = false;
@@ -1253,6 +1257,23 @@ void starGlowBloomTick() {
     const bool said = s.starGlowBloom.noteSetting(percent, &line);
     if (said) Log::get().note("%s", line.c_str());
     if (said || percent != before) s.contentDirty = true;
+}
+
+// The rows that dim on another setting (Sharpening and HUD Anti-Aliasing on the anti-aliasing, the DLSS preset row, the glass dirt and station rows) read
+// the config, which a menu step moves only once the worker's write and the reload behind it are done: the page redrawn at the step showed the OLD state
+// (stepping MetalFX -> off -> FSR left Sharpening dimmed under FSR until the next key). Looked at when the generation moves; a changed state redraws.
+void dimRowsTick() {
+    State& s = g_s;
+    const uint32_t generation = Config::get().generation();
+    if (s.dimRowsGenSeen && generation == s.dimRowsGen) return;
+    s.dimRowsGenSeen = true;
+    s.dimRowsGen = generation;
+    const unsigned dims = (dlssPresetDisabled() ? 1u : 0u) | (sharpenRowDisabled() ? 2u : 0u) | (hudAntiAliasingRowDisabled() ? 4u : 0u) |
+                          (cockpitGlassDirtRowDisabled() ? 8u : 0u) | (stationWindowDistanceRowDisabled() ? 16u : 0u);
+    if (dims != s.dimRows) {
+        s.dimRows = dims;
+        s.contentDirty = true;
+    }
 }
 
 // A menu has opened: the files are read again while the setting is above 100 (the player may have changed Elite's Bloom since), and a changed state is said.
@@ -5071,6 +5092,7 @@ void menuTick(ID3D11Device* dev) {
             }
             flatWarningTick(now);
             starGlowBloomTick();
+            dimRowsTick();
             preparePadNavigation(now, drawnFresh && gameHasFocus());
             if (keysReady) handleKeys(now);
             handlePadNavigation(now);
@@ -5146,6 +5168,7 @@ void menuTick(ID3D11Device* dev) {
         // Writes the worker finished since last frame.
         drainWrites();
         starGlowBloomTick();
+        dimRowsTick();
 
         // The Hotkeys page's upkeep. A hotkey rebound anywhere (this page, the ini, a rewrite of
         // the registry by the reload) changes which keys are EDVR's: the panel keys adopted from
