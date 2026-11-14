@@ -116,17 +116,32 @@ inline void flatOmTargetsRecord(const void* context, void* dsv, uint32_t rtvBind
     g_flatOmTargetsRecord.dsvBinding.store(dsvBinding, std::memory_order_relaxed);
     g_flatOmTargetsRecord.generation.store(generation, std::memory_order_release);
 }
-// True, with the depth view, when the record names what `context` has bound now and the binding shadow's generations
-// are still the ones the recorded set left.
-inline bool flatOmTargetsRecorded(const void* context, uint32_t rtvBinding, uint32_t dsvBinding, void*& dsv) noexcept {
+// Whether the record names the latest target set (taken before a set that keeps the targets, to carry it over).
+inline bool flatOmTargetsRecordCurrent() noexcept {
     const uint32_t generation = g_flatOmTargetsRecord.generation.load(std::memory_order_acquire);
-    if (!generation || generation != flatOmTargetGeneration()) return false;
-    if (g_flatOmTargetsRecord.context.load(std::memory_order_relaxed) != context ||
-        g_flatOmTargetsRecord.rtvBinding.load(std::memory_order_relaxed) != rtvBinding ||
+    return generation && generation == flatOmTargetGeneration();
+}
+// A set that keeps the depth view (OMSetRenderTargetsAndUnorderedAccessViews with KEEP): a record that was current
+// before it stays true, under the counter value this set produced. The caller checks nothing else moved since.
+inline void flatOmTargetsRecordCarry(uint32_t generation) noexcept {
+    g_flatOmTargetsRecord.generation.store(generation, std::memory_order_release);
+}
+// Why the record could not answer (a diagnostic: flat_cpu.h's depth-view counts).
+enum class FlatOmTargetsMiss : uint32_t { None = 0, Stale, Context, Binding };
+// None, with the depth view, when the record names what `context` has bound now and the binding shadow's generations
+// are still the ones the recorded set left; else why not.
+inline FlatOmTargetsMiss flatOmTargetsRecordedWhy(const void* context, uint32_t rtvBinding, uint32_t dsvBinding, void*& dsv) noexcept {
+    const uint32_t generation = g_flatOmTargetsRecord.generation.load(std::memory_order_acquire);
+    if (!generation || generation != flatOmTargetGeneration()) return FlatOmTargetsMiss::Stale;
+    if (g_flatOmTargetsRecord.context.load(std::memory_order_relaxed) != context) return FlatOmTargetsMiss::Context;
+    if (g_flatOmTargetsRecord.rtvBinding.load(std::memory_order_relaxed) != rtvBinding ||
         g_flatOmTargetsRecord.dsvBinding.load(std::memory_order_relaxed) != dsvBinding)
-        return false;
+        return FlatOmTargetsMiss::Binding;
     dsv = g_flatOmTargetsRecord.dsv.load(std::memory_order_relaxed);
-    return g_flatOmTargetsRecord.generation.load(std::memory_order_acquire) == generation;
+    return g_flatOmTargetsRecord.generation.load(std::memory_order_acquire) == generation ? FlatOmTargetsMiss::None : FlatOmTargetsMiss::Stale;
+}
+inline bool flatOmTargetsRecorded(const void* context, uint32_t rtvBinding, uint32_t dsvBinding, void*& dsv) noexcept {
+    return flatOmTargetsRecordedWhy(context, rtvBinding, dsvBinding, dsv) == FlatOmTargetsMiss::None;
 }
 
 }  // namespace edvr

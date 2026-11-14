@@ -69,7 +69,11 @@ void forwardOmDepth(State& s,Ptr<ID3D11DepthStencilView>& dsv,Ptr<ID3D11DepthSte
     // only if it was asked (a view was held); with no view held it was never asked, so only a recorded state will do.
     if(cacheable&&f.depthKey.valid&&f.depthKey.frame==key.frame&&f.depthKey.targets!=key.targets) {
         void* view=nullptr;
-        if(flatOmTargetsRecorded(s.context.Get(),key.rtv,key.dsv,view)) {
+        const FlatOmTargetsMiss miss=flatOmTargetsRecordedWhy(s.context.Get(),key.rtv,key.dsv,view);
+        if(miss==FlatOmTargetsMiss::Stale)counts.add(flatcpu::kCopyDepthViewStale);
+        else if(miss==FlatOmTargetsMiss::Context)counts.add(flatcpu::kCopyDepthViewContext);
+        else if(miss==FlatOmTargetsMiss::Binding)counts.add(flatcpu::kCopyDepthViewBinding);
+        if(miss==FlatOmTargetsMiss::None) {
             bool stateKnown=true;
             if(!view)f.depthState=nullptr;   // the ask leaves the state unasked and null with no view bound
             else if(!f.depthView) {

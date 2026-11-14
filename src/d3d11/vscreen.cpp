@@ -3183,7 +3183,9 @@ void STDMETHODCALLTYPE hookedOMSetRtvAndUav(ID3D11DeviceContext* self, UINT n,
                                             UINT uavCount,
                                             ID3D11UnorderedAccessView* const* uavs,
                                             const UINT* counts) {
-    flatOmSetNote(kFlatOmTargets);   // UAV-only sets too (flat_om_generation.h)
+    // A set that keeps the targets leaves the depth view: a record current before it carries over (below).
+    const bool recordBefore = !foreignContext(self) && n == 0xFFFFFFFFu && flatOmTargetsRecordCurrent();
+    const uint32_t targetSet = flatOmSetNote(kFlatOmTargets);   // UAV-only sets too (flat_om_generation.h)
     flatOmTargetSourceNote(flatOmTargetSourceOf(self, _ReturnAddress()));
     // 0xFFFFFFFF keeps the current targets. Anything else can replace the depth view.
     if (!foreignContext(self) && n != 0xFFFFFFFFu) flatIssueEpochBumpRt();
@@ -3237,6 +3239,13 @@ void STDMETHODCALLTYPE hookedOMSetRtvAndUav(ID3D11DeviceContext* self, UINT n,
         flatRuntimeSubstitution(self, FlatSubstEvent::kKeepTargets);
     }
     g_state->realOMSetRtvAndUav(self, n, rtvs, dsv, uavStart, uavCount, uavs, counts);
+    // As hookedOMSetRenderTargets: the owner context's depth view is now `dsv` (flat_om_generation.h). A set that kept the
+    // targets carries a record that was current before it, provided nothing else set targets since (the substitution
+    // above may have).
+    if (n != kKeepRenderTargetsUnchanged)
+        flatOmTargetsRecord(self, dsv, bindingGeneration(BindSlot::Rtv0), bindingGeneration(BindSlot::Dsv0), targetSet);
+    else if (recordBefore && flatOmTargetGeneration() == targetSet)
+        flatOmTargetsRecordCarry(targetSet);
 }
 
 void STDMETHODCALLTYPE hookedPSSetShaderResources(ID3D11DeviceContext* self, UINT start,

@@ -125,8 +125,8 @@ inline int run() {
         // The recorded target set comes first: the frame must match, the record must name the context and the binding
         // generations, and with no view held before, the state must come from its own record or the view is not adopted.
         expect(inOrderIn(om,"f.depthKey.valid&&f.depthKey.frame==key.frame&&f.depthKey.targets!=key.targets",
-                         "flatOmTargetsRecorded(s.context.Get(),key.rtv,key.dsv,view)")&&
-               inOrderIn(om,"flatOmTargetsRecorded(s.context.Get(),key.rtv,key.dsv,view)","if(!view)f.depthState=nullptr;")&&
+                         "flatOmTargetsRecordedWhy(s.context.Get(),key.rtv,key.dsv,view)")&&
+               inOrderIn(om,"flatOmTargetsRecordedWhy(s.context.Get(),key.rtv,key.dsv,view)","if(!view)f.depthState=nullptr;")&&
                inOrderIn(om,"else if(!f.depthView)","stateKnown=flatOmDepthStateRecorded(s.context.Get(),recorded);")&&
                inOrderIn(om,"if(stateKnown) {","f.depthKey.targets=key.targets;f.depthKey.rtv=key.rtv;f.depthKey.dsv=key.dsv;")&&
                inOrderIn(om,"f.depthKey.targets=key.targets;","if(cacheable&&f.depthKey.sameView(key)&&f.depthKey.depthState!=key.depthState)"),
@@ -227,7 +227,24 @@ inline int run() {
         expect(!flatOmTargetsRecorded(&ctxA,5,6,got),"an unrecorded target set (raw, foreign, map run) retires the target record");
         const uint32_t t2=flatOmSetNote(kFlatOmTargets);flatOmTargetsRecord(&ctxA,nullptr,5,6,t2);flatOmSetNote();
         expect(!flatOmTargetsRecorded(&ctxA,5,6,got),"ClearState, command lists and swaps retire the target record");
+        // A set that keeps the targets carries a current record; one that was already stale stays stale.
+        const uint32_t t3=flatOmSetNote(kFlatOmTargets);flatOmTargetsRecord(&ctxA,&stateY,5,6,t3);
+        const bool before=flatOmTargetsRecordCurrent();const uint32_t keep=flatOmSetNote(kFlatOmTargets);
+        if(before&&flatOmTargetGeneration()==keep)flatOmTargetsRecordCarry(keep);
+        expect(flatOmTargetsRecorded(&ctxA,5,6,got)&&got==&stateY,"a set that keeps the targets carries the current record");
+        flatOmSetNote(kFlatOmTargets);const bool staleBefore=flatOmTargetsRecordCurrent();
+        expect(!staleBefore&&flatOmTargetsRecordedWhy(&ctxA,5,6,got)==FlatOmTargetsMiss::Stale,"a stale record is reported stale and not carried");
         g_flatOmTargetsRecord.generation.store(0);
+        // Both target hooks record after their final real call; the RTV+UAV hook only for a set that names the targets,
+        // and carries a record over a KEEP set only when nothing else set targets meanwhile.
+        const auto uavHook=vs.find("void STDMETHODCALLTYPE hookedOMSetRtvAndUav(");
+        const std::string ru=uavHook!=std::string::npos?vs.substr(uavHook,6000):std::string{};
+        expect(inOrderIn(ru,"const bool recordBefore = !foreignContext(self) && n == 0xFFFFFFFFu && flatOmTargetsRecordCurrent();",
+                         "const uint32_t targetSet = flatOmSetNote(kFlatOmTargets);")&&
+               inOrderIn(ru,"g_state->realOMSetRtvAndUav(self, n, rtvs, dsv, uavStart, uavCount, uavs, counts);\n    // As hookedOMSetRenderTargets",
+                         "if (n != kKeepRenderTargetsUnchanged)\n        flatOmTargetsRecord(self, dsv, bindingGeneration(BindSlot::Rtv0), bindingGeneration(BindSlot::Dsv0), targetSet);")&&
+               ru.find("else if (recordBefore && flatOmTargetGeneration() == targetSet)\n        flatOmTargetsRecordCarry(targetSet);")!=std::string::npos,
+               "the RTV+UAV hook records a named set and carries a current record over a KEEP set");
     }
     const auto begin=source.find("bool forwardDsvActual(State& s,");
     const auto end=source.find("bool forwardDsv(State& s,",begin);

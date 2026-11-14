@@ -131,7 +131,7 @@ enum CopyCount : unsigned {
     // the order the key is compared; the target-set reason by the latest setter. Then the recorded depth-state adoptions.
     kCopyDepthAskUntracked, kCopyDepthAskFrame, kCopyDepthAskTargetGame, kCopyDepthAskTargetEdvr, kCopyDepthAskTargetRaw,
     kCopyDepthAskTargetForeign, kCopyDepthAskBinding, kCopyDepthAskState, kCopyDepthAskSample, kCopyDepthStateAdopted,
-    kCopyDepthViewAdopted,
+    kCopyDepthViewAdopted, kCopyDepthViewStale, kCopyDepthViewContext, kCopyDepthViewBinding,
     // Why the forward-light written-targets answer was asked (forwardDrawWrites), likewise.
     kCopyWritesAskUncached, kCopyWritesAskFrame, kCopyWritesAskTarget, kCopyWritesAskBlend, kCopyWritesAskBinding, kCopyWritesAskSample,
     // The game's resource writes the runtime observes (flatRuntimeMap/Unmap/Update/Written), by entry, and what EDVR holds
@@ -1020,7 +1020,7 @@ inline void formatCopyWindow(const WindowReport& r, uint64_t completedFrame, Lin
             "depth asks: untracked hooks","depth asks: new frame or reset","depth asks: game target set","depth asks: EDVR target set",
             "depth asks: EDVR raw target set","depth asks: other-context target set","depth asks: binding generation",
             "depth asks: unrecorded depth-state set","depth asks: sampled check","recorded depth-state adoptions",
-            "recorded depth-view adoptions",
+            "recorded depth-view adoptions","depth-view record stale","depth-view record other context","depth-view record binding moved",
             "target asks: uncached","target asks: new frame or reset","target asks: target set","target asks: blend set",
             "target asks: binding generation","target asks: sampled check",
             "writes: Map","writes: Unmap","writes: Update","writes: other","writes to camera buffers","writes to tracked buffers",
