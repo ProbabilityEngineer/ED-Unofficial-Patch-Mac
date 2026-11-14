@@ -896,7 +896,7 @@ echo        before distributing an installer or accepting new source changes.
 exit /b 0
 
 :graphics_compile_only_finish
-python tools\openxr_pe.py --graphics "%BUILD%\d3d11.dll" --forbid-import d3dcompiler_47.dll || exit /b 1
+python tools\openxr_pe.py --graphics "%BUILD%\d3d11.dll" --imports-only --forbid-import d3dcompiler_47.dll || exit /b 1
 python tools\build_phases.py --report "%PHASES%"
 echo [edvr] GRAPHICS COMPILE-ONLY: %BUILD%\d3d11.dll
 echo [edvr] NOT Windows validated and NOT a release asset. No test rigs,

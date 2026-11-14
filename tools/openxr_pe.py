@@ -518,6 +518,9 @@ def main(argv=None):
                     help='native graphics proxy to inspect without loading it')
     ap.add_argument('--forbid-import', action='append', default=[], metavar='DLL',
                     help='fail if --native or --graphics imports this DLL (by file name, any case) at load time or by delay import; repeatable')
+    ap.add_argument('--imports-only', action='store_true',
+                    help='with --graphics: check only --forbid-import, not the OpenXR runtime provider exports '
+                         '(ed-metalfx has no OpenXR runtime, stage 2b)')
     ap.add_argument('--self-test', action='store_true')
     args = ap.parse_args(argv)
     if args.self_test:
@@ -532,7 +535,7 @@ def main(argv=None):
             result['exports'] = native_exports(args.native)
         if args.game:
             result['imports'] = validate_frontier_imports(args.game, args.native)
-        if args.graphics:
+        if args.graphics and not args.imports_only:
             result['graphics'] = native_graphics_exports(args.graphics)
         for path in (args.native, args.graphics):
             found = forbidden_imports(path, args.forbid_import) if path and args.forbid_import else []
