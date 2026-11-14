@@ -127,6 +127,10 @@ enum CopyCount : unsigned {
     kCopyRawDsvGet, kCopyRawDsvHit, kCopyRawDsvMiss,
     kCopyRawDepthGet, kCopyRawDepthHit, kCopyRawDepthMiss, kCopyRawDepthDefault,
     kCopyIssueGeometryDsvGet, kCopyIssueLightDsvGet,
+    // Why the forward-light depth answer was asked of the context (forwardOmDepth; flat_om_generation.h), one per ask, in
+    // the order the key is compared; the target-set reason by the latest setter. Then the recorded depth-state adoptions.
+    kCopyDepthAskUntracked, kCopyDepthAskFrame, kCopyDepthAskTargetGame, kCopyDepthAskTargetEdvr, kCopyDepthAskTargetRaw,
+    kCopyDepthAskTargetForeign, kCopyDepthAskBinding, kCopyDepthAskState, kCopyDepthAskSample, kCopyDepthStateAdopted,
     kCopyCounts
 };
 struct FamilyInfo {
@@ -1006,7 +1010,10 @@ inline void formatCopyWindow(const WindowReport& r, uint64_t completedFrame, Lin
             "actual guard checks","actual guard skips","actual full-scan fallbacks",
             "raw DSV OM Gets","raw DSV description hits","raw DSV description misses",
             "raw depth-state OM Gets","raw depth-state description hits","raw depth-state description misses","raw depth-state defaults",
-            "issue geometry DSV Gets","issue light DSV Gets"};
+            "issue geometry DSV Gets","issue light DSV Gets",
+            "depth asks: untracked hooks","depth asks: new frame or reset","depth asks: game target set","depth asks: EDVR target set",
+            "depth asks: EDVR raw target set","depth asks: other-context target set","depth asks: binding generation",
+            "depth asks: unrecorded depth-state set","depth asks: sampled check","recorded depth-state adoptions"};
         for (unsigned c = 0; c < kCopyCounts; ++c)
             tk.add(c ? ", " : "; ", "%s=%llu", names[c], static_cast<unsigned long long>(r.copy[c]));
         tk.add("; ", "zero calls means not run in sampled frames; output scan includes guard CPU; inactive-ledger scan time is zero after guard (skips untimed, not measured savings); query counting not floor-corrected");

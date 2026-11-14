@@ -46,6 +46,16 @@ inline uint32_t flatOmSetNote(unsigned kind = kFlatOmAll) noexcept {
     if (kind & kFlatOmTargets) g_flatOmTargetSets.fetch_add(1, std::memory_order_relaxed);
     return (kind & kFlatOmDepthState) ? g_flatOmDepthStateSets.fetch_add(1, std::memory_order_relaxed) + 1u : 0u;
 }
+// Who made the latest target set (a diagnostic for the depth answer's asks, flat_cpu.h's depth-ask counts): the game
+// through the hook, EDVR's own code through the hook (its return address is in EDVR's image), EDVR's raw setter
+// (vScreenSetRenderTargetsRaw), or another context. Only the latest; several sets between two asks count as the last.
+enum FlatOmTargetSource : uint32_t { kFlatOmTargetGame = 0, kFlatOmTargetEdvr, kFlatOmTargetRaw, kFlatOmTargetForeign, kFlatOmTargetSources };
+inline std::atomic<uint32_t> g_flatOmTargetSource{kFlatOmTargetGame};
+inline void flatOmTargetSourceNote(uint32_t source) noexcept { g_flatOmTargetSource.store(source, std::memory_order_relaxed); }
+inline uint32_t flatOmTargetSourceLast() noexcept {
+    const uint32_t s = g_flatOmTargetSource.load(std::memory_order_relaxed);
+    return s < kFlatOmTargetSources ? s : kFlatOmTargetGame;
+}
 inline uint32_t flatOmSetGeneration() noexcept { return g_flatOmSets.load(std::memory_order_relaxed); }
 inline uint32_t flatOmTargetGeneration() noexcept { return g_flatOmTargetSets.load(std::memory_order_relaxed); }
 inline uint32_t flatOmDepthStateGeneration() noexcept { return g_flatOmDepthStateSets.load(std::memory_order_relaxed); }

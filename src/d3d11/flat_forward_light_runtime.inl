@@ -56,6 +56,9 @@ ForwardDepthKey forwardDepthKey(const State& s) {
 // then the held answer, checked against the context one frame in 64. A blend set leaves it held; a depth-stencil set
 // the owner context's hook recorded replaces the held state without asking (the view, when none is bound, keeps the
 // state unasked and null, as the ask below does).
+static_assert(flatcpu::kCopyDepthAskTargetGame+kFlatOmTargetSources==flatcpu::kCopyDepthAskBinding&&
+              flatcpu::kCopyDepthAskTargetForeign-flatcpu::kCopyDepthAskTargetGame==kFlatOmTargetForeign,
+              "the target-set ask counts follow FlatOmTargetSource's order");
 void forwardOmDepth(State& s,Ptr<ID3D11DepthStencilView>& dsv,Ptr<ID3D11DepthStencilState>& state,flatcpu::CopyCounter& counts) {
     auto& f=s.forwardLight;
     const bool cacheable=flatOmSetTracked();
@@ -66,12 +69,20 @@ void forwardOmDepth(State& s,Ptr<ID3D11DepthStencilView>& dsv,Ptr<ID3D11DepthSte
         if(flatOmDepthStateRecorded(s.context.Get(),recorded)) {
             f.depthState=f.depthView?static_cast<ID3D11DepthStencilState*>(recorded):nullptr;
             f.depthKey.depthState=key.depthState;
+            counts.add(flatcpu::kCopyDepthStateAdopted);
         }
     }
     if(cacheable&&f.depthKey==key) {
         plan=flatQueryCut().plan(FlatQuery::ForwardDepth);
         if(plan==FlatQueryPlan::Shortcut){dsv=f.depthView;state=f.depthState;return;}
     }
+    // Why this one asks, the first differing part of the key (a diagnostic: flat_cpu.h's depth-ask counts).
+    if(!cacheable)counts.add(flatcpu::kCopyDepthAskUntracked);
+    else if(!f.depthKey.valid||f.depthKey.frame!=key.frame)counts.add(flatcpu::kCopyDepthAskFrame);
+    else if(f.depthKey.targets!=key.targets)counts.add(static_cast<flatcpu::CopyCount>(flatcpu::kCopyDepthAskTargetGame+flatOmTargetSourceLast()));
+    else if(f.depthKey.rtv!=key.rtv||f.depthKey.dsv!=key.dsv)counts.add(flatcpu::kCopyDepthAskBinding);
+    else if(f.depthKey.depthState!=key.depthState)counts.add(flatcpu::kCopyDepthAskState);
+    else counts.add(flatcpu::kCopyDepthAskSample);
     counts.add(flatcpu::kCopyRawDsvGet);
     s.context->OMGetRenderTargets(0,nullptr,&dsv);
     if(dsv){counts.add(flatcpu::kCopyRawDepthGet);UINT ref=0;s.context->OMGetDepthStencilState(&state,&ref);}

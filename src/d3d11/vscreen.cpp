@@ -113,6 +113,9 @@
 #include "graphics_bridge.h"
 #include <intrin.h>
 
+// This module's own image (the linker's symbol), for flatOmTargetSourceOf.
+extern "C" IMAGE_DOS_HEADER __ImageBase;
+
 namespace edvr {
 
 // The subscriber gate the draw path reads (draw_gate.h). TRUE at startup, so
@@ -3109,10 +3112,25 @@ void STDMETHODCALLTYPE hookedGenerateMips(ID3D11DeviceContext* self,
     g_state->realGenerateMips(self, srv);
 }
 
+// Who called a target-set hook (flat_om_generation.h's FlatOmTargetSource, a diagnostic): another context, EDVR's own
+// code (the hook is a vtable slot, so the return address is the caller's; inside this module's image means EDVR), or
+// the game. Two compares against the image's extent, read once from its own headers.
+uint32_t flatOmTargetSourceOf(ID3D11DeviceContext* self, const void* caller) {
+    if (foreignContext(self)) return kFlatOmTargetForeign;
+    static const uintptr_t base = reinterpret_cast<uintptr_t>(&__ImageBase);
+    static const uintptr_t extent = [] {
+        const auto* dos = &__ImageBase;
+        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(reinterpret_cast<const BYTE*>(dos) + dos->e_lfanew);
+        return static_cast<uintptr_t>(nt->OptionalHeader.SizeOfImage);
+    }();
+    return reinterpret_cast<uintptr_t>(caller) - base < extent ? kFlatOmTargetEdvr : kFlatOmTargetGame;
+}
+
 void STDMETHODCALLTYPE hookedOMSetRenderTargets(ID3D11DeviceContext* self, UINT n,
                                                 ID3D11RenderTargetView* const* rtvs,
                                                 ID3D11DepthStencilView* dsv) {
     flatOmSetNote(kFlatOmTargets);   // the forward-light watch's output-merger answer is stale (flat_om_generation.h)
+    flatOmTargetSourceNote(flatOmTargetSourceOf(self, _ReturnAddress()));
     if (!foreignContext(self)) flatIssueEpochBumpRt();
     if (g_flatComputeInternal) { g_state->realOMSetRenderTargets(self, n, rtvs, dsv); return; }
     ++g_state->thunkHits[kHitOmSet];
@@ -3162,6 +3180,7 @@ void STDMETHODCALLTYPE hookedOMSetRtvAndUav(ID3D11DeviceContext* self, UINT n,
                                             ID3D11UnorderedAccessView* const* uavs,
                                             const UINT* counts) {
     flatOmSetNote(kFlatOmTargets);   // UAV-only sets too (flat_om_generation.h)
+    flatOmTargetSourceNote(flatOmTargetSourceOf(self, _ReturnAddress()));
     // 0xFFFFFFFF keeps the current targets. Anything else can replace the depth view.
     if (!foreignContext(self) && n != 0xFFFFFFFFu) flatIssueEpochBumpRt();
     if (g_flatComputeInternal) { g_state->realOMSetRtvAndUav(self, n, rtvs, dsv, uavStart, uavCount, uavs, counts); return; }
@@ -6493,6 +6512,7 @@ void vScreenSetRenderTargetsRaw(ID3D11DeviceContext* ctx, uint32_t n,
                                 ID3D11DepthStencilView* dsv) {
     if (!g_state || !g_state->realOMSetRenderTargets || !ctx) return;
     flatOmSetNote(kFlatOmTargets);
+    flatOmTargetSourceNote(kFlatOmTargetRaw);
     flatIssueEpochBumpRt();
     g_state->realOMSetRenderTargets(ctx, n, rtvs, dsv);
 }
