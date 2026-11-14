@@ -1,6 +1,7 @@
 // Pure shader-family declarations shared by the motion producer and its
 // metadata tests. A declared pair is not proof that a runtime patch succeeded.
 #pragma once
+#include <atomic>
 #include <cstdint>
 
 namespace edvr {
@@ -156,13 +157,21 @@ inline int familyOfVs(uint64_t hash) noexcept {
     for (int i = 0; i < kFamilyCount; ++i) if (kFamilies[i].vs == hash) return i;
     return -1;
 }
+// fix.character_motion (2026-11-14): the flat profile keys the VR-only SKINNED families too, so the second skin can give on-foot
+// characters their own motion there (engine_velocity.cpp engineVelocitySetFlatSkin sets it). Off, every answer below is exactly the one
+// it was. Everything that remembers these answers is cleared when it changes (flat_runtime.cpp's pair facts, the quick family memo).
+inline std::atomic<bool> g_flatSkinnedFamilies{false};
+inline bool vrOnlyRefused(int family, bool flat) noexcept {
+    return flat && kFamilies[family].vrOnly &&
+           !(kFamilies[family].skinned && g_flatSkinnedFamilies.load(std::memory_order_relaxed));
+}
 inline int familyForProfile(uint64_t hash, bool flat) noexcept {
     const int family = familyOfVs(hash);
-    return family >= 0 && (!kFamilies[family].flatOnly || flat) && (!kFamilies[family].vrOnly || !flat) ? family : -1;
+    return family >= 0 && (!kFamilies[family].flatOnly || flat) && !vrOnlyRefused(family, flat) ? family : -1;
 }
 inline bool keyedPs(int family, uint64_t hash, bool flat = false) noexcept {
     if (family < 0 || family >= kFamilyCount || !hash) return false;
-    if (flat && kFamilies[family].vrOnly) return false;
+    if (vrOnlyRefused(family, flat)) return false;
     for (uint64_t h : kFamilies[family].ps) if (h == hash) return true;
     return flat && kFamilies[family].flatPs == hash;
 }

@@ -88,6 +88,9 @@ bool engineVelocityEmitRefused() noexcept;
 // diagnostics or an eye run): the emit's census runs only
 // then (the 2026-09-23 performance review).
 void engineVelocityDiagnostics(bool on);
+// fix.character_motion (the second skin in the flat profile), live: the flat runtime passes the key once a Present.
+// True when the key changed: the caller then clears whatever remembers which pairs are pool families (flat_pair_facts.h).
+bool engineVelocitySetFlatSkin(bool want);
 // The flat census of unkeyed pairs (engine_velocity_unkeyed.h): writes the 5 s
 // window's line into `out` and starts the next window. The line is written even
 // when the window held nothing or the feature is off (live=0): its absence in a

@@ -174,8 +174,8 @@ MUTANTS = [
     M("chain-job-count-not-told-to-hook", "L7", "gpu", [("    skinEntityHookNoteChain(groups);", "    ;")],
       "the hook is never told its job table has jobs: an empty list is judged by nothing"),
     # ---- L13: the on-foot source's own target 7 (F2 on foot, the first-person panel) ----
-    M("source-gets-no-target-7", "L13", "engine", [("const bool wantSkin = !runtimeFlatProfile() && g_skinWanted.load(std::memory_order_acquire);",
-                                                    "const bool wantSkin = !runtimeFlatProfile() && eye != kEngineVelocitySourceEye && g_skinWanted.load(std::memory_order_acquire);")],
+    M("source-gets-no-target-7", "L13", "engine", [("const bool wantSkin = skinProfileAllows() && g_skinWanted.load(std::memory_order_acquire);",
+                                                    "const bool wantSkin = skinProfileAllows() && eye != kEngineVelocitySourceEye && g_skinWanted.load(std::memory_order_acquire);")],
       "the on-foot source gets no target 7 (the eyes only, as F2 was): the world route and the screen motion have no exact motion for a character seen on foot"),
     # The flat profile is kept from the second skin by independent layers: the skinned families are vrOnly (familyForProfile and keyedPs refuse them, at the quick
     # path and in the slow one), the draw's skinDraw guard, the flat source's early return in ensureSlots and the guard on wantSkin. Any ONE removed is an equivalent
@@ -184,8 +184,8 @@ MUTANTS = [
       [("        quickFamilyForProfile(bindingShaderHash(BindSlot::Vs), runtimeFlatProfile()) < 0) {\n", "        engine_velocity_family::familyOfVs(bindingShaderHash(BindSlot::Vs)) < 0) {\n"),
        ("    const int f = familyForProfile(vsHash, runtimeFlatProfile());\n", "    const int f = engine_velocity_family::familyOfVs(vsHash);\n"),
        ("    if (!keyedPs(f, psHash, runtimeFlatProfile())) {\n", "    if (!keyedPs(f, psHash, false)) {\n"),
-       ("    bool skinDraw = fam.skin && !runtimeFlatProfile();", "    bool skinDraw = fam.skin;"),
-       ("const bool wantSkin = !runtimeFlatProfile() && g_skinWanted.load(std::memory_order_acquire);", "const bool wantSkin = g_skinWanted.load(std::memory_order_acquire);"),
+       ("    bool skinDraw = fam.skin && skinProfileAllows();", "    bool skinDraw = fam.skin;"),
+       ("const bool wantSkin = skinProfileAllows() && g_skinWanted.load(std::memory_order_acquire);", "const bool wantSkin = g_skinWanted.load(std::memory_order_acquire);"),
        ("    if(runtimeFlatProfile() && eye==kEngineVelocitySourceEye) {\n        FlatMarkerPlane* plane", "    if(false) {\n        FlatMarkerPlane* plane")],
       "the flat profile treats a skinned family's draw as the second skin's: a patched vertex shader and a target 7 in a profile with no consumer for either"),
     M("source-target-7-never-cleared", "L13", "engine", [("if (eye == kEngineVelocitySourceEye && e.skinClearedFrame != frame && e.skinRtv) {", "if (false) {")],

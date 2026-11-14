@@ -80,8 +80,8 @@ MUTATIONS = [
     # is derived again.
     ("switch-configure-never-asks", "if (on == live.load(std::memory_order_acquire)) { if (on) armSkinForProfileLocked(); return; }",
      "if (on == live.load(std::memory_order_acquire)) return;", "profile switch W4"),
-    ("switch-decline-not-remembered", "if (runtimeFlatProfile()) { g_skinDeclinedFlat = true; return; }",
-     "if (runtimeFlatProfile()) return;", "profile switch W4"),
+    ("switch-decline-not-remembered", "if (!skinProfileAllows()) { g_skinDeclinedFlat = true; return; }",
+     "if (!skinProfileAllows()) return;", "profile switch W4"),
     ("switch-asks-every-configure", "if (!g_skinDeclinedFlat || runtimeFlatProfile() || !g_emitLive.load(std::memory_order_acquire)) return;",
      "if (runtimeFlatProfile() || !g_emitLive.load(std::memory_order_acquire)) return;", "profile switch W4"),
     ("switch-family-derived-before-arm-kept", "(kFamilies[f].skinned && s.derivedSkin != skinArmed)", "false", "profile switch W4"),

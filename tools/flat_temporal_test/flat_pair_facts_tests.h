@@ -177,5 +177,48 @@ inline int flatPairFactsTests() {
         expect(count(body, "pairFact.uiMayAsk") >= 1 && count(runtime, "!pairFact.uiMayAsk && !pairFact.sourceTone)") >= 1 && count(runtime, "pair.uiMayAsk ||") >= 1,
                "the producer-run shortcuts still read uiMayAsk alone: the canopy pair, which the memo leaves false, is treated by them exactly as before the family existed");
     }
+    // ---- fix.character_motion (2026-11-14): the flat profile keys the VR-only skinned families only while the switch is on ---------------
+    {
+        namespace evf = engine_velocity_family;
+        const bool was = evf::g_flatSkinnedFamilies.load();
+        bool offRefuses = true, onKeys = true, vrUnchanged = true, nonSkinnedUnchanged = true;
+        for (int i = 0; i < evf::kFamilyCount; ++i) {
+            const auto& f = evf::kFamilies[i];
+            evf::g_flatSkinnedFamilies.store(false);
+            const int flatOff = evf::familyForProfile(f.vs, true), vrOff = evf::familyForProfile(f.vs, false);
+            const bool psFlatOff = f.ps[0] && evf::keyedPs(i, f.ps[0], true);
+            evf::g_flatSkinnedFamilies.store(true);
+            const int flatOn = evf::familyForProfile(f.vs, true), vrOn = evf::familyForProfile(f.vs, false);
+            const bool psFlatOn = f.ps[0] && evf::keyedPs(i, f.ps[0], true);
+            vrUnchanged = vrUnchanged && vrOff == vrOn;
+            if (f.vrOnly && f.skinned) {
+                offRefuses = offRefuses && flatOff < 0 && !psFlatOff;
+                onKeys = onKeys && flatOn == i && (!f.ps[0] || psFlatOn);
+            } else {
+                nonSkinnedUnchanged = nonSkinnedUnchanged && flatOff == flatOn && psFlatOff == psFlatOn;
+            }
+        }
+        expect(offRefuses, "switch off: the flat profile refuses the VR-only skinned families, as before");
+        expect(onKeys, "switch on: the flat profile keys the VR-only skinned families and their pixel shaders");
+        expect(vrUnchanged && nonSkinnedUnchanged, "the switch changes nothing in VR and nothing for any other family");
+        // The memo remembers the answer: a flip without clear() would keep the stale one, which is why flat_runtime clears it on a change.
+        const auto skinnedRow = [&]() -> int { for (int i = 0; i < evf::kFamilyCount; ++i) if (evf::kFamilies[i].vrOnly && evf::kFamilies[i].skinned && evf::kFamilies[i].ps[0]) return i; return -1; }();
+        if (skinnedRow >= 0) {
+            const auto& f = evf::kFamilies[skinnedRow];
+            FlatPairFactsMemo memo;
+            evf::g_flatSkinnedFamilies.store(false);
+            const bool before = memo.get(f.vs, f.ps[0], true).supported;
+            evf::g_flatSkinnedFamilies.store(true);
+            const bool stale = memo.get(f.vs, f.ps[0], true).supported;
+            memo.clear();
+            const bool fresh = memo.get(f.vs, f.ps[0], true).supported;
+            expect(!before && !stale && fresh, "a flip is seen only after clear(): the memo must be cleared when the switch changes");
+        }
+        std::ifstream rt("src/d3d11/flat_runtime.cpp", std::ios::binary);
+        const std::string runtime((std::istreambuf_iterator<char>(rt)), {});
+        expect(runtime.find("if (engineVelocitySetFlatSkin(Config::get().getBool(\"fix.character_motion\", false))) s.pairFacts.clear();") != std::string::npos,
+               "the flat runtime clears the pair facts whenever fix.character_motion changes");
+        evf::g_flatSkinnedFamilies.store(was);
+    }
     return failures;
 }

@@ -220,6 +220,11 @@ std::atomic<bool> g_anyBound{false};   // EDVR state may still be bound (owner t
 SkinJoinGpu g_skin;
 std::atomic<bool> g_skinWanted{false};   // VR profile with the feature live: the hook is armed and the chain dispatch feeds the join
 bool g_skinDeclinedFlat = false;         // armSkinLocked ran in the flat profile and declined: a later configure under VR owes the arm (g_mutex)
+// fix.character_motion (2026-11-14): the second skin in the flat profile too. Flat's compose already takes the source's target 7
+// (flat_mono_resolve.cpp, prep t17 with debug.w bit 4); only the producer side was VR's alone. Set live by engineVelocitySetFlatSkin.
+std::atomic<bool> g_skinFlatWanted{false};
+// Whether this profile may take the second skin: VR always (as before), flat only with fix.character_motion on.
+inline bool skinProfileAllows() noexcept { return !runtimeFlatProfile() || g_skinFlatWanted.load(std::memory_order_acquire); }
 uint32_t g_skinPoseFrame = ~0u;          // the present frame whose first pool snapshot owes a pose table (built at the frame boundary), and that snapshot's eye
 int g_skinPoseEye = -1;
 // The frame's list of the instance-stream entries its skinned draws read (skin_join.h, "the pose table's CPU reference"): every skinned family's substituted
@@ -779,7 +784,7 @@ void deriveFamily(int f) {
     // pixel shaders were patched with or without its export) is derived again, from the remembered bytecode. So is a skinned
     // family derived before the second skin was armed: a session that started flat arms it at its first switch to VR
     // (armSkinForProfileLocked), and a family derived in VR just ahead of that must take it too.
-    const bool skinArmed = !runtimeFlatProfile() && g_skinWanted.load(std::memory_order_acquire);
+    const bool skinArmed = skinProfileAllows() && g_skinWanted.load(std::memory_order_acquire);
     if (s.derived && (s.derivedFlat != runtimeFlatProfile() || (kFamilies[f].skinned && s.derivedSkin != skinArmed))) {
         s.patchedVs.clear(); s.patchedPs.clear(); s.guardedPs.clear(); s.psFailed.clear();
         s.psExports.clear(); s.psZeroes.clear();
@@ -799,7 +804,7 @@ void deriveFamily(int f) {
         // g_skinWanted: a family takes the second skin only once the hook is armed (armSkinLocked), never patching shaders whose
         // target 7 nothing makes. A session that started flat arms it at its first switch to VR (armSkinForProfileLocked); a
         // family derived before that is derived again (derivedSkin above).
-        if (s.valid && !runtimeFlatProfile() && kFamilies[f].skinned && g_skinWanted.load(std::memory_order_acquire)) {
+        if (s.valid && skinProfileAllows() && kFamilies[f].skinned && g_skinWanted.load(std::memory_order_acquire)) {
             // A family whose pixel shaders already read the vertex shader's next free register names its own (kFamilies); it must still be free on
             // the vertex side, which the vertex patch checks.
             if (s.inputs.skinRegister < 32 && kFamilies[f].skinRegister) s.inputs.skinRegister = kFamilies[f].skinRegister;
@@ -872,7 +877,7 @@ ID3D11PixelShader* patchedPsFor(ID3D11DeviceContext* ctx, int f, ID3D11PixelShad
         // family's pixel shader, best first: its E (a keyed pair); else "no history" written exactly (valid 0), so a pixel it covers never keeps the E an
         // earlier draw of the eye-frame wrote there; else nothing, and then the draw is not substituted at all (the draw path says so): a write-masked
         // draw would leave that earlier E under a surface it is not the answer for.
-        const bool skinFamily = s.skin && !runtimeFlatProfile();
+        const bool skinFamily = s.skin && skinProfileAllows();
         const bool wantsExport = skinFamily && engine_velocity_family::skinPair(kFamilies[f].vs, info->second.hash);
         for (int mode = wantsExport ? 0 : skinFamily ? 1 : 2; mode <= 2 && !patched; ++mode) {
             std::vector<BYTE> out;
@@ -1326,14 +1331,19 @@ bool ensureSlots(ID3D11DeviceContext* ctx, Eye& e, int eye, ID3D11Texture2D* dep
             e.gameMark.Reset();e.gameMarkSrv.Reset();e.gameMarkFrame=~0u;
             e.depth=depth;e.slots=plane->slots;e.slotsRtv=plane->rtv;e.slotsSrv=plane->srv;
             e.width=dd.Width;e.height=dd.Height;e.slotFormat=DXGI_FORMAT_R32G32B32A32_FLOAT;
+            // A new depth or plane: target 7 is made again at its size (fix.character_motion).
+            e.skin.Reset();e.skinRtv.Reset();e.skinSrv.Reset();e.skinBound=false;e.skinFailed=false;e.skinWrittenFrame=~0u;e.skinClearedFrame=~0u;
         }
+        // fix.character_motion: the flat source's target 7, as the VR source makes it below, once the second skin is armed here.
+        if (skinProfileAllows() && g_skinWanted.load(std::memory_order_acquire) && !e.skin && !e.skinFailed)
+            makeSkinTarget(ctx, e, eye, dd.Width, dd.Height);
         return true;
     }
     const DXGI_FORMAT slotFormat=runtimeFlatProfile() && eye==kEngineVelocitySourceEye?
         DXGI_FORMAT_R32G32B32A32_FLOAT:DXGI_FORMAT_R32G32_FLOAT;
     // F2: target 7 beside the slot target, in VR (the eyes and the on-foot source; never in the flat profile) once the feature wants it (a failure to
     // make it is remembered for this size: the eye goes on without it).
-    const bool wantSkin = !runtimeFlatProfile() && g_skinWanted.load(std::memory_order_acquire);
+    const bool wantSkin = skinProfileAllows() && g_skinWanted.load(std::memory_order_acquire);
     if (e.depth.Get() == depth && e.slots && e.width == dd.Width && e.height == dd.Height && e.slotFormat==slotFormat) {
         if (wantSkin && !e.skin && !e.skinFailed) makeSkinTarget(ctx, e, eye, dd.Width, dd.Height);
         return true;
@@ -1464,7 +1474,7 @@ bool snapshot(ID3D11DeviceContext* ctx, Eye& e, int eye, uint32_t frame) {
         if(timedApply(ctx,e.pool.Get(),poolBuf.Get(),frame,e.poolOutput))++g_primaryApplied;
         // F2: this present frame owes a pose table (record bytes 0..31 by palette base) from the first eye's private copy, built at the frame boundary
         // (skinBuildPoseLocked) once every draw has told which records it read. It is next frame's "previous pose".
-        if (g_skinWanted.load(std::memory_order_relaxed) && !runtimeFlatProfile() && g_skinPoseFrame != frame) {
+        if (g_skinWanted.load(std::memory_order_relaxed) && skinProfileAllows() && g_skinPoseFrame != frame) {
             g_skinPoseFrame = frame;
             g_skinPoseEye = eye;
         }
@@ -1678,7 +1688,7 @@ bool bindTarget(ID3D11DeviceContext* ctx, Eye& e, ID3D11DepthStencilView* dsv) {
     // F2: target 7 joins it where the game has nothing there (the same size by construction; it is not the game's to refuse).
     ID3D11RenderTargetView* const gameRt7 = rt[kSkinTarget];
     e.skinBound = false;
-    if (e.skinRtv && !runtimeFlatProfile()) {
+    if (e.skinRtv && skinProfileAllows() && g_skinWanted.load(std::memory_order_acquire)) {
         if (!gameRt7) { rt[kSkinTarget] = e.skinRtv.Get(); e.skinBound = true; }
         else ++g_skinStats.slotTaken;
     }
@@ -1888,7 +1898,7 @@ void slowPath(ID3D11DeviceContext* ctx, bool rtv0Eye) {
         return;
     }
     ID3D11VertexShader* useVs = vs;
-    bool skinDraw = fam.skin && !runtimeFlatProfile();
+    bool skinDraw = fam.skin && skinProfileAllows();
     if (fam.inputs.slotFromVsPatch || skinDraw) {
         useVs = patchedVsFor(ctx, f, vs);
         if (!useVs) {
@@ -2703,7 +2713,7 @@ void attachEmitLocked(bool quiet) {
 // F2: the second skin, VR with the feature live. The hook is armed once (its own line says what it did) and its gate opened; the
 // chain dispatch then feeds the join. A hook that stood down leaves the job table's prefix join, and the log says so.
 void armSkinLocked() {
-    if (runtimeFlatProfile()) { g_skinDeclinedFlat = true; return; }
+    if (!skinProfileAllows()) { g_skinDeclinedFlat = true; return; }
     g_skinDeclinedFlat = false;
     char line[420] = {};
     const SkinHookState state = skinEntityHookArm(line, sizeof(line));
@@ -2711,9 +2721,10 @@ void armSkinLocked() {
     if (state == SkinHookState::Armed) Log::get().note("%s", line);
     else Log::get().note("skin join: %s", line);
     g_skinWanted.store(true, std::memory_order_release);
-    Log::get().note("skin join: the second skin is live (VR): the skinned characters' vertex shaders (vs_D99A, 61AE, 114A, 7B0D, 8B58, A6A3) compute last frame's position "
+    Log::get().note("skin join: the second skin is live (%s): the skinned characters' vertex shaders (vs_D99A, 61AE, 114A, 7B0D, 8B58, A6A3) compute last frame's position "
                     "from last frame's palette and pose and the keyed pixel shaders export it to target 7; identity from the %s, checked against the palette "
                     "chain's own job table every frame. A character it cannot join has no history for that frame, never a guess.",
+                    runtimeFlatProfile() ? "flat, fix.character_motion" : "VR",
                     state == SkinHookState::Armed ? "game's entry list (read-only hook), the table's prefix as the fallback" : "job table's prefix");
 }
 
@@ -2772,6 +2783,37 @@ void engineVelocityConfigure(bool on) {
 }
 
 void engineVelocityDiagnostics(bool on) { g_diagnosticsWanted.store(on, std::memory_order_relaxed); }
+
+// fix.character_motion, read once a Present by the flat runtime. On: in the flat profile with engine motion live, the second skin arms
+// as VR's does (the families derive again with it: deriveFamily's derivedSkin). Off: the hook's gate closes and the skin is no longer
+// wanted, so the families derive again without it and the flat source drops its target 7. The VR profile keeps its own rule.
+bool engineVelocitySetFlatSkin(bool want) {
+    if (g_skinFlatWanted.load(std::memory_order_acquire) == want) return false;
+    std::lock_guard<std::recursive_mutex> lock(g_mutex);
+    if (g_skinFlatWanted.load(std::memory_order_acquire) == want) return false;
+    g_skinFlatWanted.store(want, std::memory_order_release);
+    // The skinned VR-only families are keyed in flat only while the key is on (engine_velocity_families.h); the caller clears the pair facts.
+    engine_velocity_family::g_flatSkinnedFamilies.store(want, std::memory_order_relaxed);
+    Log::get().note("skin join: fix.character_motion %s: the flat profile %s the skinned characters' families (vs_8B58, 7B0D, 114A, D99A, A6A3, 01DA, 33A5).",
+                    want ? "on" : "off", want ? "keys" : "no longer keys");
+    if (!runtimeFlatProfile()) return true;
+    if (want) {
+        if (live.load(std::memory_order_acquire) && g_emitLive.load(std::memory_order_acquire) && !g_skinWanted.load(std::memory_order_acquire))
+            armSkinLocked();
+        else
+            Log::get().note("skin join: fix.character_motion on; the second skin arms when engine motion goes live (it is %s).",
+                            live.load(std::memory_order_acquire) ? "live but its emit is not" : "not live");
+        return true;
+    }
+    if (g_skinWanted.exchange(false, std::memory_order_acq_rel)) {
+        skinEntityHookSetGate(false);
+        g_skinDeclinedFlat = true;
+        Eye& e = g_eyes[kEngineVelocitySourceEye];
+        e.skin.Reset(); e.skinRtv.Reset(); e.skinSrv.Reset(); e.skinBound = false; e.skinWrittenFrame = ~0u; e.skinClearedFrame = ~0u;
+        Log::get().note("skin join: fix.character_motion off: the second skin stands down in the flat profile; skinned characters keep the camera term, as before.");
+    }
+    return true;
+}
 
 void engineVelocityShutdown() {
     std::lock_guard<std::recursive_mutex> lock(g_mutex);
@@ -3178,12 +3220,15 @@ void noteSkinDrawSlow(ID3D11DeviceContext* ctx, uint32_t startInstance, uint32_t
 static int quickFamilyForProfile(uint64_t hash, bool flat) {
     static bool known = false;
     static uint64_t memoHash = 0;
-    static bool memoFlat = false;
+    static bool memoFlat = false, memoSkinned = false;
     static int memoFamily = -1;
-    if (known && memoHash == hash && memoFlat == flat) return memoFamily;
+    // fix.character_motion changes what flat keys (engine_velocity_families.h g_flatSkinnedFamilies): it is part of the key.
+    const bool skinned = engine_velocity_family::g_flatSkinnedFamilies.load(std::memory_order_relaxed);
+    if (known && memoHash == hash && memoFlat == flat && memoSkinned == skinned) return memoFamily;
     memoFamily = familyForProfile(hash, flat);
     memoHash = hash;
     memoFlat = flat;
+    memoSkinned = skinned;
     known = true;
     return memoFamily;
 }

@@ -70,6 +70,8 @@ inline constexpr FlatPageRow kFlatVisualRows[] = {
     // Legacy glass lights (2026-11-06): which lights reach that dirt. Dimmed unless cockpit_glass is legacy, as the row above.
     {"visual", "cockpit_glass_lights", FlatRowRead::Allowlist},
     {"fix", "particle_billboard", FlatRowRead::Allowlist},
+    // Character motion (2026-11-14): on-foot characters' own motion for the temporal AA (the second skin, engine_velocity.cpp). Live.
+    {"fix", "character_motion", FlatRowRead::Allowlist},
 };
 inline constexpr size_t kFlatVisualRowCount = sizeof(kFlatVisualRows) / sizeof(kFlatVisualRows[0]);
 
