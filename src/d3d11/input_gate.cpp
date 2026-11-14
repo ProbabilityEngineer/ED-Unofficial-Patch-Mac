@@ -20,7 +20,6 @@
 #include "../common/runtime_profile.h"
 #include "../common/timing.h"
 #include "../common/vtable_hook.h"
-#include "desktop_window_cursor.h"   // desktopWindowNoteMouseCooperative: the game mouse's cooperative level, observed
 #include "joy_watch.h"
 #include "menu_pad.h"
 
@@ -1169,7 +1168,7 @@ void captureKeyboard(void* device, std::index_sequence<I...>) {
 // One slot (SetCooperativeLevel, 13) on the table of the first mouse the game creates, in place and stacked with whatever else patched that table. The hook forwards first and
 // looks after, so what the game gets is the driver's answer unchanged. Only a device recorded at CreateDevice as a mouse is reported: the table is shared with the keyboard
 // and the controllers. Observe-only: nothing about the mouse is changed. Round 3 found it nonexclusive and background (the lock is the game's ClipCursor, which is left alone;
-// docs\desktop-window.md). The line stays as an instrument. VR scope only.
+// docs\desktop-window.md). Its report went with the desktop window (ed-metalfx stage 2c); the hook now only forwards. VR scope only.
 constexpr size_t kSlotSetCooperativeLevel = 13;
 typedef HRESULT(STDMETHODCALLTYPE* PFN_SetCooperativeLevel)(void*, HWND, DWORD);
 constexpr size_t kMouseDevices = 4;
@@ -1181,13 +1180,6 @@ struct MouseDoor {
 };
 MouseDoor g_mouseDoor;
 
-bool isGameMouse(void* device) {
-    for (auto& m : g_mice) {
-        if (m.load(std::memory_order_relaxed) == device) return true;
-    }
-    return false;
-}
-
 void mouseForget(void* device) {
     for (auto& m : g_mice) {
         void* expected = device;
@@ -1197,7 +1189,6 @@ void mouseForget(void* device) {
 
 HRESULT STDMETHODCALLTYPE hookMouseSetCooperativeLevel(void* self, HWND hwnd, DWORD flags) {
     const HRESULT hr = g_mouseDoor.original(self, hwnd, flags);
-    if (isGameMouse(self)) desktopWindowNoteMouseCooperative(flags, hr);
     return hr;
 }
 

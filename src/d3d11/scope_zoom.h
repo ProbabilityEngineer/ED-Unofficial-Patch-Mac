@@ -5,6 +5,7 @@
 // pass 1 marches 128 rays from c over the eye's depth to find the hole, pass 2 samples the picture at c + (p - c) / M inside it.
 #pragma once
 
+// ed-metalfx (stage 2c): the lens (scope_zoom.cpp) went with native on foot; it is never wanted, so every call below is a no-op.
 #include <d3d11.h>
 #include <wrl/client.h>
 
@@ -61,29 +62,29 @@ inline void scopeZoomDepthSet(int eye, ID3D11ShaderResourceView* srv, uint32_t w
 }
 
 // The frame thread: publish this frame's lens (the verdict kIdle for a frame that asks nothing of it). The microsecond clock is the door's.
-void scopeZoomPublish(const ScopeZoomFrame& frame);
+inline void scopeZoomPublish(const ScopeZoomFrame&) {}
 // The door: true while a press is being counted or rays are in flight (so a log of presses is complete); a frame with the lens idle costs the door nothing else.
-bool scopeZoomWanted();
+inline bool scopeZoomWanted() { return false; }
 // The scope's gunsight mark (ui_layer_math.h kScopeMark): true while the last published frame qualifies for the lens and is no older than the door takes a c, which is how the door
 // reads it. Asked by the draw path for the mark's one pair, so the family is named only for a sight the lens magnifies.
-bool scopeZoomMarkArmed();
+inline bool scopeZoomMarkArmed() { return false; }
 // C1a (crisp_reticle.h): the frame thread publishes each tick whether the gunsight quad is to be taken out of the scene for the sights that are up (a weapon the scope lens does not
 // name); the draw path asks scopeZoomCrispArmed for the quad's one pair, beside scopeZoomMarkArmed, and gets true while the last tick said so and is no older than the lens takes a c.
 // Published false whenever no press of the sights is open, so outside a press the only cost is the relaxed load the draw path makes after the lens's own answer was no.
-void scopeZoomCrispPublish(bool armed);
-bool scopeZoomCrispArmed();
+inline void scopeZoomCrispPublish(bool) {}
+inline bool scopeZoomCrispArmed() { return false; }
 // An eye-frame has reached the weapons composite (uiLayerComposite) while the crisp arming was up: counted for the press line, with whether a quad draw had been taken into the eye's
 // weapons layer in that frame. Not called while it is down.
-void scopeZoomNoteCrispFrame(uint32_t eye, bool quadTaken);
+inline void scopeZoomNoteCrispFrame(uint32_t, bool) {}
 // The press's counts (zeroed at scopeZoomPressBegin).
-void scopeZoomCrispTake(crisp::DoorStats* out);
+inline void scopeZoomCrispTake(crisp::DoorStats* out) { if (out) *out = {}; }
 // The layer took a mark draw out of the scene into an eye's weapons layer (0 left, 1 right) in the temporal sequence seq: counted for the press line, and the right eye's sequence is
 // what the door compares its own against to count the armed frames that had no mark draw. path (scope_zoom_s1.h kMarkPath*) is what the layer did with the draw's depth and stencil tests.
-void scopeZoomNoteMark(uint32_t eye, uint64_t seq, uint32_t path);
+inline void scopeZoomNoteMark(uint32_t, uint64_t, uint32_t) {}
 // An eye-frame whose weapons layer held a mark has been through the composite (uiLayerComposite): kind (scope_zoom_s1.h kMarkComposite*) is how the composite served it.
-void scopeZoomNoteMarkComposite(uint32_t kind);
+inline void scopeZoomNoteMarkComposite(uint32_t) {}
 // The gunsight mark's route through the weapons layer stood down (ui_layer.cpp markStandDown): counted for the press line.
-void scopeZoomNoteMarkStandDown();
+inline void scopeZoomNoteMarkStandDown() {}
 // B3: the left eye's door, called with eye 0's picture after the upscaler and RCAS and before the left eye's UI composite. When the lens is to be rendered (the frame record says so) and the
 // frame has the left eye drawn with the zoomed window, it copies the part of the picture the lens may read (scope_zoom_b3.h b3CopyRect) for the right eye's door a moment later.
 struct ScopeZoomLeftArgs {
@@ -95,18 +96,18 @@ struct ScopeZoomLeftArgs {
                                         // (scopezoom::lensPictureResolved, as the right eye's door has it), and a flight to show that eye 0 is drawn with the zoomed window and recognised with the mode off
                                         // (native_temporal.cpp sets zoomedNow from the provider's frame in begin() whichever the mode, so the window may already be told): not built.
 };
-void scopeZoomLeftDoor(const ScopeZoomLeftArgs& args);
+inline void scopeZoomLeftDoor(const ScopeZoomLeftArgs&) {}
 // The doors ask the temporal pass whether eye 0 is zoomed in their frame through this pointer, set once by the frame tick (native_on_foot.cpp: scopeZoomSetTemporalZoom(&nativeTemporalZoom)),
 // so the door links without the temporal pass (the rigs that link it stub nothing). Not set: eye 0 is never zoomed, and a frame asked for B3 falls back to the plain lens, counted.
 using ScopeZoomTemporalFn = bool (*)(uint64_t sequence, float zoomed[4], float pre[4]);
-void scopeZoomSetTemporalZoom(ScopeZoomTemporalFn fn);
+inline void scopeZoomSetTemporalZoom(ScopeZoomTemporalFn) {}
 // B3: the door's half of the press line's figures (the lens's source, the copies, the parallax at c); zero at scopeZoomPressBegin.
-void scopeZoomB3Take(scopezoom::B3Press* out);
+inline void scopeZoomB3Take(scopezoom::B3Press* out) { if (out) *out = {}; }
 // A press begins (zero the door's counters) and ends (the counters, finished, for the press line).
-void scopeZoomPressBegin(uint32_t press);
+inline void scopeZoomPressBegin(uint32_t) {}
 // The press the last scopeZoomPressBegin named (0 before any): the mark's stand-down lasts until it changes.
-uint32_t scopeZoomPressId();
-void scopeZoomPressTake(scopezoom::LensDoorStats* out);
+inline uint32_t scopeZoomPressId() { return 0; }
+inline void scopeZoomPressTake(scopezoom::LensDoorStats* out) { if (out) *out = {}; }
 
 struct ScopeZoomDoorArgs {
     uint32_t eye = 0;
@@ -119,8 +120,8 @@ struct ScopeZoomDoorArgs {
 };
 // The door, called with the frame the weapons/HUD composite is about to take. Rewrites the right eye's picture in place, or, for a frame it may not write (or whose format has no
 // UAV), makes its own copy of it, rewrites that and hands it back in *copy. Counts every frame it is called on under its verdict or its reason (scope_zoom_s1.h LensDoorStats).
-void scopeZoomDoor(const ScopeZoomDoorArgs& args, Microsoft::WRL::ComPtr<ID3D11Texture2D>* copy);
+inline void scopeZoomDoor(const ScopeZoomDoorArgs&, Microsoft::WRL::ComPtr<ID3D11Texture2D>*) {}
 // The device went, or the DLL is shutting down: every device child released.
-void scopeZoomRelease();
+inline void scopeZoomRelease() {}
 
 }  // namespace edvr

@@ -478,18 +478,7 @@ python "tools\gen_exports.py" --source "%SystemRoot%\System32\d3d11.dll" ^
     --extra-export edvr_selftest_profile_skip_teardown ^
     --extra-export edvrSharpen ^
     --extra-export edvrDepthProbeSelftest ^
-    --extra-export edvrAcquireNativeMenu ^
-    --extra-export edvrAcquireNativeTiming ^
-    --extra-export edvrAcquireDesktopWindow ^
-    --extra-export edvrReadNativePresentTrace ^
-    --extra-export edvrQueryNativeRenderSettings ^
-    --extra-export edvrPublishNativeRenderSizing ^
-    --extra-export edvrQueryNativeRenderSizing ^
-    --extra-export edvrGpuFrameEvent ^
-    --extra-export edvrPluginDispatchUpdate ^
-    --extra-export edvrPluginDispatchRenderEye ^
-    --extra-export edvrPluginDispatchFilterInput ^
-    --extra-export edvrPluginHasActivePlugins
+    --extra-export edvrGpuFrameEvent
 if errorlevel 1 ( echo [edvr] ERROR: export generation failed & exit /b 1 )
 
 REM Both halves link "%OBJ%\<half>\*.obj" -- a wildcard -- and every build
@@ -612,12 +601,9 @@ python tools\compile_cache.py --prune --keep thunks.obj cl.exe %CFLAGS% %NGXFLAG
     "src\d3d11\menu_panel.cpp" "src\d3d11\perf_monitor.cpp" "src\d3d11\native_perf_history.cpp" "src\d3d11\native_benchmark_collector.cpp" ^
     "src\d3d11\stall_watch.cpp" "src\d3d11\vram_tick.cpp" ^
     "src\d3d11\mem_tick.cpp" ^
-    "src\d3d11\native_menu.cpp" ^
     "src\d3d11\flat_temporal.cpp" "src\d3d11\flat_compute_capture.cpp" "src\d3d11\flat_compute_readback.cpp" ^
     "src\d3d11\flat_runtime.cpp" "src\d3d11\flat_mono_resolve.cpp" "src\d3d11\map_easu.cpp" "src\d3d11\map_smaa.cpp" "src\d3d11\flat_projection_scope.cpp" "src\d3d11\flat_projection_runtime.cpp" ^
     "src\d3d11\flat_camera_producer_probe.cpp" "src\d3d11\flat_camera_inject.cpp" "src\d3d11\flat_stationary_camera_capture.cpp" "src\d3d11\galaxy_map_pointer.cpp" "src\d3d11\galaxy_map_ui.cpp" ^
-    "src\d3d11\desktop_window.cpp" "src\d3d11\desktop_window_cursor.cpp" ^
-    "src\d3d11\native_timing.cpp" ^
     "src\d3d11\map_wait.cpp" ^
     "src\d3d11\native_render_settings.cpp" ^
     "src\d3d11\gpu_timing.cpp" "src\d3d11\gpu_frame_timing.cpp" "src\d3d11\gpu_span_d3d11.cpp" ^
@@ -655,7 +641,7 @@ python tools\compile_cache.py --prune --keep thunks.obj cl.exe %CFLAGS% %NGXFLAG
     "src\d3d11\wake_pulse.cpp" ^
     "src\d3d11\mode_watch.cpp" ^
     "src\d3d11\ui_depth.cpp" ^
-    "src\d3d11\ui_layer.cpp" "src\d3d11\scope_zoom.cpp" "src\d3d11\ui_surfaces.cpp" "src\d3d11\ui_panel_scale.cpp" "src\d3d11\orbital_width.cpp" "src\d3d11\supercruise_bars.cpp" "src\d3d11\srv_turret.cpp" "src\d3d11\srv_turret_entry_fade.cpp" "src\d3d11\srv_turret_press.cpp" "src\d3d11\srv_radar_anchor.cpp" ^
+    "src\d3d11\ui_layer.cpp" "src\d3d11\ui_surfaces.cpp" "src\d3d11\ui_panel_scale.cpp" "src\d3d11\orbital_width.cpp" "src\d3d11\supercruise_bars.cpp" "src\d3d11\srv_turret.cpp" "src\d3d11\srv_turret_entry_fade.cpp" "src\d3d11\srv_turret_press.cpp" "src\d3d11\srv_radar_anchor.cpp" ^
     "third_party\dxbc_hash\DxilHash.cpp" ^
     "src\d3d11\backdrop_fix.cpp" ^
     "src\d3d11\scrim_fix.cpp" ^
@@ -679,8 +665,7 @@ python tools\compile_cache.py --prune --keep thunks.obj cl.exe %CFLAGS% %NGXFLAG
     "src\d3d11\loader_panel.cpp" ^
     "src\d3d11\splash_dim.cpp" ^
     "src\d3d11\billboard_fix.cpp" ^
-    "src\d3d11\particle_fix.cpp" "src\d3d11\shader_swap.cpp" "src\d3d11\sunglare_fix.cpp" ^
-    "src\plugins\plugin_manager.cpp"
+    "src\d3d11\particle_fix.cpp" "src\d3d11\shader_swap.cpp" "src\d3d11\sunglare_fix.cpp"
 if errorlevel 1 ( echo [edvr] ERROR: compile failed & exit /b 1 )
 
 REM gdi32.lib: the settings menu's panel is rasterised with GDI (the game

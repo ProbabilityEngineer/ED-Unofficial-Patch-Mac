@@ -1,6 +1,5 @@
 #pragma once
 #include "../common/native_timing.h"
-#include "../common/native_present_trace.h"
 
 namespace edvr {
 struct NativeTimingSnapshot {
@@ -21,7 +20,8 @@ struct NativeTimingSnapshot {
 // from gpuFrameSnapshot(), is separately aged, and must belong to this session
 // (sequence >= firstSequence, with nonzero firstSequence). Never add device
 // GPU spans together or present either span as compositor GPU time.
-NativeTimingSnapshot nativeTimingSnapshot() noexcept;
+// ed-metalfx: no OpenXR runtime ships, so no timing context is ever opened; every query answers "none".
+inline NativeTimingSnapshot nativeTimingSnapshot() noexcept { return {}; }
 // The two most recent pose-wait returns of the current timing context, on the QPC clock the Present hook
 // reads. The runtime's frame cycle runs from one WaitGetPoses return to the next
 // (native_frame_cycle_window's boundary=host_wait_return_to_next_host_wait_return), so these two stamps give
@@ -36,17 +36,10 @@ struct NativeWaitReturns {
     int64_t returnQpc = 0;     // when it returned
     int64_t previousQpc = 0;   // when the wait before it returned
 };
-NativeWaitReturns nativeTimingWaitReturns() noexcept;
+inline NativeWaitReturns nativeTimingWaitReturns() noexcept { return {}; }
 // Called once from the timing table's close, after the context is released and the lock is dropped: the
 // session is over, so the monitor writes its end-of-session lines (perf_monitor.cpp). Null in a rig, which
 // is how native_timing.cpp links without perf_monitor.cpp.
 inline void (*g_nativeTimingCloseObserver)() = nullptr;
-unsigned nativeTimingReadCompletions(uint64_t& cursor, NativeTimingSnapshot* out,
-                                     unsigned capacity, uint64_t& dropped) noexcept;
-// CPU-only producer hook observation. Records only the device owned by the
-// current native timing lease; no COM ownership or graphics work is added.
-uint64_t nativeTimingPresentBegin(ID3D11Device*, uint64_t beginUs,
-                                  uint32_t thread) noexcept;
-void nativeTimingNotePresent(ID3D11Device*, uint64_t token,
-                             const EdvrNativePresentSpan&) noexcept;
+inline unsigned nativeTimingReadCompletions(uint64_t&, NativeTimingSnapshot*, unsigned, uint64_t&) noexcept { return 0; }
 }
