@@ -68,7 +68,8 @@ void forwardOmDepth(State& s,Ptr<ID3D11DepthStencilView>& dsv,Ptr<ID3D11DepthSte
     const ForwardDepthKey key=forwardDepthKey(s);
     FlatQueryPlan plan=FlatQueryPlan::Ask;
     // A target set the owner context's hook recorded: the view is the one it bound. The held state stays the bound one
-    // only if it was asked (a view was held); with no view held it was never asked, so only a recorded state will do.
+    // only if it was asked (a view was held); with no view held it was never asked, so it comes from its own record, or
+    // is asked alone.
     if(cacheable&&f.depthKey.valid&&f.depthKey.frame==key.frame&&f.depthKey.targets!=key.targets) {
         void* view=nullptr;
         const FlatOmTargetsMiss miss=flatOmTargetsRecordedWhy(s.context.Get(),key.rtv,key.dsv,view);
@@ -80,18 +81,21 @@ void forwardOmDepth(State& s,Ptr<ID3D11DepthStencilView>& dsv,Ptr<ID3D11DepthSte
         else if(miss==FlatOmTargetsMiss::Context)counts.add(flatcpu::kCopyDepthViewContext);
         else if(miss==FlatOmTargetsMiss::Binding)counts.add(flatcpu::kCopyDepthViewBinding);
         if(miss==FlatOmTargetsMiss::None) {
-            bool stateKnown=true;
             if(!view)f.depthState=nullptr;   // the ask leaves the state unasked and null with no view bound
             else if(!f.depthView) {
                 void* recorded=nullptr;
-                stateKnown=flatOmDepthStateRecorded(s.context.Get(),recorded);
-                if(stateKnown){f.depthState=static_cast<ID3D11DepthStencilState*>(recorded);f.depthKey.depthState=key.depthState;}
+                if(flatOmDepthStateRecorded(s.context.Get(),recorded))f.depthState=static_cast<ID3D11DepthStencilState*>(recorded);
+                else {
+                    // No state held and none recorded: the view is known, so ask the state alone (one call, not two).
+                    counts.add(flatcpu::kCopyDepthStateAskedForView);counts.add(flatcpu::kCopyRawDepthGet);
+                    Ptr<ID3D11DepthStencilState> asked;UINT ref=0;s.context->OMGetDepthStencilState(&asked,&ref);
+                    f.depthState=asked;
+                }
+                f.depthKey.depthState=key.depthState;
             }
-            if(stateKnown) {
-                f.depthView=static_cast<ID3D11DepthStencilView*>(view);
-                f.depthKey.targets=key.targets;f.depthKey.rtv=key.rtv;f.depthKey.dsv=key.dsv;
-                counts.add(flatcpu::kCopyDepthViewAdopted);
-            }
+            f.depthView=static_cast<ID3D11DepthStencilView*>(view);
+            f.depthKey.targets=key.targets;f.depthKey.rtv=key.rtv;f.depthKey.dsv=key.dsv;
+            counts.add(flatcpu::kCopyDepthViewAdopted);
         }
     }
     if(cacheable&&f.depthKey.sameView(key)&&f.depthKey.depthState!=key.depthState) {

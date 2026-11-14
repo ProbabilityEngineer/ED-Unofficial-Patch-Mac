@@ -121,7 +121,9 @@ inline void flatOmTargetsRecord(const void* context, void* dsv, uint32_t rtvBind
 // flatOmSetNote site notes itself after the note; the depth answer counts its stale misses by the last site.
 enum FlatOmTargetSite : uint32_t {
     kFlatOmSiteUnknown = 0, kFlatOmSiteRenderTargets, kFlatOmSiteRtvAndUav, kFlatOmSiteRaw, kFlatOmSiteSwap, kFlatOmSiteClearState,
-    kFlatOmSiteExecuteList, kFlatOmSiteListReplay, kFlatOmSiteExposureClear, kFlatOmSites
+    kFlatOmSiteExecuteList, kFlatOmSiteListReplay, kFlatOmSiteExposureClear,
+    kFlatOmSiteRenderTargetsInternal, kFlatOmSiteRtvAndUavInternal,   // the hooks' EDVR-internal paths (FlatComputeInternalScope)
+    kFlatOmSites
 };
 inline std::atomic<uint32_t> g_flatOmTargetSite{kFlatOmSiteUnknown};
 inline void flatOmTargetSiteNote(uint32_t site) noexcept { g_flatOmTargetSite.store(site, std::memory_order_relaxed); }

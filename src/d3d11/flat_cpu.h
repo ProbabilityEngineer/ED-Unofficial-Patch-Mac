@@ -133,7 +133,8 @@ enum CopyCount : unsigned {
     kCopyDepthAskTargetForeign, kCopyDepthAskBinding, kCopyDepthAskState, kCopyDepthAskSample, kCopyDepthStateAdopted,
     kCopyDepthViewAdopted, kCopyDepthViewStale, kCopyDepthViewContext, kCopyDepthViewBinding,
     // A stale record, by the code that moved the target counter last (FlatOmTargetSite order), or never written.
-    kCopyDepthViewNever, kCopyDepthViewStaleSite0, kCopyDepthViewStaleSiteLast = kCopyDepthViewStaleSite0 + 8,
+    kCopyDepthViewNever, kCopyDepthViewStaleSite0, kCopyDepthViewStaleSiteLast = kCopyDepthViewStaleSite0 + 10,
+    kCopyDepthStateAskedForView,   // a recorded view adopted with the state asked alone (no state held, none recorded)
     // Why the forward-light written-targets answer was asked (forwardDrawWrites), likewise.
     kCopyWritesAskUncached, kCopyWritesAskFrame, kCopyWritesAskTarget, kCopyWritesAskBlend, kCopyWritesAskBinding, kCopyWritesAskSample,
     // The game's resource writes the runtime observes (flatRuntimeMap/Unmap/Update/Written), by entry, and what EDVR holds
@@ -1026,6 +1027,7 @@ inline void formatCopyWindow(const WindowReport& r, uint64_t completedFrame, Lin
             "depth-view record never written","stale after: unclassified","stale after: OMSetRenderTargets hook",
             "stale after: RTV+UAV hook","stale after: raw target setter","stale after: context swap","stale after: ClearState",
             "stale after: ExecuteCommandList","stale after: command list replay","stale after: ClearState (exposure fix)",
+            "stale after: OMSetRenderTargets internal","stale after: RTV+UAV internal","depth-state asks for an adopted view",
             "target asks: uncached","target asks: new frame or reset","target asks: target set","target asks: blend set",
             "target asks: binding generation","target asks: sampled check",
             "writes: Map","writes: Unmap","writes: Update","writes: other","writes to camera buffers","writes to tracked buffers",

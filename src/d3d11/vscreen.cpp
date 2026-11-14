@@ -3133,7 +3133,16 @@ void STDMETHODCALLTYPE hookedOMSetRenderTargets(ID3D11DeviceContext* self, UINT 
     flatOmTargetSiteNote(kFlatOmSiteRenderTargets);
     flatOmTargetSourceNote(flatOmTargetSourceOf(self, _ReturnAddress()));
     if (!foreignContext(self)) flatIssueEpochBumpRt();
-    if (g_flatComputeInternal) { g_state->realOMSetRenderTargets(self, n, rtvs, dsv); return; }
+    if (g_flatComputeInternal) {
+        flatOmTargetSiteNote(kFlatOmSiteRenderTargetsInternal);
+        // EDVR's own sets (engine motion's MRT6 bind and restore around each substituted draw) bind exactly these
+        // arguments too, so they record like the game's below (2026-11-14, c8d0b00c: the ~1000 stale records a window left
+        // at Lintott City followed these). The binding shadow is not told, so its generations are the game's, unchanged.
+        g_state->realOMSetRenderTargets(self, n, rtvs, dsv);
+        if (!foreignContext(self) && flatOmTargetGeneration() == targetSet)
+            flatOmTargetsRecord(self, dsv, bindingGeneration(BindSlot::Rtv0), bindingGeneration(BindSlot::Dsv0), targetSet);
+        return;
+    }
     ++g_state->thunkHits[kHitOmSet];
     if (foreignContext(self)) {
         g_state->realOMSetRenderTargets(self, n, rtvs, dsv);
@@ -3195,7 +3204,18 @@ void STDMETHODCALLTYPE hookedOMSetRtvAndUav(ID3D11DeviceContext* self, UINT n,
     flatOmTargetSourceNote(flatOmTargetSourceOf(self, _ReturnAddress()));
     // 0xFFFFFFFF keeps the current targets. Anything else can replace the depth view.
     if (!foreignContext(self) && n != 0xFFFFFFFFu) flatIssueEpochBumpRt();
-    if (g_flatComputeInternal) { g_state->realOMSetRtvAndUav(self, n, rtvs, dsv, uavStart, uavCount, uavs, counts); return; }
+    if (g_flatComputeInternal) {
+        flatOmTargetSiteNote(kFlatOmSiteRtvAndUavInternal);
+        g_state->realOMSetRtvAndUav(self, n, rtvs, dsv, uavStart, uavCount, uavs, counts);
+        // As the internal path of hookedOMSetRenderTargets (and the end of this hook): record a named set, carry over KEEP.
+        if (!foreignContext(self) && flatOmTargetGeneration() == targetSet) {
+            if (n != 0xFFFFFFFFu)
+                flatOmTargetsRecord(self, dsv, bindingGeneration(BindSlot::Rtv0), bindingGeneration(BindSlot::Dsv0), targetSet);
+            else if (recordBefore)
+                flatOmTargetsRecordCarry(targetSet);
+        }
+        return;
+    }
     // A foreign deferred context cannot write the immediate target yet, but
     // an eventual command list or undocumented cross-context path must not
     // silently preserve the protected suffix.
@@ -5139,9 +5159,10 @@ static void STDMETHODCALLTYPE concoursePaneSetPs(ID3D11DeviceContext* ctx, ID3D1
     else ctx->PSSetShader(ps, instances, count);
 }
 static void STDMETHODCALLTYPE stationMaskSetDepth(ID3D11DeviceContext* ctx, ID3D11DepthStencilState* state, UINT stencilRef) {
-    flatOmSetNote(kFlatOmDepthState);
+    const uint32_t depthStateSet = flatOmSetNote(kFlatOmDepthState);
     if (g_state->realOMSetDepthStencilState) g_state->realOMSetDepthStencilState(ctx, state, stencilRef);
     else ctx->OMSetDepthStencilState(state, stencilRef);
+    if (ctx == g_state->ownerCtx && flatOmDepthStateGeneration() == depthStateSet) flatOmDepthStateRecord(ctx, state, depthStateSet);
 }
 static void STDMETHODCALLTYPE concoursePaneSetSrv(ID3D11DeviceContext* ctx, UINT start, UINT n, ID3D11ShaderResourceView* const* srvs) {
     if (g_state->realPSSetShaderResources) g_state->realPSSetShaderResources(ctx, start, n, srvs);
@@ -6533,11 +6554,15 @@ void vScreenSetRenderTargetsRaw(ID3D11DeviceContext* ctx, uint32_t n,
                                 ID3D11RenderTargetView* const* rtvs,
                                 ID3D11DepthStencilView* dsv) {
     if (!g_state || !g_state->realOMSetRenderTargets || !ctx) return;
-    flatOmSetNote(kFlatOmTargets);
+    const uint32_t targetSet = flatOmSetNote(kFlatOmTargets);
     flatOmTargetSiteNote(kFlatOmSiteRaw);
     flatOmTargetSourceNote(kFlatOmTargetRaw);
     flatIssueEpochBumpRt();
     g_state->realOMSetRenderTargets(ctx, n, rtvs, dsv);
+    // The raw setter binds exactly its arguments as the hooks do: it records on the owner context under the same guard
+    // (a set nested in the real call records its own; flat_om_generation.h). The binding shadow is not told.
+    if (ctx == g_state->ownerCtx && flatOmTargetGeneration() == targetSet)
+        flatOmTargetsRecord(ctx, dsv, bindingGeneration(BindSlot::Rtv0), bindingGeneration(BindSlot::Dsv0), targetSet);
 }
 
 void vScreenDrawRaw(ID3D11DeviceContext* ctx, uint32_t vertexCount, uint32_t startVertex) {
@@ -6568,9 +6593,12 @@ void vScreenOMSetBlendStateRaw(ID3D11DeviceContext* ctx, ID3D11BlendState* state
 
 void vScreenOMSetDepthStencilStateRaw(ID3D11DeviceContext* ctx, ID3D11DepthStencilState* state, uint32_t stencilRef) {
     if (!ctx) return;
-    flatOmSetNote(kFlatOmDepthState);
+    const uint32_t depthStateSet = flatOmSetNote(kFlatOmDepthState);
     if (g_state && g_state->realOMSetDepthStencilState) g_state->realOMSetDepthStencilState(ctx, state, stencilRef);
     else ctx->OMSetDepthStencilState(state, stencilRef);
+    // As the hooked setter: the owner context's state is now `state`, unless a set went through the hook meanwhile.
+    if (g_state && ctx == g_state->ownerCtx && flatOmDepthStateGeneration() == depthStateSet)
+        flatOmDepthStateRecord(ctx, state, depthStateSet);
 }
 
 void vScreenUpdateSubresourceRaw(ID3D11DeviceContext* ctx, ID3D11Resource* dstResource,

@@ -127,10 +127,11 @@ inline int run() {
         expect(inOrderIn(om,"f.depthKey.valid&&f.depthKey.frame==key.frame&&f.depthKey.targets!=key.targets",
                          "flatOmTargetsRecordedWhy(s.context.Get(),key.rtv,key.dsv,view)")&&
                inOrderIn(om,"flatOmTargetsRecordedWhy(s.context.Get(),key.rtv,key.dsv,view)","if(!view)f.depthState=nullptr;")&&
-               inOrderIn(om,"else if(!f.depthView)","stateKnown=flatOmDepthStateRecorded(s.context.Get(),recorded);")&&
-               inOrderIn(om,"if(stateKnown) {","f.depthKey.targets=key.targets;f.depthKey.rtv=key.rtv;f.depthKey.dsv=key.dsv;")&&
+               inOrderIn(om,"else if(!f.depthView)","if(flatOmDepthStateRecorded(s.context.Get(),recorded))f.depthState=")&&
+               inOrderIn(om,"if(flatOmDepthStateRecorded(s.context.Get(),recorded))f.depthState=","s.context->OMGetDepthStencilState(&asked,&ref);")&&
+               inOrderIn(om,"s.context->OMGetDepthStencilState(&asked,&ref);","f.depthKey.targets=key.targets;f.depthKey.rtv=key.rtv;f.depthKey.dsv=key.dsv;")&&
                inOrderIn(om,"f.depthKey.targets=key.targets;","if(cacheable&&f.depthKey.sameView(key)&&f.depthKey.depthState!=key.depthState)"),
-               "a recorded target set replaces the held view only with a known state, before the state half is considered");
+               "a recorded target set replaces the held view with a known state (recorded, or asked alone), before the state half is considered");
     }
     expect(inOrderIn(om,"const bool cacheable=flatOmSetTracked();","f.depthKey==key")&&
            inOrderIn(om,"f.depthKey==key","flatQueryCut().plan(FlatQuery::ForwardDepth)")&&
@@ -210,8 +211,8 @@ inline int run() {
         expect(rt.find("const uint32_t targetSet = flatOmSetNote(kFlatOmTargets);")!=std::string::npos&&
                inOrderIn(rt,"bindingSet(BindSlot::Dsv0, dsv);\n    if (flatTemporalCapturing())","g_state->realOMSetRenderTargets(self, n, rtvs, dsv);\n    // The owner")&&
                tail.find("if (flatOmTargetGeneration() == targetSet)\n        flatOmTargetsRecord(self, dsv, bindingGeneration(BindSlot::Rtv0), bindingGeneration(BindSlot::Dsv0), targetSet);")!=std::string::npos&&
-               rt.find("flatOmTargetsRecord(")==rt.rfind("flatOmTargetsRecord("),
-               "the target hook records once, after its final real call, with its own counter value and the binding generations");
+               inOrderIn(rt,"if (g_flatComputeInternal) {\n","g_state->realOMSetRenderTargets(self, n, rtvs, dsv);\n        if (!foreignContext(self) && flatOmTargetGeneration() == targetSet)\n            flatOmTargetsRecord("),
+               "the target hook records after its internal and final real calls, with its own counter value and the binding generations");
         g_flatOmTargetsRecord.generation.store(0);
         const uint32_t t1=flatOmSetNote(kFlatOmTargets);flatOmTargetsRecord(&ctxA,&stateX,5,6,t1);
         expect(flatOmTargetsRecorded(&ctxA,5,6,got)&&got==&stateX,"a fresh target record names the bound depth view");
@@ -254,6 +255,18 @@ inline int run() {
                          "if (n != kKeepRenderTargetsUnchanged && flatOmTargetGeneration() == targetSet)\n        flatOmTargetsRecord(self, dsv, bindingGeneration(BindSlot::Rtv0), bindingGeneration(BindSlot::Dsv0), targetSet);")&&
                ru.find("else if (recordBefore && flatOmTargetGeneration() == targetSet)\n        flatOmTargetsRecordCarry(targetSet);")!=std::string::npos,
                "the RTV+UAV hook records a named set and carries a current record over a KEEP set");
+        expect(inOrderIn(ru,"if (g_flatComputeInternal) {\n        flatOmTargetSiteNote(kFlatOmSiteRtvAndUavInternal);\n        g_state->realOMSetRtvAndUav(","if (n != 0xFFFFFFFFu)\n                flatOmTargetsRecord(")&&
+               ru.find("else if (recordBefore)\n                flatOmTargetsRecordCarry(targetSet);")!=std::string::npos,
+               "the RTV+UAV hook's internal path records and carries as its end does");
+        {
+            const auto raw=vs.find("void vScreenSetRenderTargetsRaw(");const std::string rw=raw!=std::string::npos?vs.substr(raw,1100):std::string{};
+            const auto rds=vs.find("void vScreenOMSetDepthStencilStateRaw(");const std::string rd=rds!=std::string::npos?vs.substr(rds,800):std::string{};
+            const auto smd=vs.find("static void STDMETHODCALLTYPE stationMaskSetDepth(");const std::string sm=smd!=std::string::npos?vs.substr(smd,600):std::string{};
+            expect(inOrderIn(rw,"g_state->realOMSetRenderTargets(ctx, n, rtvs, dsv);","if (ctx == g_state->ownerCtx && flatOmTargetGeneration() == targetSet)\n        flatOmTargetsRecord(ctx, dsv,")&&
+                   inOrderIn(rd,"else ctx->OMSetDepthStencilState(state, stencilRef);","ctx == g_state->ownerCtx && flatOmDepthStateGeneration() == depthStateSet)\n        flatOmDepthStateRecord(ctx, state, depthStateSet);")&&
+                   inOrderIn(sm,"else ctx->OMSetDepthStencilState(state, stencilRef);","if (ctx == g_state->ownerCtx && flatOmDepthStateGeneration() == depthStateSet) flatOmDepthStateRecord(ctx, state, depthStateSet);"),
+                   "EDVR's raw target and depth-state setters record on the owner context after their real calls, under the guard");
+        }
     }
     const auto begin=source.find("bool forwardDsvActual(State& s,");
     const auto end=source.find("bool forwardDsv(State& s,",begin);
