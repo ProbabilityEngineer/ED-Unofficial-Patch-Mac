@@ -43,7 +43,8 @@ void forwardFrame(State& s) {
     f.ownerKnown=true;f.upstream=upstream;
 }
 ForwardOmKey forwardOmKey(const State& s) {
-    return {flatOmSetGeneration(),bindingGeneration(BindSlot::Rtv0),bindingGeneration(BindSlot::Dsv0),s.prefix.frame,true};
+    return {flatOmWriteGeneration(),flatOmTargetGeneration(),bindingGeneration(BindSlot::Rtv0),bindingGeneration(BindSlot::Dsv0),
+            s.prefix.frame,true};
 }
 void forwardShortcutWrong(FlatQuery q,const char* detail) {
     char line[400];flatQueryFallbackLine(line,sizeof(line),q,detail);Log::get().note("%s",line);
@@ -64,6 +65,25 @@ void forwardOmDepth(State& s,Ptr<ID3D11DepthStencilView>& dsv,Ptr<ID3D11DepthSte
     const bool cacheable=flatOmSetTracked();
     const ForwardDepthKey key=forwardDepthKey(s);
     FlatQueryPlan plan=FlatQueryPlan::Ask;
+    // A target set the owner context's hook recorded: the view is the one it bound. The held state stays the bound one
+    // only if it was asked (a view was held); with no view held it was never asked, so only a recorded state will do.
+    if(cacheable&&f.depthKey.valid&&f.depthKey.frame==key.frame&&f.depthKey.targets!=key.targets) {
+        void* view=nullptr;
+        if(flatOmTargetsRecorded(s.context.Get(),key.rtv,key.dsv,view)) {
+            bool stateKnown=true;
+            if(!view)f.depthState=nullptr;   // the ask leaves the state unasked and null with no view bound
+            else if(!f.depthView) {
+                void* recorded=nullptr;
+                stateKnown=flatOmDepthStateRecorded(s.context.Get(),recorded);
+                if(stateKnown){f.depthState=static_cast<ID3D11DepthStencilState*>(recorded);f.depthKey.depthState=key.depthState;}
+            }
+            if(stateKnown) {
+                f.depthView=static_cast<ID3D11DepthStencilView*>(view);
+                f.depthKey.targets=key.targets;f.depthKey.rtv=key.rtv;f.depthKey.dsv=key.dsv;
+                counts.add(flatcpu::kCopyDepthViewAdopted);
+            }
+        }
+    }
     if(cacheable&&f.depthKey.sameView(key)&&f.depthKey.depthState!=key.depthState) {
         void* recorded=nullptr;
         if(flatOmDepthStateRecorded(s.context.Get(),recorded)) {
@@ -290,7 +310,7 @@ void forwardDrawWrites(State& s,ID3D11DeviceContext* actualDrawContext) {
     }
     counts.add(flatcpu::kCopyGuardFallback);
     FlatComputeInternalScope internal;
-    // The written set changes only with an output-merger set (flat_om_generation.h): asked of the context once
+    // The written set changes only with a target or blend set (flat_om_generation.h): asked of the context once
     // per binding, then the held set, checked against the context one frame in 64.
     auto& f=s.forwardLight;
     const bool cacheable=flatOmSetTracked()&&actualDrawContext&&actualDrawContext==s.context.Get();
@@ -300,6 +320,13 @@ void forwardDrawWrites(State& s,ID3D11DeviceContext* actualDrawContext) {
         plan=flatQueryCut().plan(FlatQuery::ForwardTargets);
         if(plan==FlatQueryPlan::Shortcut){forwardApplyWrites(s,f.writes,f.writeCount);return;}
     }
+    // Why this one asks (a diagnostic: flat_cpu.h's target-ask counts).
+    if(!cacheable)counts.add(flatcpu::kCopyWritesAskUncached);
+    else if(!f.writesKey.valid||f.writesKey.frame!=key.frame)counts.add(flatcpu::kCopyWritesAskFrame);
+    else if(f.writesKey.writes!=key.writes)
+        counts.add(f.writesKey.targets!=key.targets?flatcpu::kCopyWritesAskTarget:flatcpu::kCopyWritesAskBlend);
+    else if(f.writesKey.rtv!=key.rtv||f.writesKey.dsv!=key.dsv)counts.add(flatcpu::kCopyWritesAskBinding);
+    else counts.add(flatcpu::kCopyWritesAskSample);
     ForwardOmWrite fresh[kForwardOmWrites];unsigned freshCount=0;
     ID3D11RenderTargetView* targets[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
     ID3D11UnorderedAccessView* uavs[D3D11_1_UAV_SLOT_COUNT]{};

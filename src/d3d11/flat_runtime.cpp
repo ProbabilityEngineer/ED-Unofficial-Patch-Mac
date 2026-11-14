@@ -237,11 +237,12 @@ struct ForwardDsvDescription {
     forward_light::Surface surface{};
     uint32_t format=0;
 };
-// The forward-light watch's output-merger answers are reused while this key holds: no output-merger set
-// (flat_om_generation.h), no render-target or depth rebind or forget-all, the same frame.
+// The forward-light watch's written-targets answer is reused while this key holds: no target or blend set
+// (flat_om_generation.h; depth-stencil sets cannot change which targets are written), no render-target or depth rebind
+// or forget-all, the same frame. `targets` is not compared: it tells a target set from a blend set in the ask counts.
 struct ForwardOmKey {
-    uint32_t om=0,rtv=0,dsv=0;uint64_t frame=0;bool valid=false;
-    bool operator==(const ForwardOmKey& o) const {return valid&&o.valid&&om==o.om&&rtv==o.rtv&&dsv==o.dsv&&frame==o.frame;}
+    uint32_t writes=0,targets=0,rtv=0,dsv=0;uint64_t frame=0;bool valid=false;
+    bool operator==(const ForwardOmKey& o) const {return valid&&o.valid&&writes==o.writes&&rtv==o.rtv&&dsv==o.dsv&&frame==o.frame;}
 };
 // The depth answer's key (forwardOmDepth): the view half moves with target sets (and the binding shadow's render-target
 // and depth generations and the frame), the state half with depth-stencil state sets only. Blend sets move neither.
@@ -5608,6 +5609,21 @@ static void resourceWritten(State& s, ID3D11Resource* res,const char* entry,
     if (auto* c = camera(res, false)) s.cameras.invalidate(*c);
     if (s.projection) { flatcpu::Scope shadows(flatcpu::kShadows); s.projection->invalidate(res); }
 }
+// What the runtime holds of a resource the game writes (a diagnostic for the resource lookup and cb shadow families, flat_cpu.h's
+// write counts): on clocked frames only, before the caller's timed scopes, so its lookups land in the caller's parent family.
+static void writeCensus(State& s,ID3D11Resource* res,flatcpu::CopyCount entry) {
+    flatcpu::CopyCounter counts;
+    if(!counts.active())return;
+    counts.add(entry);
+    const bool cameraBuffer=camera(res,false)!=nullptr;
+    const bool tracked=s.projection&&s.projection->containsTracked(res);
+    bool target=false;
+    for(uint32_t i=0;i<s.prefix.targetsUsed&&!target;++i)target=s.prefix.targets[i].resource==res;
+    if(cameraBuffer)counts.add(flatcpu::kWriteCamera);
+    if(tracked)counts.add(flatcpu::kWriteTracked);
+    if(target)counts.add(flatcpu::kWriteTarget);
+    if(!cameraBuffer&&!tracked&&!target)counts.add(flatcpu::kWriteNone);
+}
 // The extents the hooks pass (declared in flat_runtime.h; defined here, outside the anonymous namespace the mutation report is in).
 HistoryWriteExtent flatRuntimeCopyExtent(UINT dstSub,UINT dstX,const void* src,const D3D11_BOX* box) {
     if(dstSub!=0)return historyWholeWrite(HistoryWriteEntry::CopyRegion);
@@ -5624,6 +5640,7 @@ HistoryWriteExtent flatRuntimeUpdateExtent(UINT dstSub,const D3D11_BOX* box) {
 }
 void flatRuntimeWritten(ID3D11Resource* res,FlatOverlayMutationOp provenance,bool constantFill) {
     if (!owner() || state().work == FlatWork::Paused) return;
+    writeCensus(state(),res,flatcpu::kWriteOther);
     flatcpu::Scope lookup(flatcpu::kResource);   // prefix target and source lookup, camera lookup
     const bool clear=provenance==FlatOverlayMutationOp::ClearRtv || provenance==FlatOverlayMutationOp::ClearDsv ||
                      provenance==FlatOverlayMutationOp::ClearUav;
@@ -5632,6 +5649,7 @@ void flatRuntimeWritten(ID3D11Resource* res,FlatOverlayMutationOp provenance,boo
 }
 void flatRuntimeWrittenExtent(ID3D11Resource* res,const HistoryWriteExtent& extent) {
     if (!owner() || state().work == FlatWork::Paused) return;
+    writeCensus(state(),res,flatcpu::kWriteOther);
     flatcpu::Scope lookup(flatcpu::kResource);
     resourceWritten(state(), res,"flatRuntimeWritten",FlatOverlayMutationOp::Written,extent);
 }
@@ -5821,12 +5839,14 @@ void flatRuntimeMapBounceNoteKind(ID3D11Resource* resource, bool buffer) {
 }
 void flatRuntimeMap(ID3D11Resource* res, D3D11_MAP type, void* bytes) {
     if (!owner() || type == D3D11_MAP_READ || state().work == FlatWork::Paused) return;
+    writeCensus(state(),res,flatcpu::kWriteMap);
     flatcpu::Scope lookup(flatcpu::kResource);
     resourceWritten(state(), res,"flatRuntimeMap",FlatOverlayMutationOp::Written,historyWholeWrite(HistoryWriteEntry::Map)); if (auto* c = camera(res, false)) state().cameras.setMapped(*c, bytes);
     if (state().projection) { flatcpu::Scope shadows(flatcpu::kShadows); state().projection->observeMap(res,type,bytes); }
 }
 void flatRuntimeUnmap(ID3D11Resource* res) {
     if (!owner() || state().work == FlatWork::Paused) return;
+    writeCensus(state(),res,flatcpu::kWriteUnmap);
     flatcpu::Scope lookup(flatcpu::kResource);
     if (state().projection) { flatcpu::Scope shadows(flatcpu::kShadows);
         state().projection->observeUnmap(res,state().prefix.frame,state().prefix.sequence); }
@@ -5837,6 +5857,7 @@ void flatRuntimeUnmap(ID3D11Resource* res) {
 }
 void flatRuntimeUpdate(ID3D11Resource* res, const void* bytes, const D3D11_BOX* box) {
     if (!owner() || state().work == FlatWork::Paused) return;
+    writeCensus(state(),res,flatcpu::kWriteUpdate);
     flatcpu::Scope lookup(flatcpu::kResource);
     resourceWritten(state(), res,"flatRuntimeUpdate",FlatOverlayMutationOp::Written,flatRuntimeUpdateExtent(0,box));
     if (auto* c = camera(res, false)) {

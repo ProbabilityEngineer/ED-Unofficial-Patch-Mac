@@ -38,13 +38,18 @@ enum FlatOmSetKind : unsigned {
 };
 inline std::atomic<uint32_t> g_flatOmDepthStateSets{1};
 inline std::atomic<uint32_t> g_flatOmTargetSets{1};
+// Target and blend sets: the forward-light written-targets answer (render targets, OM UAVs, blend write masks) does not
+// read depth-stencil state, so depth-stencil sets leave it held.
+inline std::atomic<uint32_t> g_flatOmWriteSets{1};
 
-// Moves the all-sets counter and the counters of what the set can change. Returns the depth-state counter's new value
-// when the set moved it (the recorder below ties its value to it), else 0.
+// Moves the all-sets counter and the counters of what the set can change. Returns the counter value the set produced
+// for the recorders below: the target counter's when it moved, else the depth-state counter's when it moved, else 0.
 inline uint32_t flatOmSetNote(unsigned kind = kFlatOmAll) noexcept {
     g_flatOmSets.fetch_add(1, std::memory_order_relaxed);
-    if (kind & kFlatOmTargets) g_flatOmTargetSets.fetch_add(1, std::memory_order_relaxed);
-    return (kind & kFlatOmDepthState) ? g_flatOmDepthStateSets.fetch_add(1, std::memory_order_relaxed) + 1u : 0u;
+    if (kind & (kFlatOmTargets | kFlatOmBlend)) g_flatOmWriteSets.fetch_add(1, std::memory_order_relaxed);
+    const uint32_t depthState = (kind & kFlatOmDepthState) ? g_flatOmDepthStateSets.fetch_add(1, std::memory_order_relaxed) + 1u : 0u;
+    const uint32_t targets = (kind & kFlatOmTargets) ? g_flatOmTargetSets.fetch_add(1, std::memory_order_relaxed) + 1u : 0u;
+    return targets ? targets : depthState;
 }
 // Who made the latest target set (a diagnostic for the depth answer's asks, flat_cpu.h's depth-ask counts): the game
 // through the hook, EDVR's own code through the hook (its return address is in EDVR's image), EDVR's raw setter
@@ -59,6 +64,7 @@ inline uint32_t flatOmTargetSourceLast() noexcept {
 inline uint32_t flatOmSetGeneration() noexcept { return g_flatOmSets.load(std::memory_order_relaxed); }
 inline uint32_t flatOmTargetGeneration() noexcept { return g_flatOmTargetSets.load(std::memory_order_relaxed); }
 inline uint32_t flatOmDepthStateGeneration() noexcept { return g_flatOmDepthStateSets.load(std::memory_order_relaxed); }
+inline uint32_t flatOmWriteGeneration() noexcept { return g_flatOmWriteSets.load(std::memory_order_relaxed); }
 inline void flatOmSetHooksComplete(bool complete) noexcept { g_flatOmHooksComplete.store(complete, std::memory_order_relaxed); }
 inline bool flatOmSetTracked() noexcept { return g_flatOmHooksComplete.load(std::memory_order_relaxed); }
 
@@ -87,6 +93,40 @@ inline bool flatOmDepthStateRecorded(const void* context, void*& state) noexcept
     if (g_flatOmDepthStateRecord.context.load(std::memory_order_relaxed) != context) return false;
     state = g_flatOmDepthStateRecord.state.load(std::memory_order_relaxed);
     return g_flatOmDepthStateRecord.generation.load(std::memory_order_acquire) == generation;
+}
+
+// The depth view the owner context's hooked OMSetRenderTargets bound (2026-11-14: about 1160 of the depth answer's
+// asks a window followed the game's own target sets at Lintott City), tied to the target counter value that set
+// produced and to the binding shadow's render-target and depth generations after its own bindingSet. Recorded only
+// where the hook's real call binds exactly its arguments; every other path moves the counter and leaves the record
+// stale. Same rules as the depth-stencil record above.
+struct FlatOmTargetsRecord {
+    std::atomic<const void*> context{nullptr};
+    std::atomic<void*> dsv{nullptr};
+    std::atomic<uint32_t> rtvBinding{0}, dsvBinding{0};
+    std::atomic<uint32_t> generation{0};
+};
+inline FlatOmTargetsRecord g_flatOmTargetsRecord;
+// After the hooked setter's real call: `generation` is what its flatOmSetNote(kFlatOmTargets) returned.
+inline void flatOmTargetsRecord(const void* context, void* dsv, uint32_t rtvBinding, uint32_t dsvBinding, uint32_t generation) noexcept {
+    g_flatOmTargetsRecord.generation.store(0, std::memory_order_release);
+    g_flatOmTargetsRecord.context.store(context, std::memory_order_relaxed);
+    g_flatOmTargetsRecord.dsv.store(dsv, std::memory_order_relaxed);
+    g_flatOmTargetsRecord.rtvBinding.store(rtvBinding, std::memory_order_relaxed);
+    g_flatOmTargetsRecord.dsvBinding.store(dsvBinding, std::memory_order_relaxed);
+    g_flatOmTargetsRecord.generation.store(generation, std::memory_order_release);
+}
+// True, with the depth view, when the record names what `context` has bound now and the binding shadow's generations
+// are still the ones the recorded set left.
+inline bool flatOmTargetsRecorded(const void* context, uint32_t rtvBinding, uint32_t dsvBinding, void*& dsv) noexcept {
+    const uint32_t generation = g_flatOmTargetsRecord.generation.load(std::memory_order_acquire);
+    if (!generation || generation != flatOmTargetGeneration()) return false;
+    if (g_flatOmTargetsRecord.context.load(std::memory_order_relaxed) != context ||
+        g_flatOmTargetsRecord.rtvBinding.load(std::memory_order_relaxed) != rtvBinding ||
+        g_flatOmTargetsRecord.dsvBinding.load(std::memory_order_relaxed) != dsvBinding)
+        return false;
+    dsv = g_flatOmTargetsRecord.dsv.load(std::memory_order_relaxed);
+    return g_flatOmTargetsRecord.generation.load(std::memory_order_acquire) == generation;
 }
 
 }  // namespace edvr

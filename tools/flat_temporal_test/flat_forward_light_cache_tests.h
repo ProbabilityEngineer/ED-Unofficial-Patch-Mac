@@ -94,9 +94,19 @@ inline int run() {
     const auto keyBegin=source.find("ForwardOmKey forwardOmKey(const State& s)");
     const std::string key=keyBegin!=std::string::npos?source.substr(keyBegin,300):std::string{};
     const auto inOrderIn=[](const std::string& t,const char* a,const char* b){const auto x=t.find(a),y=t.find(b);return x!=std::string::npos&&y!=std::string::npos&&x<y;};
-    expect(key.find("flatOmSetGeneration()")!=std::string::npos&&key.find("bindingGeneration(BindSlot::Rtv0)")!=std::string::npos&&
-           key.find("bindingGeneration(BindSlot::Dsv0)")!=std::string::npos&&key.find("s.prefix.frame")!=std::string::npos,
-           "the held written targets are keyed on the setter, render-target and depth generations and the frame");
+    expect(key.find("flatOmWriteGeneration()")!=std::string::npos&&key.find("bindingGeneration(BindSlot::Rtv0)")!=std::string::npos&&
+           key.find("bindingGeneration(BindSlot::Dsv0)")!=std::string::npos&&key.find("s.prefix.frame")!=std::string::npos&&
+           key.find("flatOmSetGeneration()")==std::string::npos,
+           "the held written targets are keyed on the target-and-blend counter, render-target and depth generations and the frame");
+    {
+        // Since 2026-11-14 (second build) the written-targets key compares the write counter, not the target counter
+        // it carries for the ask counts.
+        const auto keyType=[]{std::ifstream in("src/d3d11/flat_runtime.cpp",std::ios::binary);
+            const std::string t((std::istreambuf_iterator<char>(in)),{});const auto b=t.find("struct ForwardOmKey {");
+            return b!=std::string::npos?t.substr(b,300):std::string{};}();
+        expect(keyType.find("writes==o.writes")!=std::string::npos&&keyType.find("targets==o.targets")==std::string::npos,
+               "the written-targets key compares the target-and-blend counter only");
+    }
     // Since 2026-11-14 the depth answer has its own key: target sets move its view half, depth-stencil sets its
     // state half, blend sets neither; a depth-stencil set the owner's hook recorded replaces the held state.
     const auto depthKeyBegin=source.find("ForwardDepthKey forwardDepthKey(const State& s)");
@@ -105,10 +115,23 @@ inline int run() {
            depthKey.find("bindingGeneration(BindSlot::Rtv0)")!=std::string::npos&&depthKey.find("bindingGeneration(BindSlot::Dsv0)")!=std::string::npos&&
            depthKey.find("s.prefix.frame")!=std::string::npos&&depthKey.find("flatOmSetGeneration()")==std::string::npos,
            "the held depth answer is keyed on the target and depth-state counters, the binding generations and the frame");
-    expect(inOrderIn(om,"f.depthKey.sameView(key)&&f.depthKey.depthState!=key.depthState","flatOmDepthStateRecorded(s.context.Get(),recorded)")&&
-           inOrderIn(om,"flatOmDepthStateRecorded(s.context.Get(),recorded)","f.depthState=f.depthView?")&&
-           inOrderIn(om,"f.depthKey.depthState=key.depthState;","f.depthKey==key"),
-           "only a recorded depth-stencil set on the same context replaces the held state, and only with the view half held");
+    {
+        const auto stateBlock=om.find("if(cacheable&&f.depthKey.sameView(key)&&f.depthKey.depthState!=key.depthState)");
+        const std::string st=stateBlock!=std::string::npos?om.substr(stateBlock):std::string{};
+        expect(inOrderIn(st,"f.depthKey.sameView(key)&&f.depthKey.depthState!=key.depthState","flatOmDepthStateRecorded(s.context.Get(),recorded)")&&
+               inOrderIn(st,"flatOmDepthStateRecorded(s.context.Get(),recorded)","f.depthState=f.depthView?")&&
+               inOrderIn(st,"f.depthKey.depthState=key.depthState;","f.depthKey==key"),
+               "only a recorded depth-stencil set on the same context replaces the held state, and only with the view half held");
+        // The recorded target set comes first: the frame must match, the record must name the context and the binding
+        // generations, and with no view held before, the state must come from its own record or the view is not adopted.
+        expect(inOrderIn(om,"f.depthKey.valid&&f.depthKey.frame==key.frame&&f.depthKey.targets!=key.targets",
+                         "flatOmTargetsRecorded(s.context.Get(),key.rtv,key.dsv,view)")&&
+               inOrderIn(om,"flatOmTargetsRecorded(s.context.Get(),key.rtv,key.dsv,view)","if(!view)f.depthState=nullptr;")&&
+               inOrderIn(om,"else if(!f.depthView)","stateKnown=flatOmDepthStateRecorded(s.context.Get(),recorded);")&&
+               inOrderIn(om,"if(stateKnown) {","f.depthKey.targets=key.targets;f.depthKey.rtv=key.rtv;f.depthKey.dsv=key.dsv;")&&
+               inOrderIn(om,"f.depthKey.targets=key.targets;","if(cacheable&&f.depthKey.sameView(key)&&f.depthKey.depthState!=key.depthState)"),
+               "a recorded target set replaces the held view only with a known state, before the state half is considered");
+    }
     expect(inOrderIn(om,"const bool cacheable=flatOmSetTracked();","f.depthKey==key")&&
            inOrderIn(om,"f.depthKey==key","flatQueryCut().plan(FlatQuery::ForwardDepth)")&&
            inOrderIn(om,"FlatQueryPlan::Shortcut","OMGetRenderTargets(0,nullptr,&dsv)")&&
@@ -176,6 +199,35 @@ inline int run() {
         const uint32_t g2=flatOmSetNote(kFlatOmDepthState);flatOmDepthStateRecord(&ctxA,&stateY,g2);flatOmSetNote();
         expect(!flatOmDepthStateRecorded(&ctxA,got),"ClearState, command lists and swaps (every counter) retire the record");
         edvr::g_flatOmDepthStateRecord.generation.store(0);
+
+        // The target record (second build): the hook records after its final real call, tied to its own counter value
+        // and the binding generations read after its own bindingSet.
+        const auto rtHook=vs.find("void STDMETHODCALLTYPE hookedOMSetRenderTargets(");
+        const auto rtEnd=vs.find("void STDMETHODCALLTYPE hookedOMSetRtvAndUav(",rtHook);
+        const std::string rt=rtHook!=std::string::npos&&rtEnd!=std::string::npos?vs.substr(rtHook,rtEnd-rtHook):std::string{};
+        const auto finalCall=rt.rfind("g_state->realOMSetRenderTargets(self, n, rtvs, dsv);");
+        const std::string tail=finalCall!=std::string::npos?rt.substr(finalCall):std::string{};
+        expect(rt.find("const uint32_t targetSet = flatOmSetNote(kFlatOmTargets);")!=std::string::npos&&
+               inOrderIn(rt,"bindingSet(BindSlot::Dsv0, dsv);\n    if (flatTemporalCapturing())","g_state->realOMSetRenderTargets(self, n, rtvs, dsv);\n    // The owner")&&
+               tail.find("flatOmTargetsRecord(self, dsv, bindingGeneration(BindSlot::Rtv0), bindingGeneration(BindSlot::Dsv0), targetSet);")!=std::string::npos&&
+               rt.find("flatOmTargetsRecord(")==rt.rfind("flatOmTargetsRecord("),
+               "the target hook records once, after its final real call, with its own counter value and the binding generations");
+        g_flatOmTargetsRecord.generation.store(0);
+        const uint32_t t1=flatOmSetNote(kFlatOmTargets);flatOmTargetsRecord(&ctxA,&stateX,5,6,t1);
+        expect(flatOmTargetsRecorded(&ctxA,5,6,got)&&got==&stateX,"a fresh target record names the bound depth view");
+        expect(!flatOmTargetsRecorded(&ctxB,5,6,got),"another context's question is not answered from the target record");
+        expect(!flatOmTargetsRecorded(&ctxA,5,7,got)&&!flatOmTargetsRecorded(&ctxA,4,6,got),"a moved binding generation retires the target record");
+        const uint32_t writesBefore=flatOmWriteGeneration();flatOmSetNote(kFlatOmDepthState);
+        expect(flatOmTargetsRecorded(&ctxA,5,6,got)&&flatOmWriteGeneration()==writesBefore,
+               "a depth-stencil set moves neither the target record nor the written-targets counter");
+        flatOmSetNote(kFlatOmBlend);
+        expect(flatOmTargetsRecorded(&ctxA,5,6,got)&&flatOmWriteGeneration()!=writesBefore,
+               "a blend set leaves the target record standing and moves the written-targets counter");
+        flatOmSetNote(kFlatOmTargets);
+        expect(!flatOmTargetsRecorded(&ctxA,5,6,got),"an unrecorded target set (raw, foreign, map run) retires the target record");
+        const uint32_t t2=flatOmSetNote(kFlatOmTargets);flatOmTargetsRecord(&ctxA,nullptr,5,6,t2);flatOmSetNote();
+        expect(!flatOmTargetsRecorded(&ctxA,5,6,got),"ClearState, command lists and swaps retire the target record");
+        g_flatOmTargetsRecord.generation.store(0);
     }
     const auto begin=source.find("bool forwardDsvActual(State& s,");
     const auto end=source.find("bool forwardDsv(State& s,",begin);

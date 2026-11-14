@@ -131,6 +131,12 @@ enum CopyCount : unsigned {
     // the order the key is compared; the target-set reason by the latest setter. Then the recorded depth-state adoptions.
     kCopyDepthAskUntracked, kCopyDepthAskFrame, kCopyDepthAskTargetGame, kCopyDepthAskTargetEdvr, kCopyDepthAskTargetRaw,
     kCopyDepthAskTargetForeign, kCopyDepthAskBinding, kCopyDepthAskState, kCopyDepthAskSample, kCopyDepthStateAdopted,
+    kCopyDepthViewAdopted,
+    // Why the forward-light written-targets answer was asked (forwardDrawWrites), likewise.
+    kCopyWritesAskUncached, kCopyWritesAskFrame, kCopyWritesAskTarget, kCopyWritesAskBlend, kCopyWritesAskBinding, kCopyWritesAskSample,
+    // The game's resource writes the runtime observes (flatRuntimeMap/Unmap/Update/Written), by entry, and what EDVR holds
+    // of the resource: a camera-table buffer, a projection-tracked buffer, a prefix target, or none of these.
+    kWriteMap, kWriteUnmap, kWriteUpdate, kWriteOther, kWriteCamera, kWriteTracked, kWriteTarget, kWriteNone,
     kCopyCounts
 };
 struct FamilyInfo {
@@ -1013,7 +1019,12 @@ inline void formatCopyWindow(const WindowReport& r, uint64_t completedFrame, Lin
             "issue geometry DSV Gets","issue light DSV Gets",
             "depth asks: untracked hooks","depth asks: new frame or reset","depth asks: game target set","depth asks: EDVR target set",
             "depth asks: EDVR raw target set","depth asks: other-context target set","depth asks: binding generation",
-            "depth asks: unrecorded depth-state set","depth asks: sampled check","recorded depth-state adoptions"};
+            "depth asks: unrecorded depth-state set","depth asks: sampled check","recorded depth-state adoptions",
+            "recorded depth-view adoptions",
+            "target asks: uncached","target asks: new frame or reset","target asks: target set","target asks: blend set",
+            "target asks: binding generation","target asks: sampled check",
+            "writes: Map","writes: Unmap","writes: Update","writes: other","writes to camera buffers","writes to tracked buffers",
+            "writes to prefix targets","writes to none of these"};
         for (unsigned c = 0; c < kCopyCounts; ++c)
             tk.add(c ? ", " : "; ", "%s=%llu", names[c], static_cast<unsigned long long>(r.copy[c]));
         tk.add("; ", "zero calls means not run in sampled frames; output scan includes guard CPU; inactive-ledger scan time is zero after guard (skips untimed, not measured savings); query counting not floor-corrected");

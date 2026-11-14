@@ -3129,7 +3129,7 @@ uint32_t flatOmTargetSourceOf(ID3D11DeviceContext* self, const void* caller) {
 void STDMETHODCALLTYPE hookedOMSetRenderTargets(ID3D11DeviceContext* self, UINT n,
                                                 ID3D11RenderTargetView* const* rtvs,
                                                 ID3D11DepthStencilView* dsv) {
-    flatOmSetNote(kFlatOmTargets);   // the forward-light watch's output-merger answer is stale (flat_om_generation.h)
+    const uint32_t targetSet = flatOmSetNote(kFlatOmTargets);   // the forward-light watch's output-merger answer is stale (flat_om_generation.h)
     flatOmTargetSourceNote(flatOmTargetSourceOf(self, _ReturnAddress()));
     if (!foreignContext(self)) flatIssueEpochBumpRt();
     if (g_flatComputeInternal) { g_state->realOMSetRenderTargets(self, n, rtvs, dsv); return; }
@@ -3171,6 +3171,10 @@ void STDMETHODCALLTYPE hookedOMSetRenderTargets(ID3D11DeviceContext* self, UINT 
     if (temporalPassWantsFssChrome()) temporalPassNoteOmSet(n);
     if (gpuPassProfileCapturing()) gpuPassProfileNoteOm(self, n, rtvs, dsv);
     g_state->realOMSetRenderTargets(self, n, rtvs, dsv);
+    // The owner context's depth view is now `dsv`: the forward-light depth answer reads it from here until another
+    // target set moves the counter or the binding shadow's generations move (flat_om_generation.h). Only this path
+    // records: the internal, foreign and map-run paths return above without it, and leave the record stale.
+    flatOmTargetsRecord(self, dsv, bindingGeneration(BindSlot::Rtv0), bindingGeneration(BindSlot::Dsv0), targetSet);
 }
 
 void STDMETHODCALLTYPE hookedOMSetRtvAndUav(ID3D11DeviceContext* self, UINT n,

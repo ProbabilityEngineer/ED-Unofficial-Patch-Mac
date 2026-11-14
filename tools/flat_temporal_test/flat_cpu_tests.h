@@ -684,7 +684,10 @@ inline int flatCpuTests() {
                 has(copyText,"issue light DSV Gets=18446744073709551615")&&
                 has(copyText,"depth asks: game target set=18446744073709551615")&&
                 has(copyText,"depth asks: sampled check=18446744073709551615")&&
-                has(copyText,"recorded depth-state adoptions=18446744073709551615"),
+                has(copyText,"recorded depth-state adoptions=18446744073709551615")&&
+                has(copyText,"recorded depth-view adoptions=18446744073709551615")&&
+                has(copyText,"target asks: blend set=18446744073709551615")&&
+                has(copyText,"writes to none of these=18446744073709551615"),
                 "raw-binding and issue snapshot counters survive worst-width line packing");
         for (unsigned i = 0; i < flatcpu::kEmNameCount; ++i) named = named && has(text, flatcpu::kEmNames[i].name);
         named = named && has(text, "engine motion hooks") && has(text, "GPU frame") && has(text, "GPU resolve") &&
