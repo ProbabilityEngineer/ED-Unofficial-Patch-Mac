@@ -3174,8 +3174,12 @@ void STDMETHODCALLTYPE hookedOMSetRenderTargets(ID3D11DeviceContext* self, UINT 
     g_state->realOMSetRenderTargets(self, n, rtvs, dsv);
     // The owner context's depth view is now `dsv`: the forward-light depth answer reads it from here until another
     // target set moves the counter or the binding shadow's generations move (flat_om_generation.h). Only this path
-    // records: the internal, foreign and map-run paths return above without it, and leave the record stale.
-    flatOmTargetsRecord(self, dsv, bindingGeneration(BindSlot::Rtv0), bindingGeneration(BindSlot::Dsv0), targetSet);
+    // records: the internal, foreign and map-run paths return above without it, and leave the record stale. DXMT carries
+    // this call out through OMSetRenderTargetsAndUnorderedAccessViews, which re-enters the RTV+UAV hook below: that inner
+    // set moved the counter and recorded the same view under its own value, so this one records only when nothing set
+    // targets during its real call (2026-11-14, fc5d9f42: every stale record at Lintott City was this overwrite).
+    if (flatOmTargetGeneration() == targetSet)
+        flatOmTargetsRecord(self, dsv, bindingGeneration(BindSlot::Rtv0), bindingGeneration(BindSlot::Dsv0), targetSet);
 }
 
 void STDMETHODCALLTYPE hookedOMSetRtvAndUav(ID3D11DeviceContext* self, UINT n,
@@ -3244,7 +3248,7 @@ void STDMETHODCALLTYPE hookedOMSetRtvAndUav(ID3D11DeviceContext* self, UINT n,
     // As hookedOMSetRenderTargets: the owner context's depth view is now `dsv` (flat_om_generation.h). A set that kept the
     // targets carries a record that was current before it, provided nothing else set targets since (the substitution
     // above may have).
-    if (n != kKeepRenderTargetsUnchanged)
+    if (n != kKeepRenderTargetsUnchanged && flatOmTargetGeneration() == targetSet)
         flatOmTargetsRecord(self, dsv, bindingGeneration(BindSlot::Rtv0), bindingGeneration(BindSlot::Dsv0), targetSet);
     else if (recordBefore && flatOmTargetGeneration() == targetSet)
         flatOmTargetsRecordCarry(targetSet);

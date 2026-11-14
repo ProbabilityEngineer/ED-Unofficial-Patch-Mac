@@ -209,7 +209,7 @@ inline int run() {
         const std::string tail=finalCall!=std::string::npos?rt.substr(finalCall):std::string{};
         expect(rt.find("const uint32_t targetSet = flatOmSetNote(kFlatOmTargets);")!=std::string::npos&&
                inOrderIn(rt,"bindingSet(BindSlot::Dsv0, dsv);\n    if (flatTemporalCapturing())","g_state->realOMSetRenderTargets(self, n, rtvs, dsv);\n    // The owner")&&
-               tail.find("flatOmTargetsRecord(self, dsv, bindingGeneration(BindSlot::Rtv0), bindingGeneration(BindSlot::Dsv0), targetSet);")!=std::string::npos&&
+               tail.find("if (flatOmTargetGeneration() == targetSet)\n        flatOmTargetsRecord(self, dsv, bindingGeneration(BindSlot::Rtv0), bindingGeneration(BindSlot::Dsv0), targetSet);")!=std::string::npos&&
                rt.find("flatOmTargetsRecord(")==rt.rfind("flatOmTargetsRecord("),
                "the target hook records once, after its final real call, with its own counter value and the binding generations");
         g_flatOmTargetsRecord.generation.store(0);
@@ -234,6 +234,15 @@ inline int run() {
         expect(flatOmTargetsRecorded(&ctxA,5,6,got)&&got==&stateY,"a set that keeps the targets carries the current record");
         flatOmSetNote(kFlatOmTargets);const bool staleBefore=flatOmTargetsRecordCurrent();
         expect(!staleBefore&&flatOmTargetsRecordedWhy(&ctxA,5,6,got)==FlatOmTargetsMiss::Stale,"a stale record is reported stale and not carried");
+        // A set nested inside another (DXMT's OMSetRenderTargets calls its own RTV+UAV entry): the inner hook records under its
+        // value; the outer one, finding the counter moved during its real call, leaves that record standing.
+        g_flatOmTargetsRecord.generation.store(0);
+        const uint32_t outer=flatOmSetNote(kFlatOmTargets);
+        const uint32_t inner=flatOmSetNote(kFlatOmTargets);flatOmTargetsRecord(&ctxA,&stateX,5,6,inner);
+        if(flatOmTargetGeneration()==outer)flatOmTargetsRecord(&ctxA,&stateX,5,6,outer);
+        expect(flatOmTargetsRecorded(&ctxA,5,6,got)&&got==&stateX,"a nested set's record survives the outer hook");
+        flatOmTargetsRecord(&ctxA,&stateX,5,6,outer);
+        expect(flatOmTargetsRecordedWhy(&ctxA,5,6,got)==FlatOmTargetsMiss::Stale,"(the overwrite the guard prevents leaves it stale)");
         g_flatOmTargetsRecord.generation.store(0);
         // Both target hooks record after their final real call; the RTV+UAV hook only for a set that names the targets,
         // and carries a record over a KEEP set only when nothing else set targets meanwhile.
@@ -242,7 +251,7 @@ inline int run() {
         expect(inOrderIn(ru,"const bool recordBefore = !foreignContext(self) && n == 0xFFFFFFFFu && flatOmTargetsRecordCurrent();",
                          "const uint32_t targetSet = flatOmSetNote(kFlatOmTargets);")&&
                inOrderIn(ru,"g_state->realOMSetRtvAndUav(self, n, rtvs, dsv, uavStart, uavCount, uavs, counts);\n    // As hookedOMSetRenderTargets",
-                         "if (n != kKeepRenderTargetsUnchanged)\n        flatOmTargetsRecord(self, dsv, bindingGeneration(BindSlot::Rtv0), bindingGeneration(BindSlot::Dsv0), targetSet);")&&
+                         "if (n != kKeepRenderTargetsUnchanged && flatOmTargetGeneration() == targetSet)\n        flatOmTargetsRecord(self, dsv, bindingGeneration(BindSlot::Rtv0), bindingGeneration(BindSlot::Dsv0), targetSet);")&&
                ru.find("else if (recordBefore && flatOmTargetGeneration() == targetSet)\n        flatOmTargetsRecordCarry(targetSet);")!=std::string::npos,
                "the RTV+UAV hook records a named set and carries a current record over a KEEP set");
     }
