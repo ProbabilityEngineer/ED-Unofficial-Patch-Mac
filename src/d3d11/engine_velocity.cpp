@@ -1154,6 +1154,14 @@ void readTargets(ID3D11DeviceContext* ctx, TargetRead* out) {
         six = nullptr;
         out->ourMrt6 = true;
     }
+    // F2 in flat: EDVR's target 7 (the second skin's) is never part of the game's set either. Read as the game's, it was "taken by the game"
+    // at the next binding (the second skin skipped every pass after its first) and put back by the restore as if it were the game's.
+    ID3D11RenderTargetView*& seven = out->rtv[kSkinTarget];
+    if (seven && seven == g_eyes[kEngineVelocitySourceEye].skinRtv.Get()) {
+        seven->Release();
+        seven = nullptr;
+        out->ourMrt6 = true;   // (bound only with MRT6: a restore takes both off)
+    }
 }
 
 // The game's render-target set, read once per binding: not again while the game has not rebound the
@@ -1672,7 +1680,10 @@ bool bindTarget(ID3D11DeviceContext* ctx, Eye& e, ID3D11DepthStencilView* dsv) {
     const uint32_t rtvGenNow = bindingGeneration(BindSlot::Rtv0), dsvGenNow = bindingGeneration(BindSlot::Dsv0);
     if (g_flatGame.saved && g_flatGame.rtvGen == rtvGenNow && g_flatGame.dsvGen == dsvGenNow) {
         for (unsigned i = 0; i < 8; ++i) rt[i] = g_flatGame.rtv[i].Get();
-        if (g_flatGame.bound) rt[kEngineVelocityTarget] = e.slotsRtv.Get();
+        if (g_flatGame.bound) {
+            rt[kEngineVelocityTarget] = e.slotsRtv.Get();
+            if (e.skinBound && e.skinRtv) rt[kSkinTarget] = e.skinRtv.Get();   // EDVR's target 7, still bound with MRT6 (readTargets keeps it out of the game's set)
+        }
         bound = g_flatGame.dsv.Get();
     } else {
         ctx->OMGetRenderTargets(8, rt, &bound);
