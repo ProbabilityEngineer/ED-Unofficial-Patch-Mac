@@ -16,7 +16,7 @@
 
 #include <cstdint>
 
-#include "dlaa.h"   // kUpscalerSlots: the slot count both engines share (slots 0 and 1 are the eyes', 2 the VR world route's)
+#include "upscaler_slots.h"   // kUpscalerSlots
 
 struct ID3D11Device;
 struct ID3D11DeviceContext;

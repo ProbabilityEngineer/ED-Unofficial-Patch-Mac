@@ -3511,22 +3511,16 @@ void STDMETHODCALLTYPE hookedExecuteCommandList(ID3D11DeviceContext* self,
     if (!s->sawExecuteCommandList) {
         s->sawExecuteCommandList = true;
         Log::get().note("vScreen: ExecuteCommandList seen (slot %zu, restore=%d); "
-                        "private bridge executions are separately gated, unknown "
-                        "lists invalidate resource history.",
+                        "command lists invalidate resource history.",
                         kSlotExecuteCommandList, restoreContextState ? 1 : 0);
     }
     uiLayerMapRunEnd(self);   // a command list runs on the context's state, which must be the game's (ui_layer.h)
-    const bool privateExecution = graphicsBridgeConsumePermit(self, list, restoreContextState);
     // A recorded command list runs on the state the context holds: the game's, not engine motion's.
     if (flatRuntimeActive()) flatRuntimeSubstitution(self, FlatSubstEvent::kExecuteCommandList);
-    if (flatRuntimeActive() && !privateExecution) flatRuntimeUnknown();
-    if (flatTemporalCapturing() && !privateExecution)
-        flatTemporalExecuteList(false);
-    if (!privateExecution) {
-        graphicsBridgeNoteUnknownExecution();
-        motionResourceWritten(nullptr);
-        if (celestialMotionAnyWatched()) celestialMotionConstantsUnknownWrite(nullptr);
-    }
+    if (flatRuntimeActive()) flatRuntimeUnknown();
+    if (flatTemporalCapturing()) flatTemporalExecuteList(false);
+    motionResourceWritten(nullptr);
+    if (celestialMotionAnyWatched()) celestialMotionConstantsUnknownWrite(nullptr);
     s->realExecuteCommandList(self, list, restoreContextState);
     // After the call, and only when the context was not restored: with
     // RestoreContextState TRUE the bindings we recorded are put back, so
@@ -7869,10 +7863,8 @@ void installVScreenFixes(ID3D11Device* device, HookMode mode) {
                    reinterpret_cast<void**>(&s.realOMSetRenderTargets));
     s.hook.replace(kSlotClearState, &hookedClearState,
                    reinterpret_cast<void**>(&s.realClearState));
-    const bool executeHookInstalled =
-        s.hook.replace(kSlotExecuteCommandList, &hookedExecuteCommandList,
-                       reinterpret_cast<void**>(&s.realExecuteCommandList)) &&
-        s.realExecuteCommandList != nullptr;
+    s.hook.replace(kSlotExecuteCommandList, &hookedExecuteCommandList,
+                   reinterpret_cast<void**>(&s.realExecuteCommandList));
     s.hook.replace(kSlotOMSetRtvAndUav, &hookedOMSetRtvAndUav,
                    reinterpret_cast<void**>(&s.realOMSetRtvAndUav));
     s.hook.replace(kSlotPSSetShaderResources, &hookedPSSetShaderResources,
@@ -7967,10 +7959,6 @@ void installVScreenFixes(ID3D11Device* device, HookMode mode) {
         delete g_state;
         g_state = nullptr;
         return;
-    }
-
-    if (!executeHookInstalled || !graphicsBridgeRegisterOwner(device, ctx)) {
-        Log::get().note("vScreen: private graphics bridge unavailable (owner already registered or identity check failed)");
     }
 
     Log::get().note("vScreen fixes installed: black void %s, panel distance %s, eye-draw "

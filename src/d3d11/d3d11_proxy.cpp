@@ -16,7 +16,6 @@
 
 #include <atomic>
 #include <cstring>  // _stricmp, for the hook-mode override's spellings
-#include <intrin.h>  // _ReturnAddress: the caller of the executable's LoadLibraryW
 #include <string>
 
 #include "../common/code_hook.h"
@@ -30,7 +29,6 @@
 #include "../common/log.h"
 #include "../common/real_dll_choice.h"
 #include "../common/module_pin.h"
-#include "../common/native_startup.h"
 #include "../common/proxy.h"
 #include "../common/system_d3d11.h"   // chooseSystemD3D11: the DllMain handle, checked by path
 #include "device_hook.h"
@@ -39,15 +37,11 @@
 #include "input_gate.h"
 #include "desktop_window_cursor.h"   // visual.desktop_window: the executable's cursor calls, watched (VR scope)
 #include "loaded_module_match.h"
-#include "vr_ssaa_hold.h"  // vrSsaaHoldEarlyInstall: the Supersampling hold's hooks at DLL load
+#include "ui_panel_scale.h"  // uiPanelScaleInstallEarly: the Supersampling setter and getter hooks at DLL load
 #include "mode_watch.h"    // modeWatchStart: the 3D mode watch, started after the profile lines
-#include "oculus_route.h"
+
 #include "../plugins/plugin_manager.h"
 #include "../common/iat_hook.h"
-
-extern "C" const EdvrNativeStartupRouting edvrNativeStartupRouting = {
-    sizeof(EdvrNativeStartupRouting), EDVR_NATIVE_STARTUP_VERSION_1,
-    EDVR_NATIVE_STARTUP_ROUTE_OCULUS, 0u};
 
 extern "C" {
 extern void* edvr_realProcs_d3d11[];
@@ -122,14 +116,7 @@ HMODULE WINAPI hookedLoadLibraryW(LPCWSTR lpLibFileName) {
     return LoadLibraryW(lpLibFileName);
 }
 
-// The deadlock bypass takes the LoadLibraryW slot that the Oculus route hooked
-// at DllMain, so Elite's own LoadLibraryW calls go through the route's policy
-// first, with Elite's return address, and then through the bypass.
-__declspec(noinline) HMODULE WINAPI hookedExeLoadLibraryW(LPCWSTR lpLibFileName) {
-    return edvr::oculusRouteDispatchFrom(lpLibFileName,
-                                         reinterpret_cast<uintptr_t>(_ReturnAddress()),
-                                         &hookedLoadLibraryW);
-}
+HMODULE WINAPI hookedExeLoadLibraryW(LPCWSTR lpLibFileName) { return hookedLoadLibraryW(lpLibFileName); }
 
 HMODULE WINAPI hookedLoadLibraryA(LPCSTR lpLibFileName) {
     if (HMODULE mod = findLoadedModuleA(lpLibFileName)) {
@@ -460,7 +447,6 @@ BOOL CALLBACK initOnceCallback(PINIT_ONCE, PVOID, PVOID*) {
     edvr::seatContextPublish();
     edvr::Log::get().note("game command line: %s", edvr::runtimeGameCommandLine().c_str());
     edvr::modeWatchStart();  // after the profile lines: the watch's first line follows them (mode_watch.h)
-    edvr::oculusRouteReport();
 
     const std::string build = edvr::gameBuildVersion();
     // The builds named here come from the list itself, never a literal. A
@@ -477,8 +463,8 @@ BOOL CALLBACK initOnceCallback(PINIT_ONCE, PVOID, PVOID*) {
         // game's code bind addresses of one build; on another, the signature
         // resolver (src\common\game_build.h, issue 124) finds each by matching
         // the known build's whole function, and a fix comes up only where it
-        // found every address it needs. The Oculus route profile and Explorer
-        // Cam stay off on any build but the known one. Until 2026-10-25 this
+        // found every address it needs. Explorer Cam
+        // stays off on any build but the known one. Until 2026-10-25 this
         // line said every fix found its target by shape, which was never true
         // of the hooks.
         edvr::Log::get().note(
@@ -486,15 +472,15 @@ BOOL CALLBACK initOnceCallback(PINIT_ONCE, PVOID, PVOID*) {
             "fixes that hook the game look for the code they edit by matching the known "
             "build's functions (the \"game build:\" line says how many addresses were "
             "found), and each comes up only where it found everything it needs; the "
-            "Oculus route profile and Explorer Cam stay off. The lines below say what each "
+            "Explorer Cam stays off. The lines below say what each "
             "found, and nothing it did not find is touched.",
             build.empty() ? "(unreadable)" : build.c_str(), verified.c_str());
     }
     // An unknown build: the signature resolver starts here on a thread of its own (issue 124), so no hook pays it on the render thread
-    // or in DllMain, and the VR Supersampling hold, which waited for it, installs on that thread when it is done.
+    // or in DllMain, and the Supersampling setter and getter hooks, which waited for it, install on that thread when it is done.
     // The TEMPORARY instrument (advanced.game_update_check): off, nothing; on, on the known build, the resolver runs once on a background
     // thread and logs whether it finds every address where the hooks' constants put it.
-    edvr::gameBuildStartup(&edvr::vrSsaaHoldInstallAfterResolve);
+    edvr::gameBuildStartup(&edvr::uiPanelScaleInstallAfterResolve);
 
     if (g_missingExports) {
         edvr::Log::get().note(
@@ -550,7 +536,6 @@ void ensureInitialised() {
 
 void shutdown() {
     edvr::plugins::PluginManager::instance().shutdown();
-    edvr::oculusRouteReport();
     // Per-site fault totals, so "logged once" does not mean "counted once".
     edvr::reportFaultSites();
     edvr::shutdownDeviceHooks();
@@ -898,19 +883,6 @@ extern "C" HRESULT WINAPI edvr_impl_D3D11CreateDeviceAndSwapChain(
     return hr;
 }
 
-// CPU-only diagnostic query. It must not trigger normal initialization: the
-// first relevant loader call can precede the first D3D export.
-extern "C" BOOL WINAPI edvrQueryOculusRouting(uint32_t version, uint32_t size,
-                                            void* output) {
-    if (version != 1 || size != sizeof(edvr::OculusRouteStatus) || !output) return FALSE;
-    __try {
-        *static_cast<edvr::OculusRouteStatus*>(output) = edvr::oculusRouteStatusSnapshot();
-        return TRUE;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return FALSE;
-    }
-}
-
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
     switch (reason) {
         case DLL_PROCESS_ATTACH:
@@ -920,21 +892,16 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
             // anything else has a chance to map memory there. Reserve only -- nothing committed, logged or configured.
             edvr::codeHookReserveNear(GetModuleHandleW(nullptr));
             edvr::codeHookReserveNear(GetModuleHandleW(nullptr));
-            // Native routing is a build capability, available before Elite's
-            // first VR probe. No configuration or logging under loader lock.
-            // A route that cannot be installed leaves Elite's own loading untouched; the gfx log says why.
-            edvr::oculusRouteInstallEarly(true);
             loaderPhase();
             edvr::inputGateInstallEarly();
-            // The VR Supersampling hold's hooks (vr_ssaa_hold.h): pure memory reads and writes, the build gate first. In a
-            // process whose main module is not EliteDangerous64.exe (the installer, say) the resolver resolves nothing, so they
-            // refuse silently; on an unknown build of the game they wait for the signature resolve, which never runs here
+            // The Supersampling setter and getter hooks fix.ui_quality sizes panels from (ui_panel_scale.h): pure memory reads
+            // and writes, the build gate first. In a process whose main module is not EliteDangerous64.exe (the installer, say)
+            // they refuse silently; on an unknown build of the game they wait for the signature resolve, which never runs here
             // under the loader lock (gameBuildStartup's thread installs them). No config, file or log here.
-            edvr::vrSsaaHoldEarlyInstall();
+            edvr::uiPanelScaleInstallEarly();
             break;
 
         case DLL_PROCESS_DETACH:
-            edvr::oculusRouteUninstallEarly();
             // reserved != NULL means process termination: other threads are
             // already dead and may have been holding our spinlock or the heap
             // lock. Do the minimum and leak the rest.

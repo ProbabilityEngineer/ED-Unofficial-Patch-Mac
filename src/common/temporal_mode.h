@@ -22,12 +22,11 @@ namespace edvr {
 // history inside the cached MTLFXTemporalScaler, so there is no AMD- or
 // NVIDIA-shaped coupling to make, and the pass's own history semantics are right.
 // Adding mfx there would wrongly claim UI-depth reach through an external engine.
+//
+// ed-metalfx (stage 2b, 2026-11-14) keeps two modes: fsr and mfx. EDVR's own TAA ("on") and NVIDIA's and Intel's
+// engines (dlaa, dlss, xess) were removed; those values now read as off, like any other unknown value.
 inline bool temporalModeEnabled(const std::string& mode) {
-    return _stricmp(mode.c_str(), "on") == 0 ||
-           _stricmp(mode.c_str(), "dlaa") == 0 ||
-           _stricmp(mode.c_str(), "dlss") == 0 ||
-           _stricmp(mode.c_str(), "fsr") == 0 ||
-           _stricmp(mode.c_str(), "xess") == 0 ||
+    return _stricmp(mode.c_str(), "fsr") == 0 ||
            _stricmp(mode.c_str(), "mfx") == 0;
 }
 

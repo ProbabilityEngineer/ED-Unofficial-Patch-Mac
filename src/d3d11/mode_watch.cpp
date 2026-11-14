@@ -4,7 +4,6 @@
 #include "mode_watch.h"
 
 #include "device_hook.h"        // flatSwitchAvailable, deviceHookRequestConfigRefresh: the switch's gate and its forced configure sweep
-#include "dlaa.h"               // dlaaReleaseForSwitch: DLSS features released, NGX kept
 #include "engine_velocity.h"    // engineVelocityFlatAbandon: the flat teardown's velocity state
 #include "flat_runtime.h"       // flatRuntimeResize: the flat teardown, run before a commit leaves flat
 #include "fsr3_engine.h"        // fsr3ReleaseFeatures: FSR's features, released at every switch
@@ -12,8 +11,6 @@
 #include "mode_watch_logic.h"
 #include "perf_monitor.h"       // perfMonitorProfileSwitch: the frame interval restarts at a switch
 #include "ui_layer.h"           // uiLayerProfileSwitch: the VR UI layers, torn down before a commit leaves VR
-#include "xess_engine.h"        // xessReleaseFeatures: XeSS's features, released at every switch
-#include "vr_ssaa_hold.h"       // vrSsaaHoldProfileChanged: the Supersampling hold follows the profile
 
 #include "../common/config.h"
 #include "../common/frame_flag.h"              // setVrProfileActive: the runtime's own frames stand down while the game is flat
@@ -442,9 +439,7 @@ void commitPosted(uint64_t packed) {
         } else if (cur == RuntimeProfile::Vr) {
             uiLayerProfileSwitch();
         }
-        dlaaReleaseForSwitch();
         fsr3ReleaseFeatures();
-        xessReleaseFeatures();
         menuProfileSwitch();
         g_teardowns.fetch_add(1, std::memory_order_relaxed);
     }
@@ -456,7 +451,6 @@ void commitPosted(uint64_t packed) {
     // After the settings file is re-picked (the VR approvals in [addons] are read from it) and the profile is in effect: a switch to flat
     // suspends the addons, a switch to VR resumes them, and a session that began flat runs its deferred discovery now.
     plugins::PluginManager::instance().onProfileSwitched();
-    vrSsaaHoldProfileChanged();
     deviceHookRequestConfigRefresh();  // the forced configure sweep runs later in this presentFrameBoundary
     perfMonitorProfileSwitch();        // the monitor's frame interval restarts; the other profile's stretch is no long frame
 
@@ -586,7 +580,7 @@ extern "C" unsigned int edvr_selftest_profile_state(uint32_t* out, unsigned int 
         cfg.generation(),
         edvr::g_switches.load(std::memory_order_relaxed),
         edvr::menuIsConfigured() ? 1u : 0u,
-        edvr::vrSsaaHoldActive() ? 1u : 0u,
+        0u,   // the VR Supersampling hold, removed in ed-metalfx (stage 2b)
         edvr::g_flatRuntimeLive.load(std::memory_order_relaxed) ? 1u : 0u,
         edvr::g_teardowns.load(std::memory_order_relaxed),
     };

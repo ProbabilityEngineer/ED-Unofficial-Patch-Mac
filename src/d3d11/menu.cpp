@@ -61,8 +61,6 @@
 #include "ui_layer_math.h"  // uiQualityParse: the HUD Anti-Aliasing row dims while fix.ui_quality is off (or the anti-aliasing is), UI quality read as the layer reads it
 #include "vscreen.h"        // vScreenRenderBelowEye: Elite's Supersampling below 1, from the sizes
 #include "concourse_pane.h"     // concoursePaneTakeToast: the concourse window mode's toast (TEMPORARY, docs\concourse-cull-2026-11-05.md)
-#include "vr_ssaa_hold.h"       // vrSsaaHoldNoticeDue: the Supersampling hold's toast (a requested value held at 1.0)
-#include "vr_ssaa_hold_math.h"  // ssaahold::formatHoldToast
 #include "mode_watch.h"         // modeWatchNoticeDue: the 3D mode watch's toast, once per commit
 #include "vscreen_res.h"
 #include "xinput_watch.h"   // the Hotkeys page's capture reads the pad
@@ -5184,24 +5182,6 @@ void menuTick(ID3D11Device* dev) {
             if (s.clashStale && !page.entries.empty() && page.entries[0].kind == EntryKind::Setting &&
                 kMenuRows[page.entries[0].def].kind == MenuKind::Hotkey) {
                 refreshHotkeyClashes();   // only the page that shows the badges reads the files
-            }
-        }
-
-        // The VR Supersampling hold (vr_ssaa_hold.h): while the game's Supersampling is held at 1.0 in VR, a requested value that is
-        // not 1.0 is said once per change, as a toast. The measured notice below cannot fire under the hold (the world is drawn at
-        // the eye's own size), so it is kept for the cases the hold does not cover (3D mode 0, flat).
-        {
-            float requested = 0.0f;
-            if (vrSsaaHoldNoticeDue(&requested)) {
-                char holdToast[120];
-                ssaahold::formatHoldToast(holdToast, sizeof(holdToast), requested);
-                if (s.toasts) {
-                    s.toastQueue.push_back(holdToast);
-                    Log::get().note("vr ssaa gate: notice queued as a toast (\"%s\")", holdToast);
-                } else {
-                    Log::get().note("vr ssaa gate: notice not queued: menu.toasts is off");
-                }
-                s.contentDirty = true;
             }
         }
 

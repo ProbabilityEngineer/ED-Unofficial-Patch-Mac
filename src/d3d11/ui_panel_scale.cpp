@@ -7,9 +7,6 @@
 #include "ui_sizing_math.h"
 #include "ui_surfaces.h"      // native temporal's lock-free accessors, uiSurfacesHmdQuality/Supersampling/DisplayWidth
 #include "vscreen_res.h"      // vscreenModeAppliedWidth: one of the widths the panel budget starts from
-#include "vr_ssaa_gate.h"     // the step-1 instruments: log only
-#include "vr_ssaa_hold.h"     // the Supersampling hold: the setter's value, and the held field the panel factor follows
-#include "vr_ssaa_hold_math.h"  // ssaahold::kHeldValue
 #include "mode_watch.h"         // modeWatchHint: the setter is a hint for the 3D mode watch
 
 #include "../common/code_hook.h"               // codeHookNearPage: the data page within rel32 of the sites
@@ -367,10 +364,7 @@ void setterBeforeImpl(void* self, float x) {
     uintptr_t ctx = 0;
     if (!readGame(reinterpret_cast<const uint8_t*>(self) + kUiSsCtxFromThis, &ctx, sizeof(ctx)) || !ctx) return;
     noteCtx(ctx);
-    vrSsaaHoldNoteContext(ctx);  // the render context the hold re-applies to (H7 / GAP 2)
     g_setterCalls.fetch_add(1, std::memory_order_relaxed);
-    float beforeCur = 0.0f;
-    vrSsaaGateNoteSetterBefore(readFloatAt(ctx + kUiSsOffCur, &beforeCur) ? beforeCur : NAN);  // log only
     if (g_patch.load(std::memory_order_acquire) != kApplied || !g_live.load(std::memory_order_acquire) ||
         !(g_target.load(std::memory_order_acquire) > 0.0f))
         return;
@@ -389,7 +383,6 @@ void setterAfterImpl(void* self, float passed) {
     if (!readGame(reinterpret_cast<const uint8_t*>(self) + kUiSsCtxFromThis, &ctx, sizeof(ctx)) || !ctx) return;
     const bool readOk = readFloatAt(ctx + kUiSsOffCur, &cur) && readFloatAt(ctx + kUiSsOffMin, &lo) &&
                         readFloatAt(ctx + kUiSsOffMax, &hi);
-    vrSsaaGateNoteSetterAfter(ctx, passed, readOk ? cur : NAN, readOk ? lo : 0.0f, readOk ? hi : 0.0f);  // log only
     if (!readOk || !uiLiveSupersamplingValid(cur, lo, hi, nullptr)) return;
     if (g_patch.load(std::memory_order_acquire) == kApplied && g_live.load(std::memory_order_acquire) &&
         g_target.load(std::memory_order_acquire) > 0.0f)
@@ -400,11 +393,8 @@ void getterNoteImpl(void* self) {
     uintptr_t ctx = 0;
     if (readGame(reinterpret_cast<const uint8_t*>(self) + kUiSsCtxFromThis, &ctx, sizeof(ctx))) {
         noteCtx(ctx);
-        vrSsaaHoldNoteContext(ctx);
     }
     g_getterSeen.store(true, std::memory_order_relaxed);
-    float cur = 0.0f;  // log only: the first getter read's value (the getter returns ctx+0x3564)
-    if (ctx && vrSsaaGateGetterPending() && readFloatAt(ctx + kUiSsOffCur, &cur)) vrSsaaGateNoteGetter(cur);
 }
 
 // SEH around each (no destructors in any of them; a fault in the game's memory must not become the game's crash).
@@ -426,7 +416,6 @@ void getterNoteThunk(void* self, float) { getterNoteImpl(self); }
 
 void __fastcall hookedSetter(void* self, float x) {
     modeWatchHint(ModeHint::Setter);  // the mode watch re-reads Settings.xml now (mode_watch.h); the setter is how Supersampling is set
-    x = vrSsaaHoldSetterValue(x);  // the Supersampling hold (vr_ssaa_hold.h): 1.0 while the 3D mode is on, else the game's value
     guardedRun(setterBeforeThunk, self, x);
     const SetterFn orig = g_origSetter.load(std::memory_order_acquire);
     if (orig) orig(self, x);
@@ -653,14 +642,7 @@ void apply() {
 UiSsPick chooseSupersampling(float fxcfg) {
     float cur = 0.0f, lo = 0.0f, hi = 0.0f;
     const UiSsRead read = readLiveSupersampling(&cur, &lo, &hi);
-    // The Supersampling hold (vr_ssaa_hold.h): while the game's field is held at 1.0, the factor and the size budget are made
-    // from 1.0, whatever the live value or the .fxcfg says (the live read is not believable under the hold's 1.0 range check).
     UiSsPick pick = uiPickSupersampling(read, cur, lo, hi, fxcfg);
-    if (vrSsaaHoldActive()) {
-        pick.ss = static_cast<float>(ssaahold::kHeldValue);
-        pick.source = UiSsSource::kHeld;
-        pick.why = UiSsWhy::kNone;
-    }
     g_liveCur = cur;
     g_liveLo = lo;
     g_liveHi = hi;
@@ -745,6 +727,16 @@ bool uiPanelScaleEarlyHooks(char* why, size_t whyLen) {
     if (g_hookState == kHookInstalled) return true;
     if (why && whyLen) std::snprintf(why, whyLen, "%s", g_hookWhy);
     return false;
+}
+
+void uiPanelScaleInstallEarly() {
+    if (gameBuildUnknown()) return;   // an unknown build waits for the signature resolve (uiPanelScaleInstallAfterResolve)
+    (void)uiPanelScaleEarlyHooks(nullptr, 0);   // a refusal keeps its reason for apply()'s report
+}
+
+void uiPanelScaleInstallAfterResolve() {
+    if (!gameBuildUnknown()) return;
+    (void)uiPanelScaleEarlyHooks(nullptr, 0);   // a refusal keeps its reason for apply()'s report
 }
 
 void uiPanelScaleSetTarget(float target) {

@@ -18,7 +18,6 @@
 #include "../../src/d3d11/flat_origin_optical_shader.h"
 #include "../../src/d3d11/flat_dof_blur_shader.h"   // the depth-of-field blur's average
 #include "../../src/d3d11/engine_velocity_primary_copy_shader.h"
-#include "../../src/d3d11/xess_copy_shader.h"
 #include "../../src/d3d11/skin_join_shader.h"
 #include "../../src/d3d11/eye_jump_lattice_shader.h"
 #include "../../src/d3d11/reticle_depth_shader.h"   // F85c: the reticle's hit-depth march
@@ -445,7 +444,6 @@ static int generateTemporal(const Options& o) {
         {"kWorldScreenCensusBytecode", "world_screen_census_cs", "main", nullptr, {}, false, edvr::kWorldScreenCensusCs, "cs_5_0"},
         {"kUiContentArrayBytecode", "UI source edits (array)", "main", nullptr, {}, false, edvr::kUiContentArrayCs, "cs_5_0"},
         {"kEnginePrimaryCopyScatterBytecode", "engine_primary_copy_scatter_cs", "main", nullptr, {}, false, edvr::kEnginePrimaryCopyScatterCsHlsl},
-        {"kXessR11ToFp16Bytecode", "xess_r11_to_fp16_cs", "main", nullptr, {}, false, edvr::kXessR11ToFp16Cs},
         // F2 (skin_join_shader.h, docs/kinematic-motion-injection-2026-09-19.md "F2 built"): the identity join and the pose table passes, one HLSL text.
         {"kSkinJoinBytecode", "skin_join_cs", "join", nullptr, {}, false, edvr::kSkinJoinCsHlsl},
         {"kSkinJoinClearBytecode", "skin_join_clear_cs", "joinClear", nullptr, {}, false, edvr::kSkinJoinCsHlsl},

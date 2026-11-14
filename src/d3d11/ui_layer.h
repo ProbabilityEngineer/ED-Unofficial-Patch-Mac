@@ -592,7 +592,6 @@ void uiLayerShutdown();
 // switches -- where the game put the pixels, not how the pass reads them.
 // (0, 0) while the pass is not jittering. False before the first frame, or
 // with no native temporal channel.
-bool nativeTemporalDrawJitter(uint32_t eye, uint64_t* sequence, float* jx, float* jy,
-                              uint32_t* w, uint32_t* h);
+inline bool nativeTemporalDrawJitter(uint32_t, uint64_t*, float*, float*, uint32_t*, uint32_t*) { return false; }  // stage 2b: the VR channel is gone; a flat session never had one
 
 }  // namespace edvr

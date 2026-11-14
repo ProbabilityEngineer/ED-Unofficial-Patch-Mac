@@ -19,7 +19,6 @@
 #include "flat_mono_resolve.h"
 #include "flat_celestial.h"    // planet patch motion: the rows' tangents for the records the resolve binds (fetchCelestialRecords)
 #include "celestial_motion.h"
-#include "xess_engine.h"
 #include "flat_projection_recipes.h"
 #include "flat_shader_classifier.h"
 #include "flat_projection_ownership.h"
@@ -49,7 +48,6 @@
 #include "flat_pixel_capture_policy.h"
 #include "flat_local_reject.h"
 #include "flat_trace.h"
-#include "flat_dlss_negotiate.h"
 #include "flat_negotiated_eval.h"
 #include "flat_camera_producer_probe.h"
 #include "flat_standdown.h"
@@ -77,7 +75,6 @@
 #include "vehicle_frame.h"
 #include "vehicle_rig.h"
 #include "journal_watch.h"   // the map's GuiFocus (flatRuntimeMapFocusFrame): temporal AA off on the maps, and the map families' gate
-#include "dlaa.h"
 #include "flat_sharpen.h"
 #include "flat_ui_layer_math.h"   // fix.ui_quality's flat layer: the target class and family rule its decision asks
 #include "../common/config.h"
@@ -4487,35 +4484,20 @@ void flatRuntimePresent(IDXGISwapChain* swap, uint64_t frame, HRESULT hr, UINT f
     s.covFrameLocallyRefused = false;
     const auto mode = Config::get().requestedTemporalMode();
     const bool enabled = temporalModeEnabled(mode);
-    const auto model = Config::get().getString("fix.temporal_aa_model", "k");
-    const auto preset = temporalPresetFor(model);
     const bool refusalViewWanted = Config::get().getBool("advanced.flat_refusal_view", false);
     if (refusalViewWanted != s.refusalView || !s.refusalViewRead) {
         s.refusalView = refusalViewWanted; s.refusalViewRead = true;
         Log::get().note("flat runtime: refusal view %s (advanced.flat_refusal_view): %s", refusalViewWanted ? "on" : "off", flatMonoViewLegend());
     }
-    if (s.preset != preset.full) {
-        s.preset = preset.full;
-        dlaaSetPreset(preset.full);
-        if (temporalEngineFor(mode) == TemporalEngine::Nvidia) {
-            s.haveResolvePlan=false;s.resolvePreflight={};s.resolvePreflightRetryMs=0;
-            reset();s.phase.resetHistory();
-        }
-        Log::get().note("flat runtime: DLSS model=%s preset=%u; applied at frame boundary%s",
-            model.c_str(),preset.full,preset.known?"":" (unknown model; using K)");
-    }
     if (mode != s.mode) {
-        if (s.engine == FlatMonoResolveMode::Xess) xessReleaseFeatures();
         s.haveResolvePlan=false;s.resolvePreflight={};s.resolvePreflightRetryMs=0;
         s.mode = mode; reset();
         // A new mode is a new question for the stand-down: everything restarts.
         endStandDown(s, frame, "the anti-aliasing mode changed");
         engineVelocityConfigure(enabled);
         s.phase.resetHistory();
-        s.engine = _stricmp(mode.c_str(), "xess") == 0 ? FlatMonoResolveMode::Xess :
-            _stricmp(mode.c_str(), "fsr") == 0 ? FlatMonoResolveMode::Fsr :
-            _stricmp(mode.c_str(), "dlss") == 0 ? FlatMonoResolveMode::Dlss :
-            _stricmp(mode.c_str(), "dlaa") == 0 ? FlatMonoResolveMode::Dlaa :
+        // fsr and mfx are the only modes (temporalModeEnabled); Taa stays the "no backend" value of a mode that is off.
+        s.engine = _stricmp(mode.c_str(), "fsr") == 0 ? FlatMonoResolveMode::Fsr :
             _stricmp(mode.c_str(), "mfx") == 0 ? FlatMonoResolveMode::Mfx : FlatMonoResolveMode::Taa;
         if(s.engine==FlatMonoResolveMode::Taa) {
             s.foregroundRoute.clear();for(auto& candidate:s.foregroundCandidates)retireDomainCandidate(s,candidate);
@@ -4571,9 +4553,6 @@ void flatRuntimePresent(IDXGISwapChain* swap, uint64_t frame, HRESULT hr, UINT f
     Ptr<ID3D11Device> actualDevice; swap->GetDevice(IID_PPV_ARGS(&actualDevice));
     if (s.device && actualDevice.Get() != s.device.Get()) {
         flatRuntimeResize();
-        // Resize releases XeSS features; end its device binding before this
-        // render thread adopts the replacement device.
-        xessShutdown();
         s.thread = GetCurrentThreadId();
     }
     if (!s.device) { swap->GetDevice(IID_PPV_ARGS(&s.device)); if (s.device) s.device->GetImmediateContext(&s.context); }
@@ -7562,37 +7541,9 @@ FlatRuntimeDrawScope::FlatRuntimeDrawScope(ID3D11DeviceContext* context, uint32_
             Log::get().note("flat route: %s R=%ux%u E=%ux%u D=%ux%u%s", route.name,
                 plan.renderWidth, plan.renderHeight, route.evalWidth, route.evalHeight,
                 plan.outputWidth, plan.outputHeight, route.refused ? " (refused today)" : "");
-            // Gate 2 step 4: negotiate the effective treatment with the vendor
-            // on every contract change. The request is recorded above; this is
-            // the vendor's answer -- serving mode and evaluation size, with an
-            // under-floor input cut to the floor it reaches (the game's copy
-            // upsamples the rest), never a silent TAA substitution.
             s.negotiatedEvalW = s.negotiatedEvalH = 0;
             s.negotiatedRenderW = s.negotiatedRenderH = 0;
             s.negotiatedOutputW = s.negotiatedOutputH = 0;
-            if (plan.mode == FlatMonoResolveMode::Dlss && !route.refused &&
-                (plan.renderWidth < plan.outputWidth || plan.renderHeight < plan.outputHeight)) {
-                const char* why = nullptr;
-                if (dlaaAvailable(s.device.Get(), &why)) {
-                    DlssModeRange modes[kDlssModeCount];
-                    if (dlssModeRanges(s.device.Get(), plan.outputWidth, plan.outputHeight, modes)) {
-                        const auto neg = flatDlssNegotiate(modes, plan.renderWidth, plan.renderHeight,
-                                                           plan.outputWidth, plan.outputHeight);
-                        Log::get().note("flat route negotiation: dlss R=%ux%u D=%ux%u -> E=%ux%u mode=%s%s",
-                            plan.renderWidth, plan.renderHeight, plan.outputWidth, plan.outputHeight,
-                            neg.evalWidth, neg.evalHeight,
-                            neg.served ? kDlssModeNames[static_cast<int>(neg.mode)] : "unserved",
-                            neg.cut ? " (input under the floor; the game's copy upsamples the rest)" :
-                            neg.served ? "" : " (the backend refusal path stands)");
-                        if (neg.served) {
-                            s.negotiatedEvalW = neg.evalWidth; s.negotiatedEvalH = neg.evalHeight;
-                            s.negotiatedMode = plan.mode;
-                            s.negotiatedRenderW = plan.renderWidth; s.negotiatedRenderH = plan.renderHeight;
-                            s.negotiatedOutputW = plan.outputWidth; s.negotiatedOutputH = plan.outputHeight;
-                        }
-                    }
-                }
-            }
         }
         // The plan carries the same negotiated E the frame does (gate-2 review
         // F1): preflight allocates at E and the resolve's resource cache keys

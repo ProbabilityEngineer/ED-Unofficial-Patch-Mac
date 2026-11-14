@@ -1,29 +1,19 @@
+// Stage 2b stand-in (ed-metalfx, 2026-11-14): the private graphics bridge (the VR runtime's command lists on the game's
+// immediate context) is gone with the OpenXR runtime. With no consumer, no list is ever private: every
+// ExecuteCommandList is the game's own, as it always was in a flat session.
 #pragma once
 
-#include "../common/graphics_bridge.h"
+#include <d3d11.h>
+
 #include <cstdint>
 
 namespace edvr {
 
 enum class HookMode : uint32_t;
 
-// Called once, after the context vtable commit has succeeded. The first
-// successful registration wins for the life of this DLL.
-bool graphicsBridgeRegisterOwner(ID3D11Device* device, ID3D11DeviceContext* context);
+inline bool graphicsBridgeInstallTransport(ID3D11Device*, HookMode) { return false; }
+inline void graphicsBridgeUninstallTransport() {}
+inline bool graphicsBridgeConsumePermit(ID3D11DeviceContext*, ID3D11CommandList*, BOOL) { return false; }
+inline void graphicsBridgeNoteUnknownExecution() {}
 
-// Optional-feature-disabled sessions still need the private ExecuteCommandList
-// transport so native discovery can bind the exact immediate context. This is
-// a single bounded install attempt; a failed attempt leaves discovery absent.
-bool graphicsBridgeInstallTransport(ID3D11Device* device, HookMode mode);
-void graphicsBridgeUninstallTransport();
-
-// The ExecuteCommandList hook uses this to consume the one-shot private pass.
-bool graphicsBridgeConsumePermit(ID3D11DeviceContext* context,
-                                 ID3D11CommandList* list,
-                                 BOOL restoreContextState);
-void graphicsBridgeNoteUnknownExecution();
-
-uint64_t graphicsBridgePrivateExecutionCount();
-uint64_t graphicsBridgeUnknownExecutionCount();
-
-}
+}  // namespace edvr

@@ -29,4 +29,4 @@ struct EdvrNativeSharpenTable {
   EdvrNativeSharpenClose close;
 };
 extern "C" HRESULT WINAPI edvrAcquireNativeSharpen(const EdvrNativeSharpenRequest*, EdvrNativeSharpenTable*);
-namespace edvr { bool nativeSharpenActive(); }
+namespace edvr { inline bool nativeSharpenActive() { return false; } }  // stage 2b: the VR channel is gone; a flat session never had one

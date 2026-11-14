@@ -4,15 +4,11 @@
 #include "gpu_timing.h"
 #include "gpu_frame_timing.h"
 #include "gpu_census.h"   // gpuCensusFrameWorkOpen/End: the frame's GPU work span's door end (2026-10-14)
-#include "native_timing.h"
-#include "../common/native_present_trace.h"
 
 #include "weapon_motion.h"
 #include "flat_overlay_layer.h"
 #include "input_gate.h"
 #include "focus_target.h"
-#include "oculus_route.h"
-#include "vr_runtime.h"
 
 #include <windows.h>
 
@@ -24,7 +20,6 @@
 extern "C" IMAGE_DOS_HEADER __ImageBase;
 
 #include "graphics_runtime.h"
-#include "render_boundary.h"
 
 #include <atomic>
 #include <cstring>
@@ -38,7 +33,6 @@ extern "C" IMAGE_DOS_HEADER __ImageBase;
 #include "../common/temporal_mode.h"
 #include "../common/runtime_profile.h"
 #include "../common/frame_flag.h"
-#include "hmd_reset_press.h"   // hmdResetPressFrame: the players HMD recentre key, watched for the seat memory
 #include "../common/seat_context.h"   // seatContextPublish: the seat memory's word for the runtime
 #include "../common/guard.h"
 #include "../common/hotkey.h"
@@ -56,11 +50,8 @@ extern "C" IMAGE_DOS_HEADER __ImageBase;
 #include "ui_surfaces.h"   // the glyph atlas and sizing chain instruments
 #include "ui_panel_scale.h" // uiPanelScaleShutdown: the panel operands put back
 #include "ui_sizing_math.h" // uiDisplaySizeFromXml: DisplaySettings.xml, for the panel budget
-#include "vr_ssaa_gate.h"   // the step-1 Supersampling gate instruments (log only)
-#include "vr_ssaa_hold.h"   // the Supersampling hold's shutdown (the loader slot goes back)
 #include "hdr_fullscreen_mode.h"  // fix.hdr: the display-mode retry an FP16 chain needs
 #include "hdr_output.h"   // fix.hdr: the swapchain's format, the widened post-tone targets, the two substituted shaders and the output transform
-#include "vr_display_observer.h"  // the game window's state (read only) and its handle
 #include "desktop_window.h"  // visual.desktop_window: the eye image drawn into Elite's desktop window at its Present
 #include "mode_watch.h"     // modeWatchFrameBoundary: the 3D mode watch's commit, at the frame boundary
 
@@ -1317,7 +1308,6 @@ EDVR_BOUNDARY_TICK(tkKinematicProbe, "kinematic_probe");
 EDVR_BOUNDARY_TICK(tkEngineVelocityClock, "engine_velocity_clock");
 EDVR_BOUNDARY_TICK(tkSchedulerProbe, "scheduler_probe");
 EDVR_BOUNDARY_TICK(tkVtableWatch, "vtable_watch");
-EDVR_BOUNDARY_TICK(tkVrRuntime, "vr_runtime");
 EDVR_BOUNDARY_TICK(tkOptimizedStation, "optimized_station");
 EDVR_BOUNDARY_TICK(tkConcoursePane, "concourse_pane");   // TEMPORARY: the concourse panes (concourse_pane.h); one key poll and a few atomic stores a frame
 EDVR_BOUNDARY_TICK(tkLightGridCache, "light_grid_cache");
@@ -1700,13 +1690,6 @@ void presentFrameBoundary() {
         vtableWatchFrameTick(g_state->frameCounter);
     });
     if (graphicsRuntimeDisabled()) return;
-    // WHICH VR BACK END THIS ACTUALLY IS, said once near the top of the
-    // log. Inside the budget because it reads the process module list;
-    // rate-limited to once a second by the module itself, and silent from
-    // the moment it has spoken. See vr_runtime.h for the session that made
-    // it necessary -- a perfect install the game never opened, and eight
-    // messages telling its owner the file was missing.
-    tkVrRuntime.run([] { vrRuntimeTick(); });
     // The optimized station's tick: the setting, the seal and release rules, the held cell in the pad's frame, the 30 s summary.
     tkOptimizedStation.run([] { optimizedStationFrame(static_cast<uint32_t>(g_state->frameCounter)); });
     tkConcoursePane.run([] { concoursePaneTick(g_state->device, static_cast<uint32_t>(g_state->frameCounter), GetTickCount64()); });
@@ -1718,7 +1701,7 @@ void presentFrameBoundary() {
     // The game's own journal, polled about once a second: it states the
     // boundaries EDVR used to infer -- gameplay starting (LoadGame) and
     // on-foot sessions beginning (Disembark).
-    tkJournalWatch.run([] { journalWatchTick(); seatContextPublish(); hmdResetPressFrame(); });
+    tkJournalWatch.run([] { journalWatchTick(); seatContextPublish(); });
     tkCelestialStatus.run(tickCelestialStatus);
     // The VR map camera (flat_stationary_camera_capture.h): its watch on the renderer hook, installed and read here once a frame, on the render thread that installs the other hooks. Flat only stands it down.
     // The Galaxy Map's pointer (galaxy_map_pointer.h) follows in the same tick: it reads the open state mapCameraFrame just decided.
@@ -1869,31 +1852,22 @@ void presentFrameBoundary() {
 
 HRESULT STDMETHODCALLTYPE hookedPresent(IDXGISwapChain* self, UINT syncInterval,
                                         UINT flags) {
-    // The hook's entry, one clock read for both clocks that want it: the runtime's
-    // Present trace (microseconds) and the frame-tick chain (frame_ticks.h).
+    // The hook's entry, for the frame-tick chain (frame_ticks.h).
     const int64_t hookEnter = self == g_state->swapChain ? qpcNow() : 0;
-    const uint64_t traceBegan = hookEnter ? edvrNativeTraceUs(hookEnter) : 0;
-    const uint64_t traceToken = self == g_state->swapChain ?
-        nativeTimingPresentBegin(g_state->device, traceBegan, GetCurrentThreadId()) : 0;
     // Not our swapchain: forward and do no frame work. A second swapchain
     // (an overlay's, a mod's) shares this vtable and its Present is not our
     // frame boundary. See vtable_hook.h.
     if (self != g_state->swapChain) {
         return g_state->realPresent(self, syncInterval, flags);
     }
-    // THE DEVICE, READ ONCE, AND MAYBE NULL. advanced.d3d11_fixes = 0 keeps this Present hook (the frame boundary the
-    // openvr half runs on) but hookDevice returns before it records the device, so g_state->device is null for the whole
-    // session. Every use of it below that dereferences it is behind `dev`; the callees that only compare or test it
-    // (nativeTimingPresentBegin / NotePresent, renderBoundaryNoteOwnedPresent / Present, vramAdapterOf) are null-safe
-    // and are not skipped. v0.17.0 .. v0.19.1 dereferenced it unguarded here: first Present, 0xC0000005.
+    // THE DEVICE, READ ONCE, AND MAYBE NULL. advanced.d3d11_fixes = 0 keeps this Present hook but hookDevice returns
+    // before it records the device, so g_state->device is null for the whole session. Every use of it below that
+    // dereferences it is behind `dev`; the callees that only compare or test it (vramAdapterOf) are null-safe and are
+    // not skipped. v0.17.0 .. v0.19.1 dereferenced it unguarded here: first Present, 0xC0000005.
     ID3D11Device* const dev = g_state->device;
-    vrSsaaGateNotePresent();  // log only: the first Present's place in the order of the Supersampling lines
     // The frame-tick chain starts here (frame_ticks.h): what follows, to this
     // hook's return, is EDVR's or the driver's; what came before it is the game's.
     g_frameTicks.enter(hookEnter);
-    // The Oculus probe may follow initial device creation. Drain changed
-    // routing observations from ordinary execution, never from the loader.
-    oculusRouteReport();
     // The time blocked in the real Present is the monitor's, with the time
     // blocked in WaitGetPoses: the frame period less the two is the render
     // thread's own busy time.
@@ -1971,10 +1945,6 @@ HRESULT STDMETHODCALLTYPE hookedPresent(IDXGISwapChain* self, UINT syncInterval,
         perfMonitorNotePresentWait(static_cast<double>(presentT1 - presentT0) * 1000.0 /
                                    static_cast<double>(qpcFrequency()));
     }
-    // Bind the first successful owned, non-TEST Present thread even before
-    // the paired consumer registers. Exclude registration from Present timing.
-    if (SUCCEEDED(hr) && !(flags & DXGI_PRESENT_TEST))
-        renderBoundaryNoteOwnedPresent(dev);
     ID3D11DeviceContext* timingContext = nullptr;
     if (dev) dev->GetImmediateContext(&timingContext);
     if (timingContext) {
@@ -2028,16 +1998,9 @@ HRESULT STDMETHODCALLTYPE hookedPresent(IDXGISwapChain* self, UINT syncInterval,
         perfMonitorNoteCpu(kCpuBoundary, static_cast<double>(boundaryT1 - boundaryT0) * 1000.0 /
                                              static_cast<double>(qpcFrequency()));
     }
-    const uint64_t traceBodyEnd = edvrNativeTraceNowUs();
-    if (SUCCEEDED(hr) && !(flags & DXGI_PRESENT_TEST))
-        renderBoundaryPresent(dev);
     // The callback's end is the trace's end and the last tick's edge: one read.
     const int64_t callbackEnd = qpcNow();
     g_frameTicks.markAt("render_callback", callbackEnd);
-    const EdvrNativePresentSpan trace{traceBegan, edvrNativeTraceUs(presentT0),
-        edvrNativeTraceUs(presentT1), traceBodyEnd, edvrNativeTraceUs(callbackEnd),
-        GetCurrentThreadId(), syncInterval, flags, static_cast<int32_t>(hr)};
-    nativeTimingNotePresent(dev, traceToken, trace);
     frameTick("timing_note");
     return hr;
 }
@@ -2890,7 +2853,6 @@ void hookDevice(ID3D11Device* device) {
     }
 #undef EDVR_HOOK_HDR_VIEW
 #undef EDVR_HOOK_DEV_CREATE
-    vrSsaaGateStartup();  // log only: the 3D mode file, the .fxcfg's Supersampling and HMD Quality, once per process
     {
         const int aniso = sentinelCfg.getIntInRange("advanced.texture_anisotropy", 0, 0, 16);
         const bool temporal = temporalModeEnabledFor(sentinelCfg.getString("fix.temporal_aa", "off"), runtimeFlatProfile());
@@ -3317,10 +3279,6 @@ void hookSwapChain(IDXGISwapChain* swapChain) {
     }
     s.swapChain = swapChain;
     Log::get().note("Present hook installed");
-    {
-        DXGI_SWAP_CHAIN_DESC windowDesc{};
-        if (SUCCEEDED(swapChain->GetDesc(&windowDesc))) vrDisplayObserveWindow(windowDesc.OutputWindow);
-    }
 
     if (Config::get().getBool("d3d11.focus_on_launch", true)) {
         DXGI_SWAP_CHAIN_DESC desc{};
@@ -3518,7 +3476,6 @@ void shutdownDeviceHooks() {
     // exposure fix's, so it comes off first.
     revertVScreenModeResolution();
     uiPanelScaleShutdown();  // fix.ui_quality's four operands, back to the game's
-    vrSsaaHoldShutdown();    // the Supersampling hold's loader slot, back to the game's
     vertexResyncShutdown();  // the vertex-buffer resync's session line (the hook itself stays; the game's process exit says the line through Log::setExitLine)
     shutdownGlitchFrameFix();
     transitionFlashEyeBaseShutdown();

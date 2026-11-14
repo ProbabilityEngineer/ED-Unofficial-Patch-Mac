@@ -960,7 +960,7 @@ bool updateBenchmarkMetadata(State& s, const NativeTimingSnapshot& timing,
             benchmarkCopy(metadata.headset, sizeof(metadata.headset), labels.systemName);
         }
         const std::string aa = Config::get().getString("fix.temporal_aa", "off");
-        const std::string dlss = Config::get().getString("fix.temporal_aa_model", "k");
+        const std::string dlss = "none";   // the DLSS model key went with DLSS (ed-metalfx stage 2b)
         benchmarkCopy(metadata.aaMode, sizeof(metadata.aaMode), aa.c_str());
         benchmarkCopy(metadata.dlssMode, sizeof(metadata.dlssMode), dlss.c_str());
         benchmarkCopy(metadata.build, sizeof(metadata.build), EDVR_VERSION_STRING);

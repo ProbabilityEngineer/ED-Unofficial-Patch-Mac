@@ -74,19 +74,19 @@ void uiSurfacesLogAtlas();
 // during a FOV-trim adoption the previous ask, one rebuild
 // behind what the game is told (review P3-1). False before the first
 // beginFrame, after an invalidate, or with no native temporal channel.
-bool nativeTemporalRecommended(uint32_t* w, uint32_t* h);
+inline bool nativeTemporalRecommended(uint32_t*, uint32_t*) { return false; }  // stage 2b: the VR channel is gone; a flat session never had one
 // ...and the same frame's vertical frustum: eye 0's up and down tangents
 // (magnitudes), the frustum the game is told. Lock-free.
-bool nativeTemporalVerticalTangents(float* up, float* down);
+inline bool nativeTemporalVerticalTangents(float*, float*) { return false; }  // stage 2b: the VR channel is gone; a flat session never had one
 // ...and what the game is told now, the host's ask (max over eyes): during an
 // adoption it leads the recommendation above, and the game re-creates its
 // surfaces for it before a frame of it arrives (review P3-1, the 2026-09-23
 // 13:23 menu flight). False when the host does not say. Lock-free.
-bool nativeTemporalAsked(uint32_t* w, uint32_t* h);
+inline bool nativeTemporalAsked(uint32_t*, uint32_t*) { return false; }  // stage 2b: the VR channel is gone; a flat session never had one
 // ...and the TRUE display frustum's vertical tangents (eye 0, magnitudes):
 // the headset's own, before a trim -- the engine-side panel
 // sizing's untrimmed k (ui_panel_scale.h). Lock-free.
-bool nativeTemporalTrueVerticalTangents(float* up, float* down);
+inline bool nativeTemporalTrueVerticalTangents(float*, float*) { return false; }  // stage 2b: the VR channel is gone; a flat session never had one
 
 // HMD Quality as last read (the newest .fxcfg's HMDRenderTargetMultiplier,
 // cached, never read on the frame path); 0 while unknown. Lock-free.

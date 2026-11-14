@@ -1,8 +1,7 @@
 #include "flat_origin_capture.h"
 #include "flat_mono_resolve.h"
-#include "dlaa.h"
+#include "upscaler_slots.h"
 #include "fsr3_engine.h"
-#include "xess_engine.h"
 #include "map_easu.h"
 #include "map_smaa.h"
 #include "metal_fx_engine.h"
@@ -967,7 +966,11 @@ bool backendAvailable(FlatMonoResolveMode mode,ID3D11Device* device,ID3D11Device
     const bool first=g_crumbOn && !crumbed[which];
     if(first)crumbed[which]=true;
     HdrCrumbSpan span(first,"backend-available","backend=%s",which==3u?"mfx":which==2u?"xess":which?"fsr":"ngx");
-    const bool ok=which==3u?mfxAvailable(context,reason):which==2u?xessAvailable(device,reason):which?fsr3Available(device,reason):dlaaAvailable(device,reason);
+    // DLAA, DLSS (NGX) and XeSS were removed in ed-metalfx (stage 2b): only FSR and MetalFX answer.
+    bool ok=false;
+    if(which==3u)ok=mfxAvailable(context,reason);
+    else if(which==1u)ok=fsr3Available(device,reason);
+    else if(reason)*reason="flat-backend-removed";
     span.result("ok=%u reason=%s",ok?1u:0u,(reason && *reason)?*reason:"none");
     return ok;
 }
@@ -1075,7 +1078,7 @@ void flatMonoResolveReset() {
         Log::get().note("flat origin optical: frame=%llu readback-cancelled renderer-reset",
             static_cast<unsigned long long>(job.frame));
     }
-    pixels.cancel();resolveInputs.cancel();xessReleaseFeatures();++stats.fullResets;stats.currentContinueRun=0;g=State{};
+    pixels.cancel();resolveInputs.cancel();++stats.fullResets;stats.currentContinueRun=0;g=State{};
 }
 void flatMonoResolveSetIsolation(FlatContextIsolation request) { g_isolationRequest=request; }
 void flatMonoResolveArmPixels(uint64_t frame) {
@@ -1478,10 +1481,6 @@ bool flatMonoResolve(ID3D11Device* device,ID3D11DeviceContext* context,const Fla
         }
         ID3D11SamplerState* sampler=g.sampler.Get();context->CSSetSamplers(0,1,&sampler);
         context->CSSetShader(g.taa.Get(),nullptr,0);context->Dispatch((f.outputWidth+7)/8,(f.outputHeight+7)/8,1);
-    } else if(f.mode==FlatMonoResolveMode::Xess) {
-        ok=xessEvaluate(context,f.slot,g.color.texture.Get(),g.depth[depthIndex].texture.Get(),
-            g.motion.texture.Get(),g.output[0].texture.Get(),f.renderWidth,f.renderHeight,
-            evalW,evalH,f.jitterX,f.jitterY,reset,hdr,reason);
     } else if(f.mode==FlatMonoResolveMode::Fsr) {
         const float sy=std::sqrt(f.camera[0][1]*f.camera[0][1]+f.camera[1][1]*f.camera[1][1]+f.camera[2][1]*f.camera[2][1]);
         ok=fsr3Evaluate(context,f.slot,g.color.texture.Get(),g.depth[depthIndex].texture.Get(),g.motion.texture.Get(),g.rejection.texture.Get(),
@@ -1498,8 +1497,8 @@ bool flatMonoResolve(ID3D11Device* device,ID3D11DeviceContext* context,const Fla
         ok=mfxEvaluate(context,g.mfxColor.texture.Get(),g.depth[depthIndex].texture.Get(),g.motion.texture.Get(),
             g.output[0].texture.Get(),f.renderWidth,f.renderHeight,evalW,evalH,f.jitterX,f.jitterY,reset,reason,hdrColor);
     } else {
-        ok=dlaaEvaluate(context,static_cast<int>(f.slot),g.color.texture.Get(),g.depth[depthIndex].texture.Get(),g.motion.texture.Get(),g.output[0].texture.Get(),
-            g.rejection.texture.Get(),f.renderWidth,f.renderHeight,evalW,evalH,f.jitterX,f.jitterY,reset,f.deltaMs,reason,hdrColor);
+        ok=false;   // DLAA, DLSS and XeSS were removed in ed-metalfx (stage 2b); backendAvailable refuses them first
+        if(reason)*reason="flat-backend-removed";
     }
     }
     backendStep.result("ok=%u reason=%s",ok?1u:0u,(reason && *reason)?*reason:"none");

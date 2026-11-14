@@ -476,24 +476,12 @@ python "tools\gen_exports.py" --source "%SystemRoot%\System32\d3d11.dll" ^
     --extra-export edvr_selftest_profile_post ^
     --extra-export edvr_selftest_profile_state ^
     --extra-export edvr_selftest_profile_skip_teardown ^
-    --extra-export edvrAcquireGraphicsBridge ^
-    --extra-export edvrAcquireRenderBoundary ^
-    --extra-export edvrAcquireNativeGraphics ^
-    --extra-export edvr_selftest_graphics_bridge ^
-    --extra-export edvrTemporalAa ^
-    --extra-export edvrEyeCaptureUntreated ^
-    --extra-export edvrTemporalAaNoteHead ^
     --extra-export edvrSharpen ^
     --extra-export edvrDepthProbeSelftest ^
     --extra-export edvrAcquireNativeMenu ^
-    --extra-export edvrAcquireNativeTemporal ^
-    --extra-export edvrAcquireNativeSharpen ^
-    --extra-export edvrAcquireNativeFrame ^
     --extra-export edvrAcquireNativeTiming ^
     --extra-export edvrAcquireDesktopWindow ^
     --extra-export edvrReadNativePresentTrace ^
-    --extra-export "edvrNativeStartupRouting DATA" ^
-    --extra-export edvrQueryOculusRouting ^
     --extra-export edvrQueryNativeRenderSettings ^
     --extra-export edvrPublishNativeRenderSizing ^
     --extra-export edvrQueryNativeRenderSizing ^
@@ -517,79 +505,13 @@ REM object set exactly the source list; --keep protects the ml64 thunks.obj.
 REM The cleanup happens after DLL-only promotion has verified its receipt, so a
 REM rejected promotion does not disturb the previous build.
 
-REM NVIDIA's DLSS SDK. EDVR_NGX_SDK names a copy explicitly; else the
-REM checkout's own third_party\ngx; else the machine's copy under
-REM %LOCALAPPDATA%\EDVR\ngx-sdk, which is where tools\fetch_ngx.py puts it
-REM (one copy every checkout and worktree finds). The d3d11 half is then
-REM built with the NGX calls in, the static library linked, and the runtime
-REM and NVIDIA's licence copied into the build for the installer and the
-REM zip. The copy is VERIFIED first -- the files the build reads, and the
-REM runtime's SHA-256 against the pin in tools\fetch_ngx.py -- and a
-REM mismatch fails the build: the DLL the installer carries must be the
-REM one the flights verified, and updating it is a deliberate commit.
-REM Without any SDK the build still succeeds, since the code compiles
-REM either way, but says so loudly: that build has no DLAA and its
-REM installer carries no runtime, which is not a release (package.bat
-REM refuses it unless told --no-dlss).
+REM ed-metalfx has no NVIDIA DLSS/DLAA and no Intel XeSS (removed in stage 2b, 2026-11-14): no SDK is
+REM looked for, fetched, compiled in or carried. The variables stay defined (empty) for the receipt contexts below.
 set NGX=
-if defined EDVR_NGX_SDK set NGX=%EDVR_NGX_SDK%
-if not defined NGX if exist "%ROOT%\third_party\ngx\include\nvsdk_ngx.h" set NGX=%ROOT%\third_party\ngx
-if not defined NGX if exist "%LOCALAPPDATA%\EDVR\ngx-sdk\include\nvsdk_ngx.h" set NGX=%LOCALAPPDATA%\EDVR\ngx-sdk
 set NGXFLAGS=
 set NGXLIB=
-if defined NGX (
-    python "tools\fetch_ngx.py" --verify "%NGX%" || (
-        echo [edvr] ERROR: the DLSS SDK at %NGX% is not the pinned one. tools\fetch_ngx.py
-        echo        names the commit and the runtime's hash; fetch it again, or update the
-        echo        pin on purpose.
-        exit /b 1
-    )
-    set NGXFLAGS=/DEDVR_HAVE_NGX=1 /I"%NGX%\include"
-    set NGXLIB="%NGX%\lib\Windows_x86_64\x64\nvsdk_ngx_s.lib" advapi32.lib
-    echo [edvr] DLSS SDK: %NGX%
-    if not defined EDVR_GRAPHICS_ONLY copy /Y "%NGX%\lib\Windows_x86_64\rel\nvngx_dlss.dll" "%BUILD%\" >nul
-    copy /Y "%NGX%\LICENSE.txt" "%BUILD%\NVIDIA-DLSS-LICENSE.txt" >nul
-) else (
-    echo [edvr] ==================================================================
-    echo [edvr] NO DLSS SDK. This build has no DLAA, and its installer carries no
-    echo [edvr] nvngx_dlss.dll. Fine for development; NOT a release. Looked for
-    echo [edvr] include\nvsdk_ngx.h in these three places, in this order:
-    if defined EDVR_NGX_SDK (
-        echo [edvr]   EDVR_NGX_SDK   = %EDVR_NGX_SDK%
-    ) else (
-        echo [edvr]   EDVR_NGX_SDK   = ^(not set^)
-    )
-    echo [edvr]   the checkout    = %ROOT%\third_party\ngx
-    echo [edvr]   this machine    = %LOCALAPPDATA%\EDVR\ngx-sdk
-    echo [edvr] To fetch the pinned SDK once for this machine:  python tools\fetch_ngx.py
-    echo [edvr] ==================================================================
-    if exist "%BUILD%\nvngx_dlss.dll" del /q "%BUILD%\nvngx_dlss.dll"
-    if exist "%BUILD%\NVIDIA-DLSS-LICENSE.txt" del /q "%BUILD%\NVIDIA-DLSS-LICENSE.txt"
-)
-
-REM Intel XeSS-SR SDK for the flat profile. The D3D11 proxy bridges to D3D12
-REM at runtime; it imports no XeSS library. A missing SDK builds a refusal stub.
 set XESS=
-if defined EDVR_XESS_SDK set XESS=%EDVR_XESS_SDK%
-if not defined XESS if exist "%ROOT%\third_party\xess\include\xess\xess.h" set XESS=%ROOT%\third_party\xess
-if not defined XESS if exist "%LOCALAPPDATA%\EDVR\xess-sdk\include\xess\xess.h" set XESS=%LOCALAPPDATA%\EDVR\xess-sdk
-set XESSFLAGS=/DEDVR_HAVE_XESS=0
-if defined XESS (
-    python "tools\fetch_xess.py" --verify "%XESS%" || (
-        echo [edvr] ERROR: the XeSS SDK at %XESS% is not the pinned one. tools\fetch_xess.py
-        exit /b 1
-    )
-    set XESSFLAGS=/DEDVR_HAVE_XESS=1 /I"%XESS%\include"
-    if not defined EDVR_GRAPHICS_ONLY copy /Y "%XESS%\bin\libxess.dll" "%BUILD%\libxess.dll" >nul || exit /b 1
-    copy /Y "%XESS%\LICENSE.txt" "%BUILD%\INTEL-XESS-LICENSE.txt" >nul || exit /b 1
-    copy /Y "%XESS%\third-party-programs.txt" "%BUILD%\INTEL-XESS-THIRD-PARTY.txt" >nul || exit /b 1
-    echo [edvr] XeSS-SR SDK: %XESS%
-) else (
-    if exist "%BUILD%\libxess.dll" del /q "%BUILD%\libxess.dll"
-    if exist "%BUILD%\INTEL-XESS-LICENSE.txt" del /q "%BUILD%\INTEL-XESS-LICENSE.txt"
-    if exist "%BUILD%\INTEL-XESS-THIRD-PARTY.txt" del /q "%BUILD%\INTEL-XESS-THIRD-PARTY.txt"
-    echo [edvr] NO XeSS SDK. Flat XeSS-SR will refuse at runtime. Fetch with tools\fetch_xess.py.
-)
+set XESSFLAGS=
 
 REM AMD's FSR 3.1 upscaler, the community Direct3D 11 port (the optiscaler
 REM FidelityFX-SDK-DX11 fork; tools\fetch_ffx_dx11.py; design doc section
@@ -686,19 +608,15 @@ python tools\compile_cache.py --prune --keep thunks.obj cl.exe %CFLAGS% %NGXFLAG
     "src\common\iat_hook.cpp" "src\common\iniedit.cpp" ^
     "src\common\dump_file.cpp" "src\common\dump_file_log.cpp" "src\common\miniz_impl.cpp" ^
     "src\d3d11\input_gate.cpp" "src\d3d11\joy_watch.cpp" "src\d3d11\hotkey_capture.cpp" "src\d3d11\menu.cpp" ^
-    "src\d3d11\oculus_route.cpp" ^
     "src\d3d11\menu_keys.cpp" ^
     "src\d3d11\menu_panel.cpp" "src\d3d11\perf_monitor.cpp" "src\d3d11\native_perf_history.cpp" "src\d3d11\native_benchmark_collector.cpp" ^
     "src\d3d11\stall_watch.cpp" "src\d3d11\vram_tick.cpp" ^
     "src\d3d11\mem_tick.cpp" ^
     "src\d3d11\native_menu.cpp" ^
-    "src\d3d11\native_temporal.cpp" "src\d3d11\flat_temporal.cpp" "src\d3d11\flat_compute_capture.cpp" "src\d3d11\flat_compute_readback.cpp" ^
-    "src\d3d11\flat_runtime.cpp" "src\d3d11\flat_mono_resolve.cpp" "src\d3d11\xess_engine.cpp" "src\d3d11\map_easu.cpp" "src\d3d11\map_smaa.cpp" "src\d3d11\flat_projection_scope.cpp" "src\d3d11\flat_projection_runtime.cpp" ^
+    "src\d3d11\flat_temporal.cpp" "src\d3d11\flat_compute_capture.cpp" "src\d3d11\flat_compute_readback.cpp" ^
+    "src\d3d11\flat_runtime.cpp" "src\d3d11\flat_mono_resolve.cpp" "src\d3d11\map_easu.cpp" "src\d3d11\map_smaa.cpp" "src\d3d11\flat_projection_scope.cpp" "src\d3d11\flat_projection_runtime.cpp" ^
     "src\d3d11\flat_camera_producer_probe.cpp" "src\d3d11\flat_camera_inject.cpp" "src\d3d11\flat_stationary_camera_capture.cpp" "src\d3d11\galaxy_map_pointer.cpp" "src\d3d11\galaxy_map_ui.cpp" ^
-    "src\d3d11\vr_world_route.cpp" "src\d3d11\vr_world_mips.cpp" "src\d3d11\vr_camera_census.cpp" "src\d3d11\vr_star_glow.cpp" ^
     "src\d3d11\desktop_window.cpp" "src\d3d11\desktop_window_cursor.cpp" ^
-    "src\d3d11\native_sharpen.cpp" ^
-    "src\d3d11\native_frame.cpp" ^
     "src\d3d11\native_timing.cpp" ^
     "src\d3d11\map_wait.cpp" ^
     "src\d3d11\native_render_settings.cpp" ^
@@ -706,15 +624,12 @@ python tools\compile_cache.py --prune --keep thunks.obj cl.exe %CFLAGS% %NGXFLAG
     "src\d3d11\gpu_census.cpp" "src\d3d11\gpu_pass_profile.cpp" "src\d3d11\blend_probe.cpp" ^
     "src\d3d11\d3d11_proxy.cpp" "src\d3d11\device_hook.cpp" ^
     "src\d3d11\format_support_log.cpp" ^
-    "src\d3d11\graphics_bridge.cpp" ^
-    "src\d3d11\render_boundary.cpp" ^
     "src\d3d11\exposure_fix.cpp" "src\d3d11\vscreen.cpp" ^
     "src\d3d11\glitch_frame.cpp" ^
     "src\d3d11\transition_flash_eye_base.cpp" ^
     "src\d3d11\native_preview_camera.cpp" ^
     "src\d3d11\vscreen_res.cpp" "src\common\vscreen_auto_state.cpp" "src\d3d11\vscreen_footprint.cpp" ^
     "src\d3d11\binding_shadow.cpp" ^
-    "src\d3d11\vr_runtime.cpp" ^
     "src\d3d11\journal_watch.cpp" "src\d3d11\terrain_checkerboard.cpp" ^
     "src\d3d11\elite_binds.cpp" "src\d3d11\draw_census.cpp" ^
     "src\d3d11\object_probe.cpp" ^
@@ -722,7 +637,7 @@ python tools\compile_cache.py --prune --keep thunks.obj cl.exe %CFLAGS% %NGXFLAG
     "src\d3d11\depth_writer_probe.cpp" ^
     "src\d3d11\object_record_writer_probe.cpp" "src\d3d11\object_record_writer_hook.cpp" ^
     "src\d3d11\kinematic_eval_probe.cpp" "src\d3d11\kinematic_eval_hook.cpp" ^
-    "src\d3d11\store_hook.cpp" "src\d3d11\view_source.cpp" "src\d3d11\optimized_station.cpp" "src\d3d11\concourse_pane.cpp" "src\d3d11\concourse_camera_test.cpp" "src\d3d11\pad_state_probe.cpp" "src\d3d11\hmd_reset_press.cpp" ^
+    "src\d3d11\store_hook.cpp" "src\d3d11\view_source.cpp" "src\d3d11\optimized_station.cpp" "src\d3d11\concourse_pane.cpp" "src\d3d11\concourse_camera_test.cpp" "src\d3d11\pad_state_probe.cpp" ^
     "src\d3d11\scheduler_stack_probe.cpp" "src\d3d11\scheduler_stack_hook.cpp" ^
     "src\d3d11\cull_gate_probe.cpp" ^
     "src\d3d11\engine_velocity.cpp" "src\d3d11\skin_join_gpu.cpp" "src\d3d11\skin_entity_hook.cpp" ^
@@ -737,7 +652,7 @@ python tools\compile_cache.py --prune --keep thunks.obj cl.exe %CFLAGS% %NGXFLAG
     "src\d3d11\panel_curve.cpp" "src\d3d11\screen_motion.cpp" "src\d3d11\weapon_motion.cpp" ^
     "src\d3d11\remlok_fix.cpp" "src\d3d11\holo_fix.cpp" ^
     "src\d3d11\target_sharp.cpp" "src\d3d11\night_vision.cpp" ^
-    "src\d3d11\wake_pulse.cpp" "src\d3d11\vr_ssaa_gate.cpp" "src\d3d11\vr_ssaa_hold.cpp" "src\d3d11\vr_display_observer.cpp" "src\d3d11\vr_window_trampolines.cpp" ^
+    "src\d3d11\wake_pulse.cpp" ^
     "src\d3d11\mode_watch.cpp" ^
     "src\d3d11\ui_depth.cpp" ^
     "src\d3d11\ui_layer.cpp" "src\d3d11\scope_zoom.cpp" "src\d3d11\ui_surfaces.cpp" "src\d3d11\ui_panel_scale.cpp" "src\d3d11\orbital_width.cpp" "src\d3d11\supercruise_bars.cpp" "src\d3d11\srv_turret.cpp" "src\d3d11\srv_turret_entry_fade.cpp" "src\d3d11\srv_turret_press.cpp" "src\d3d11\srv_radar_anchor.cpp" ^
@@ -755,7 +670,6 @@ python tools\compile_cache.py --prune --keep thunks.obj cl.exe %CFLAGS% %NGXFLAG
     "src\d3d11\luma_probe.cpp" ^
     "src\d3d11\sky_ring.cpp" ^
     "src\d3d11\terrain_cull_cover_hook.cpp" ^
-    "src\d3d11\dlaa.cpp" ^
     "src\d3d11\fsr3_engine.cpp" ^
     "src\d3d11\metal_fx_engine.cpp" ^
     "src\d3d11\sharpen_pass.cpp" ^

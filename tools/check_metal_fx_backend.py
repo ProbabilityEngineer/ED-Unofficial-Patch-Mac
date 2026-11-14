@@ -537,7 +537,10 @@ def checks(root):
         check("context->Dispatch(" in taa_arm, "the TAA arm still dispatches EDVR's own kernel")
         check("fsr3Evaluate(" in fsr_arm, "the FSR3 arm still calls fsr3Evaluate")
         check("mfxEvaluate(" in mfx_arm, "the Mfx arm calls mfxEvaluate")
-        check("dlaaEvaluate(" in tail[arms[3]:], "the NGX arm still calls dlaaEvaluate")
+        # ed-metalfx (stage 2b): NGX and XeSS are gone; the last arm only refuses, and backendAvailable
+        # refuses those modes first.
+        check("dlaaEvaluate(" not in tail[arms[3]:] and "flat-backend-removed" in tail[arms[3]:],
+              "the last arm refuses (DLAA, DLSS and XeSS removed in ed-metalfx)")
         check("g.prep.Get()" in route_cpp and "g.finish.Get()" in route_cpp,
               "the prep and finish kernels are still dispatched")
 
@@ -558,8 +561,8 @@ def checks(root):
     if check(modes is not None, "%s declares temporalModeEnabled" % TEMPORAL_MODE_H):
         check("mfx" in modes,
               "the shared temporal-mode gate recognises mfx: %s" % sorted(modes))
-        check({"on", "dlaa", "dlss", "fsr"} <= modes,
-              "the gate still recognises every mode it did before mfx: %s" % sorted(modes))
+        check(modes == {"fsr", "mfx"},
+              "the gate recognises exactly fsr and mfx (ed-metalfx dropped on, dlaa, dlss, xess): %s" % sorted(modes))
     engine = gate_modes(gate, "temporalEngineFor", "TemporalEngine")
     if check(engine is not None, "%s declares temporalEngineFor" % TEMPORAL_MODE_H):
         check("mfx" not in engine,
@@ -698,7 +701,7 @@ void prepAndBackend(ID3D11DeviceContext* context) {
     if(taa) { context->Dispatch(1,1,1); }
     else if(f.mode==FlatMonoResolveMode::Fsr) { ok=fsr3Evaluate(context); }
     else if(mfx) { ok=mfxEvaluate(context,f.renderWidth,f.renderHeight,f.jitterX,f.jitterY); }
-    else { ok=dlaaEvaluate(context); }
+    else { ok=false; if(reason)*reason="flat-backend-removed"; }
     context->CSSetShader(g.prep.Get(),nullptr,0);
     context->CSSetShader(g.finish.Get(),nullptr,0);
 }
@@ -715,7 +718,7 @@ bool flatMonoResolveResolve(ID3D11DeviceContext* context) {
     if(taa) { context->Dispatch(1,1,1); }
     else if(f.mode==FlatMonoResolveMode::Fsr) { ok=fsr3Evaluate(context); }
     else if(mfx) { ok=mfxEvaluate(context); }
-    else { ok=dlaaEvaluate(context); }
+    else { ok=false; if(reason)*reason="flat-backend-removed"; }
     context->CSSetShader(g.prep.Get(),nullptr,0);
     context->CSSetShader(g.finish.Get(),nullptr,0);
     return ok;
@@ -747,10 +750,7 @@ GOOD_TEMPORAL_MODE = """#pragma once
 #include <string>
 namespace edvr {
 inline bool temporalModeEnabled(const std::string& mode) {
-    return _stricmp(mode.c_str(), "on") == 0 ||
-           _stricmp(mode.c_str(), "dlaa") == 0 ||
-           _stricmp(mode.c_str(), "dlss") == 0 ||
-           _stricmp(mode.c_str(), "fsr") == 0 ||
+    return _stricmp(mode.c_str(), "fsr") == 0 ||
            _stricmp(mode.c_str(), "mfx") == 0;
 }
 enum class TemporalEngine { Own, Nvidia, Amd };
@@ -901,10 +901,16 @@ def self_test():
         cases.append(("the shared temporal-mode gate no longer recognises mfx",
                       failures_for(temporal_mode_h=GOOD_TEMPORAL_MODE.replace(
                           '           _stricmp(mode.c_str(), "mfx") == 0;\n', ""))))
-        # A mode quietly dropped from the same gate while another is added.
-        cases.append(("a mode dropped from the shared temporal-mode gate",
+        # fsr quietly dropped from the same gate (ed-metalfx keeps exactly fsr and mfx).
+        cases.append(("fsr dropped from the shared temporal-mode gate",
                       failures_for(temporal_mode_h=GOOD_TEMPORAL_MODE.replace(
-                          '           _stricmp(mode.c_str(), "dlss") == 0 ||\n', ""))))
+                          '    return _stricmp(mode.c_str(), "fsr") == 0 ||\n           _stricmp(mode.c_str(), "mfx") == 0;',
+                          '    return _stricmp(mode.c_str(), "mfx") == 0;'))))
+        # A removed mode coming back into the gate.
+        cases.append(("a removed mode back in the shared temporal-mode gate",
+                      failures_for(temporal_mode_h=GOOD_TEMPORAL_MODE.replace(
+                          '    return _stricmp(mode.c_str(), "fsr") == 0 ||',
+                          '    return _stricmp(mode.c_str(), "dlss") == 0 ||\n           _stricmp(mode.c_str(), "fsr") == 0 ||'))))
         # The boundary that must not move: mfx is not an external engine here.
         cases.append(("mfx claimed as an external engine in temporalEngineFor",
                       failures_for(temporal_mode_h=GOOD_TEMPORAL_MODE.replace(

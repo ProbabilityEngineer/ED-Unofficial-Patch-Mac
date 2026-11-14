@@ -58,10 +58,13 @@
 
 namespace edvr {
 
-// The Supersampling setter and getter hooks, installed at DLL load by vr_ssaa_hold.cpp (the Supersampling hold does not wait for
-// the key). Pure memory: the build is checked, the functions' bytes and the slots are checked, nothing is logged. True when the
-// hooks are in; otherwise why is written. apply() later sees them in and does not install them again.
+// The Supersampling setter and getter hooks, installed at DLL load (uiPanelScaleInstallEarly, from DllMain) or, on an unknown
+// build, once the signature resolve is done (uiPanelScaleInstallAfterResolve, on the resolver's thread). Pure memory: the build
+// is checked, the functions' bytes and the slots are checked, nothing is logged. True when the hooks are in; otherwise why is
+// written (when given). apply() later sees them in and does not install them again.
 bool uiPanelScaleEarlyHooks(char* why, size_t whyLen);
+void uiPanelScaleInstallEarly();
+void uiPanelScaleInstallAfterResolve();
 
 // From uiLayerConfigure: the key's target (0 off, 1.0, 1.25, 1.5, 2.0). The first time
 // it is on, the sites are checked and the operands swapped (the floats at

@@ -278,9 +278,9 @@ void nativeFrameFovTrimDegrees(uint32_t out[3]);
 
 // The frame pairs the runtime has latched through latchSubmit, since the DLL loaded. Counted whatever the fixes; the mode watch
 // samples it once a second (mode_watch.cpp).
-uint64_t nativeFrameLatchedFrames();
+inline uint64_t nativeFrameLatchedFrames() { return 0; }  // stage 2b: the VR channel is gone; a flat session never had one
 // TEMPORARY (concourse vr probe, docs\concourse-cull-2026-11-05.md): of those, the frame pairs whose latch took a held frame from requestSubmitHold (the hold probe's readout).
-uint64_t nativeFrameHeldLatches();
+inline uint64_t nativeFrameHeldLatches() { return 0; }  // stage 2b: the VR channel is gone; a flat session never had one
 
 // F22: the look-to-aim compensation the next beginFrame hands the runtime (version 6): the cumulative total in radians and the game frame it was
 // taken at. Set by the frame thread once per frame (native_on_foot.cpp, lookPublishTick); read under the provider's lock by beginFrame.
@@ -310,7 +310,7 @@ struct EdvrNativeOnFootWords {
 };
 void nativeFrameOnFootWords(EdvrNativeOnFootWords& out);
 // F31: the latest frame's render head and "now" head (false until a beginFrame has been received). Read on the game thread.
-bool nativeFrameNowPose(EdvrNativeNowPose& out);
+inline bool nativeFrameNowPose(EdvrNativeNowPose&) { return false; }  // stage 2b: the VR channel is gone; a flat session never had one
 
 // World scale: the percent the last beginFrame told the runtime to move the eyes Elite is told about by (50 to 200), or 100 when no beginFrame has answered a
 // version 11 ask (no runtime, or one that asks less, which applies none). What Elite's eye pair measures is the located separation times
