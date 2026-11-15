@@ -41,6 +41,8 @@
 #include "weapon_motion.h"
 #include "night_vision.h"
 #include "device_hook.h"  // contextHookModeFor
+#include "flat_star_light_diag.h"   // TEMPORARY
+#include "flat_star_light.h"        // visual.star_light_colour
 #include "draw_census.h"
 #include "draw_gate.h"    // the sampled subscriber gate the draw path reads
 #include "draw_fast_path.h"   // the AA-off draw path's decisions (2026-10-13)
@@ -3603,6 +3605,7 @@ HRESULT STDMETHODCALLTYPE hookedMap(ID3D11DeviceContext* self, ID3D11Resource* r
     if (!runtimeVrProfile()) flatRuntimeMapBounceNoteMap(self,res,sub,type,false,mapData);
     // Install refuses unless flatRuntimeActive() (flat_runtime.cpp), so the call is made only for the term it would test.
     if (mapData0 && flatRuntimeActive()) mapped->pData=flatRuntimeMapBounceInstall(self,res,sub,type,mapped->pData);
+    if (mapData0 && type != D3D11_MAP_READ && starLightIsSunBuffer(res)) starLightMapped(res, mapped->pData);   // visual.star_light_colour
     if (mapData0 && flatRuntimeActive()) {
         if (type != D3D11_MAP_READ) {
             auto detail=FlatMutationDetails::named(FlatOverlayMutationOp::Map,"Map");
@@ -3731,6 +3734,9 @@ void STDMETHODCALLTYPE hookedUnmap(ID3D11DeviceContext* self, ID3D11Resource* re
     // Flush independently of the current mode, owner thread, and projection
     // lifetime. The game's pointer remains valid for every tee below.
     // Skipped while nothing is bounced: BeginUnmap returns an empty lease at that same test. A bounce left open across a flat-to-VR switch still flushes.
+    // visual.star_light_colour (flat_star_light.h): the sun buffer's light row re-tinted in the game's own write, before anything below
+    // copies or flushes it (a bounced map included: the pointer is the one the game wrote). One compare while off.
+    if (sub == 0 && !g_flatComputeInternal && starLightIsSunBuffer(res) && !foreignContext(self)) starLightUnmap(res);
     auto bounceLease = flatRuntimeMapBounceAnyOpen() ? flatRuntimeMapBounceBeginUnmap(self,res) : FlatMapBounce::Lease{};
     if (g_flatComputeInternal) { bounceLease.finish(); g_state->realUnmap(self, res, sub); return; }
     // See hookedMap: necessary, not sufficient, for gpuFrameCommand to do
@@ -5310,6 +5316,10 @@ void STDMETHODCALLTYPE hookedUpdateSubresource(ID3D11DeviceContext* self,
         flatRuntimeUpdate(dst, data, box);
     }
     if (!foreignContext(self) && flatTemporalCapturing()) flatTemporalUpdate(dst, data, box);
+    // visual.star_light_colour (flat_star_light.h): a write of the sun buffer reaches the GPU with its light row re-tinted (a copy; the
+    // game's own data is not touched). One compare while off.
+    if (dstSub == 0 && starLightIsSunBuffer(dst) && !foreignContext(self))
+        data = starLightUpdate(dst, data, box ? box->left : 0u, box ? box->right : 0u, box != nullptr);
     g_state->realUpdateSubresource(self, dst, dstSub, box, data, rowPitch,
                                    depthPitch);
 }
@@ -5452,6 +5462,12 @@ struct DrawClock {
 static void flatCensusDraw(ID3D11DeviceContext* self, char kind, uint32_t count, uint32_t instances, const DrawArgs& args) {
     if (drawCensusArmed()) drawCensusOffDraw(self, kind, count, instances, args);
     if (self == g_state->ownerCtx && hdrOutputOn()) hdrOutputNoteDraw(self);   // fix.hdr: tone-target learning (hdr_output.h)
+    // TEMPORARY (flat_star_light_diag.h): a sample frame copies the sun draw's and the star quad's constants; one relaxed load otherwise.
+    if (starLightDiagCapturing() && self == g_state->ownerCtx)
+        starLightDiagDraw(self, bindingShaderHash(BindSlot::Vs), bindingShaderHash(BindSlot::Ps));
+    // visual.star_light_colour (flat_star_light.h): learns the sun draw's buffer, reads the star's colour; one relaxed load while off.
+    if (starLightLive() && self == g_state->ownerCtx)
+        starLightDraw(self, bindingShaderHash(BindSlot::Vs), bindingShaderHash(BindSlot::Ps));
 }
 
 // Built v14.34: the optimized station's sun skip in the flat profile. Flat draws never reach beginPanelOverride (VR's verdict makes the same call after its
@@ -6824,6 +6840,8 @@ void vScreenReclaimTick() {
 namespace {
 EDVR_BOUNDARY_TICK(tkQuadProbe, "quad_probe");
 EDVR_BOUNDARY_TICK(tkDrawCensusTick, "draw_census_tick");
+EDVR_BOUNDARY_TICK(tkStarLightDiag, "star_light_diag");   // TEMPORARY (flat_star_light_diag.h)
+EDVR_BOUNDARY_TICK(tkStarLight, "star_light");            // visual.star_light_colour (flat_star_light.h)
 EDVR_BOUNDARY_TICK(tkObjectProbe, "object_probe");
 EDVR_BOUNDARY_TICK(tkPixelProbe, "pixel_probe");
 EDVR_BOUNDARY_TICK(tkBlendProbe, "blend_probe");   // TEMPORARY (blend_probe.h): arms, advances and reports a capture
@@ -6892,6 +6910,8 @@ void vScreenFrameBoundary() {
     if (g_state && g_state->ownerCtx) {
         tkQuadProbe.run([&] { quadProbeTick(g_state->ownerCtx); });
         tkDrawCensusTick.run([&] { drawCensusTick(g_state->ownerCtx); });
+        tkStarLightDiag.run([&] { starLightDiagFrameBoundary(g_state->ownerCtx); });
+        tkStarLight.run([&] { starLightFrameBoundary(g_state->ownerCtx); });
         tkObjectProbe.run([&] { objectProbeFrameBoundary(g_state->ownerCtx); });
         tkPixelProbe.run([&] { pixelProbeFrameBoundary(g_state->ownerCtx); depthWriterFrameBoundary(g_state->ownerCtx); });
         // Before drawGateSet below re-samples the draw gate, so a capture that starts here is seen by the next frame's first draw.
