@@ -15,12 +15,16 @@ full Windows build stays the validation for a merge or a release (AGENTS.md,
     python3 tools/linux_toolchain.py setup --accept-license
     python3 tools/linux_toolchain.py doctor
     python3 tools/linux_toolchain.py build-dlls [--root DIR] [--clean]
-    python3 tools/linux_toolchain.py build-graphics [--root DIR] [--clean]
+    python3 tools/linux_toolchain.py build-graphics [--root DIR] [--clean] [--keep N]
+    python3 tools/linux_toolchain.py list-graphics [--root DIR]
     python3 tools/linux_toolchain.py --self-test
 
 build-graphics runs `build.bat --compile-only --graphics-only`: the graphics DLL
 alone, in <root>/build/graphics-compile, the build CI's graphics_only job makes.
-Like that job it writes no receipt: an unvalidated test DLL.
+Like that job it writes no receipt: an unvalidated test DLL.  Each good build is
+also kept in <root>/build/graphics-builds/<time>-<branch>-<describe>/ (the DLL
+and build.json: describe, branch, SHA-256), so an earlier one can be flown
+again; the newest --keep (default 30) stay.  list-graphics lists them.
 
 macOS: CrossOver stands in for Wine.  tools/macos_wine/ holds `wine` and
 `wineboot` scripts that run CrossOver with the prefix as a private bottle, and
@@ -429,7 +433,59 @@ def _run_build(layout, root, env, clean):
     return _run(argv, cwd=root, env=env)
 
 
-def build_graphics(layout, root, clean=False):
+GRAPHICS_KEEP = 30
+
+
+def graphics_builds(root):
+    """The kept graphics builds of `root`, oldest first: the folders under build/graphics-builds that carry a build.json."""
+    base = Path(root) / "build" / "graphics-builds"
+    if not base.is_dir():
+        return []
+    return sorted(p for p in base.iterdir() if p.is_dir() and (p / "build.json").is_file())
+
+
+def archive_graphics(root, dll, describe, keep=GRAPHICS_KEEP, stamp=None):
+    """Keep this build: build/graphics-builds/<time>-<branch>-<describe>/ with the DLL and build.json. Only folders this
+    function made (a build.json beside them) are ever pruned, oldest first, down to `keep` (0 keeps all)."""
+    import json
+    import time
+    root = Path(root)
+    branch = _capture(["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"]) or "unknown"
+    stamp = stamp or time.strftime("%Y%m%d-%H%M%S")
+    safe = lambda text: "".join(c if c.isalnum() or c in "._-" else "_" for c in text)
+    base = root / "build" / "graphics-builds"
+    name = "%s-%s-%s" % (stamp, safe(branch), safe(describe))
+    dest, n = base / name, 1
+    while dest.exists():
+        n += 1
+        dest = base / ("%s-%d" % (name, n))
+    dest.mkdir(parents=True)
+    shutil.copy2(dll, dest / "d3d11.dll")
+    info = {"describe": describe, "branch": branch, "built": stamp, "sha256": _sha256(dest / "d3d11.dll")}
+    (dest / "build.json").write_text(json.dumps(info, indent=1) + "\n", encoding="utf-8")
+    kept = graphics_builds(root)
+    if keep > 0:
+        for old in kept[:-keep]:
+            shutil.rmtree(old)
+    return dest
+
+
+def list_graphics(root):
+    import json
+    kept = graphics_builds(root)
+    if not kept:
+        print("linux_toolchain: no kept graphics builds in %s" % (Path(root) / "build" / "graphics-builds"))
+        return 0
+    for folder in kept:
+        try:
+            info = json.loads((folder / "build.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            info = {}
+        print("%s  %s  %s" % (folder.name, info.get("sha256", "?")[:16], folder / "d3d11.dll"))
+    return 0
+
+
+def build_graphics(layout, root, clean=False, keep=GRAPHICS_KEEP):
     """build.bat --compile-only --graphics-only: the graphics DLL alone, as CI's graphics_only job builds it. No receipt (that
     job writes none either): an unvalidated test DLL."""
     root = Path(root).resolve()
@@ -461,6 +517,10 @@ def build_graphics(layout, root, clean=False):
         return rc or 1
     print("linux_toolchain: GRAPHICS-ONLY test DLL of %s (%s), NOT Windows validated:\n    %s\n    SHA-256 %s"
           % (root, describe, dll, _sha256(dll)))
+    try:
+        print("linux_toolchain: kept as %s" % (archive_graphics(root, dll, describe, keep) / "d3d11.dll"))
+    except OSError as error:
+        print("linux_toolchain: WARNING: this build was not kept (%s)" % error)
     if describe.endswith("-dirty"):
         print("linux_toolchain: WARNING: compiled from a dirty tree; commit, then compile, before a build that will be flown")
     return 0
@@ -627,6 +687,19 @@ def self_test():
                 refused = stop.code == 2
             expect(refused and not ran and receipt.is_file(), "%s --dry-run was not refused before it acted" % command)
 
+        # build-graphics keeps each build; pruning keeps the newest and touches only its own folders.
+        arch = temporary / "arch"
+        (arch / "build" / "graphics-builds" / "not-ours").mkdir(parents=True)
+        fake = temporary / "fake.dll"
+        fake.write_bytes(b"DLL")
+        made = [archive_graphics(arch, fake, "v1-%d" % i, keep=2, stamp="20260101-00000%d" % i) for i in range(3)]
+        kept = graphics_builds(arch)
+        expect(kept == made[1:] and (made[2] / "d3d11.dll").read_bytes() == b"DLL",
+               "the archive did not keep the newest two: %r" % kept)
+        expect((arch / "build" / "graphics-builds" / "not-ours").is_dir(), "pruning touched a folder it did not make")
+        again = archive_graphics(arch, fake, "v1-2", keep=0, stamp="20260101-000002")
+        expect(again.name.endswith("-2") and len(graphics_builds(arch)) == 3, "a same-second build overwrote the one before")
+
         # setup is done only when the compiler and the SDK it came with are both there.
         part = Layout(temporary / "partial")
         part.cl.parent.mkdir(parents=True)
@@ -647,9 +720,11 @@ def self_test():
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("command", nargs="?", choices=("setup", "doctor", "build-dlls", "build-graphics"))
+    parser.add_argument("command", nargs="?", choices=("setup", "doctor", "build-dlls", "build-graphics", "list-graphics"))
     parser.add_argument("--root", type=Path, default=REPO, help="the tree build-dlls compiles (default: this checkout)")
     parser.add_argument("--clean", action="store_true", help="build-dlls, build-graphics: build from clean")
+    parser.add_argument("--keep", type=int, default=GRAPHICS_KEEP,
+                        help="build-graphics: how many kept builds stay in build/graphics-builds (0: all)")
     parser.add_argument("--accept-license", action="store_true",
                         help="setup: you have read and accept VS 2022's Build Tools licence (see the module docstring)")
     parser.add_argument("--dry-run", action="store_true",
@@ -673,7 +748,9 @@ def main(argv=None):
     if args.command == "setup":
         return setup(layout, args.root, accept_license=args.accept_license, dry_run=args.dry_run)
     if args.command == "build-graphics":
-        return build_graphics(layout, args.root, clean=args.clean)
+        return build_graphics(layout, args.root, clean=args.clean, keep=args.keep)
+    if args.command == "list-graphics":
+        return list_graphics(args.root)
     return build_dlls(layout, args.root, clean=args.clean)
 
 
