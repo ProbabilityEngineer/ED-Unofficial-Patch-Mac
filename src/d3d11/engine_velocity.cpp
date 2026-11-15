@@ -251,6 +251,10 @@ struct SkinRefCollector {
 struct SkinStats {
     uint64_t draws = 0;            // substituted draws that wrote target 7
     uint64_t drawsOff = 0;         // substituted draws of a skinned family whose pixel shader exports no E: it writes "no history" (exactly zero) to target 7
+    // drawsOff by pair (family index in the high bits, pixel shader hash): which pixel shaders are NOT on the export list (kSkinPairs), named in the
+    // window's log so a coverage gap is read there instead of found by eye (2026-11-14: 61AE with FC43 and 4504). A handful of pairs a window.
+    struct OffPair { int family = 0; uint64_t ps = 0; uint64_t binds = 0; };
+    std::unordered_map<uint64_t, OffPair> offPairs;   // key: the pixel shader's hash with the family index in the top byte
     uint64_t unsafeDeclined = 0;   // skinned family draws NOT substituted because their pixel shader could take neither write (patchedPsFor says which, once)
     uint64_t eyeFrames = 0;        // eye-frames with target 7 bound
     uint64_t slotTaken = 0;        // pass bindings where target 7 already held the game's own target
@@ -874,6 +878,15 @@ ID3D11VertexShader* patchedVsFor(ID3D11DeviceContext* ctx, int f, ID3D11VertexSh
     return patched.Get();
 }
 
+#ifdef EDVR_ENGINE_VELOCITY_RIG
+// skin_lifecycle_tests.h: a skinned family's pixel shader the rig keeps off the export list, for the cases of one that writes no history (L6, L11):
+// since 2026-11-14 every keyed pixel shader of a real skinned family exports. 0: none withheld.
+uint64_t g_rigWithheldExportPs = 0;
+inline bool rigWithholdsExport(uint64_t ps) noexcept { return g_rigWithheldExportPs && ps == g_rigWithheldExportPs; }
+#else
+inline bool rigWithholdsExport(uint64_t) noexcept { return false; }
+#endif
+
 ID3D11PixelShader* patchedPsFor(ID3D11DeviceContext* ctx, int f, ID3D11PixelShader* ps) {
     FamilyState& s = g_families[f];
     auto found = s.patchedPs.find(ps);
@@ -888,7 +901,7 @@ ID3D11PixelShader* patchedPsFor(ID3D11DeviceContext* ctx, int f, ID3D11PixelShad
         // earlier draw of the eye-frame wrote there; else nothing, and then the draw is not substituted at all (the draw path says so): a write-masked
         // draw would leave that earlier E under a surface it is not the answer for.
         const bool skinFamily = s.skin && skinProfileAllows();
-        const bool wantsExport = skinFamily && engine_velocity_family::skinPair(kFamilies[f].vs, info->second.hash);
+        const bool wantsExport = skinFamily && engine_velocity_family::skinPair(kFamilies[f].vs, info->second.hash) && !rigWithholdsExport(info->second.hash);
         for (int mode = wantsExport ? 0 : skinFamily ? 1 : 2; mode <= 2 && !patched; ++mode) {
             std::vector<BYTE> out;
             EngineVelocityInputs inputs = s.inputs;
@@ -2230,7 +2243,15 @@ void slowPath(ID3D11DeviceContext* ctx, bool rtv0Eye) {
             ++g_skinStats.sourceClears;
         }
         if (exportsE) { e.skinWrittenFrame = frame; ++g_skinStats.draws; }
-        else ++g_skinStats.drawsOff;   // (it wrote "no history": zeroes)
+        else {
+            ++g_skinStats.drawsOff;   // (it wrote "no history": zeroes)
+            const auto pi = g_ps.find(ps);
+            const uint64_t psHash = pi != g_ps.end() ? pi->second.hash : 0;
+            SkinStats::OffPair& off = g_skinStats.offPairs[psHash ^ (uint64_t(f) << 56)];
+            off.family = f;
+            off.ps = psHash;
+            ++off.binds;
+        }
     }
     g_anyBound.store(true, std::memory_order_release);
     cache.family = f;
@@ -2329,7 +2350,26 @@ void skinSummaryLocked(ID3D11DeviceContext* ctx) {
                     hook.state == SkinHookState::StoodDown ? " -- " : "", hook.state == SkinHookState::StoodDown ? hook.why : "");
     char event[420];
     while (skinEntityHookNextEvent(event, sizeof(event))) Log::get().note("%s", event);
+    if (!g_skinStats.offPairs.empty()) {
+        // The pairs behind "writing no history", most binds first: each is a skinned family's pixel shader that is not on the export list (kSkinPairs),
+        // so its pixels keep no history (aliased under FSR). One with many binds is a coverage gap: check it with skin_clone_test --corpus and add it.
+        std::vector<SkinStats::OffPair> pairs;
+        pairs.reserve(g_skinStats.offPairs.size());
+        for (const auto& kv : g_skinStats.offPairs) pairs.push_back(kv.second);
+        std::sort(pairs.begin(), pairs.end(), [](const SkinStats::OffPair& x, const SkinStats::OffPair& y) { return x.binds > y.binds; });
+        std::string list;
+        const size_t shown = std::min<size_t>(pairs.size(), 8);
+        for (size_t i = 0; i < shown; ++i) {
+            char item[96];
+            std::snprintf(item, sizeof(item), "%s%s+ps_%016llX %llu", i ? ", " : "", kFamilies[pairs[i].family].name,
+                          static_cast<unsigned long long>(pairs[i].ps), static_cast<unsigned long long>(pairs[i].binds));
+            list += item;
+        }
+        Log::get().note("skin join: no-history pairs this window (a skinned family's pixel shader not on the export list; its pixels keep no history): %s%s",
+                        list.c_str(), pairs.size() > shown ? " (and more)" : "");
+    }
     g_skinStats.draws = g_skinStats.drawsOff = g_skinStats.unsafeDeclined = g_skinStats.eyeFrames = g_skinStats.slotTaken = g_skinStats.notLive = g_skinStats.vsCreateFailed = 0;
+    g_skinStats.offPairs.clear();
     g_skinStats.composeJoined = g_skinStats.composeMasked = g_skinStats.viewsGiven = g_skinStats.viewsLive = 0;
     g_skinStats.sourceViews = g_skinStats.sourceLive = g_skinStats.sourceClears = 0;
     std::memset(g_skinStats.hist, 0, sizeof(g_skinStats.hist));
@@ -2925,6 +2965,11 @@ void engineVelocityRememberPs(ID3D11PixelShader* shader, uint64_t hash, const vo
 }
 
 #ifdef EDVR_ENGINE_VELOCITY_RIG
+// skin_lifecycle_tests.h: the pixel shader whose export the rig withholds (g_rigWithheldExportPs).
+void engineVelocityWithholdExportForRig(uint64_t ps) {
+    std::lock_guard<std::recursive_mutex> lock(g_mutex);
+    g_rigWithheldExportPs = ps;
+}
 // remember_cap_tests.h: how many objects are kept, and the cap, so the rig fills exactly to it.
 size_t engineVelocityRememberedForRig(bool pixel) {
     std::lock_guard<std::recursive_mutex> lock(g_mutex);

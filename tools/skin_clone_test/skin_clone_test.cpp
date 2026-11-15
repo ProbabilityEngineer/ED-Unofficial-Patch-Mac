@@ -449,6 +449,8 @@ void caseCorpus(ID3D11Device* dev, ID3D11DeviceContext* ctx, const std::string& 
     const Pair pairs[] = {
         {"vs_D99AFDC250D19A3F", "ps_E86271E464CCDC1D", {}, false},
         {"vs_61AE8EB05FDC18DD", "ps_451A82D4DD1BA254", {}, false},
+        {"vs_61AE8EB05FDC18DD", "ps_FC43E42710010343", {}, false},   // the body's other pixel shaders (2026-11-14)
+        {"vs_61AE8EB05FDC18DD", "ps_4504BC268E109C31", {}, false},
         {"vs_114AF608F86D9ED8", "ps_A17504A2627767F2", {{23, 1000.0f}}, true},   // cb2[5].w: the discard threshold
         {"vs_7B0DC42D383F694C", "ps_0DF03E64DF9DBEF1", {{23, 1000.0f}}, true},
         {"vs_8B589D25B2A0ADDC", "ps_7268762D11A610F2", {}, true},                // an all-zero b2 turns the alpha test off

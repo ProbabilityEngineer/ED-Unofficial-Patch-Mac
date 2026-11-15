@@ -14,7 +14,7 @@ struct Family {
     uint64_t flatPs = 0;
     bool vrOnly = false;   // keyed in the VR profiles alone (see the 2026-10-08 rows below)
     // F2 (dxbc_skin_clone.h): the vertex shader has the game's skinning chain and takes the second skin in VR; the pairs that also
-    // export E to target 7 are kSkinPairs below. Never in the flat profile.
+    // export E to target 7 are kSkinPairs below. In the flat profile with fix.character_motion on.
     bool skinned = false;
     // The register the second skin's E travels in, for a pair whose pixel shader already reads it: the vertex and pixel stages must agree on the
     // register (a pixel-side remap gives wrong E on WARP, skin_clone_test K4b), and the vertex shader's own next free one (one past its last
@@ -88,12 +88,17 @@ constexpr Family kFamilies[] = {
     {0x33A5025C48FC8259ull, "vs_33A5025C48FC8259", {0x7AA0441EE0E88667ull, 0, 0, 0}, false, 0, true, true},
 };
 constexpr int kFamilyCount = static_cast<int>(sizeof(kFamilies) / sizeof(kFamilies[0]));
-// F2: the five measured skinned pairs (the NPC's shading pairs, 2026-10-08 F10/F11): the pixel shader exports the vertex shader's E to
-// target 7. A skinned family's other keyed pixel shaders (61AE with FC43 and 4504) keep their slot export and write nothing to target 7.
+// F2: the measured skinned pairs (the NPC's shading pairs, 2026-10-08 F10/F11, and the ones below): the pixel shader exports the vertex shader's E to
+// target 7. A skinned family's other keyed pixel shaders keep their slot export and write "no history" to target 7.
+// 2026-11-14 (flat flight 23:20, an NPC shifting its weight): 61AE with FC43 and 4504 were 40-68% of the skinned binds (the documented coverage gap,
+// docs/kinematic-motion-injection-2026-09-19.md) and, writing no history, their pixels kept no history at all: aliased under FSR. Both export E,
+// checked on the game's own bytecode by skin_clone_test --corpus (K9).
 struct SkinPair { uint64_t vs, ps; };
 constexpr SkinPair kSkinPairs[] = {
     {0xD99AFDC250D19A3Full, 0xE86271E464CCDC1Dull},
     {0x61AE8EB05FDC18DDull, 0x451A82D4DD1BA254ull},
+    {0x61AE8EB05FDC18DDull, 0xFC43E42710010343ull},
+    {0x61AE8EB05FDC18DDull, 0x4504BC268E109C31ull},
     {0x114AF608F86D9ED8ull, 0xA17504A2627767F2ull},
     {0x7B0DC42D383F694Cull, 0x0DF03E64DF9DBEF1ull},
     {0x8B589D25B2A0ADDCull, 0x7268762D11A610F2ull},

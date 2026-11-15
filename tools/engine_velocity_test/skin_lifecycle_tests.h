@@ -47,6 +47,10 @@
 #include "../skin_clone_test/synthetic_skin.h"
 #include "../skin_join_test/skin_join_world.h"
 
+namespace edvr {
+void engineVelocityWithholdExportForRig(uint64_t ps);   // engine_velocity.cpp, rig only
+}
+
 namespace skin_lifecycle_tests {
 using Microsoft::WRL::ComPtr;
 namespace lt = lifecycle_tests;
@@ -54,7 +58,9 @@ namespace sct = skin_clone_tests;
 namespace sjw = skin_join_world;
 
 constexpr uint64_t kPairVs = 0xD99AFDC250D19A3Full, kPairPs = 0xE86271E464CCDC1Dull;    // a skinned family and its E-exporting pixel shader
-constexpr uint64_t kPlainVs = 0x61AE8EB05FDC18DDull, kPlainPs = 0xFC43E42710010343ull;  // another skinned family, a pixel shader that exports no E
+// Another skinned family and a pixel shader that exports no E. Every keyed pixel shader of a real skinned family exports since 2026-11-14 (61AE with
+// FC43 and 4504 joined the list), so the rig withholds this one's export (engineVelocityWithholdExportForRig) to keep the no-history cases.
+constexpr uint64_t kPlainVs = 0x61AE8EB05FDC18DDull, kPlainPs = 0xFC43E42710010343ull;
 
 // What the draw bound, read from the context between the engine's call and the game's draw.
 struct Seen {
@@ -135,6 +141,7 @@ struct Fixture {
         edvr::engineVelocityRememberVs(vsPlain.Get(), kPlainVs, vsCode->GetBufferPointer(), vsCode->GetBufferSize(), false);
         edvr::engineVelocityRememberPs(psPair.Get(), kPairPs, psCode->GetBufferPointer(), psCode->GetBufferSize(), false);
         edvr::engineVelocityRememberPs(psPlain.Get(), kPlainPs, psCode->GetBufferPointer(), psCode->GetBufferSize(), false);
+        edvr::engineVelocityWithholdExportForRig(kPlainPs);
         const D3D11_INPUT_ELEMENT_DESC elements[] = {
             {"INSTANCEANDMODELDATAINDEX", 0, DXGI_FORMAT_R32G32_UINT, 1, 0, D3D11_INPUT_PER_INSTANCE_DATA, 1},
             {"PACKEDVERTEXDATAA", 0, DXGI_FORMAT_R32G32B32A32_UINT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},

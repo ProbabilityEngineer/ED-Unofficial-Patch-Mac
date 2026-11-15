@@ -149,6 +149,8 @@ bool objectRecordWriterHookMatches(uintptr_t at) noexcept {
     const uint8_t* b = reinterpret_cast<const uint8_t*>(at);
     return b[0] == 0xE9 && std::memcmp(b + 5, tail, sizeof(tail)) == 0;
 }
+// engine_velocity.cpp's engineVelocityEmitRefused asks it (a9fc62c0, 2026-11-11): the rig's hook is never refused that way.
+bool kinematicEvalEmitHookRefused() noexcept { return false; }
 bool kinematicEvalEmitHookLive(const char** why) noexcept {
     if (why) *why = lifecycle_fake::g_hookLive ? nullptr : "rig: kinematic-build-144315a20 refused";
     return lifecycle_fake::g_hookLive;
