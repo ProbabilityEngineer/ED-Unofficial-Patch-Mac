@@ -4,37 +4,49 @@
 
 namespace edvr { namespace starlight {
 
-// The game's own full light tint, measured on arrival at five stars (2026-11-15, diag.star_light_log), against the star's disc colour's
-// blue / red ratio, which orders the classes by temperature. Tints are scaled so red is 1.
-//   class  disc b/r  tint (r, g, b)
-//   M      0.052     (1, 0.525, 0.176)
-//   K      0.172     (1, 0.681, 0.260)   measured at 3.5 Ls, not on arrival: may be a little too pale
-//   G      0.345     (1, 0.753, 0.400)
-//   F      0.950     (1, 0.980, 0.761)
-//   A      2.012     (1, 1.086, 1.385)
-struct Anchor { float ratio, g, b; };
+// The game's own full light tint, read on arrival (the light is most saturated just after the jump) at the stars flown on
+// 2026-11-15 (diag.star_light_log), with each star's disc colour (the star quad's PS b2[0].yzw), all scaled so red is 1.
+// The game holds one light colour per class (three K stars with disc blue/red 0.141 to 0.172 gave the same tint), and the class is
+// not ordered by one number: the T dwarf's disc has the F star's blue/red but half its green. So a disc takes the tint of the
+// measured star nearest to it in (log green/red, log blue/red): a lookup whose class borders fall halfway between measured stars.
+//   class            disc (g, b)        tint (g, b)
+//   L (main star)    (0.184, ~0)        (0.184, 0.208)   pink: its disc has no blue
+//   M                (0.227, 0.052)     (0.525, 0.176)
+//   K (three stars)  (0.421, 0.141)     (0.680, 0.257)
+//                    (0.431, 0.152)     (0.680, 0.257)
+//                    (0.448, 0.172)     (0.681, 0.260)
+//   G                (0.567, 0.345)     (0.753, 0.400)
+//   F                (1.125, 0.951)     (0.980, 0.761)
+//   A                (1.610, 2.012)     (1.086, 1.385)
+//   DA white dwarf   (1.301, 4.008)     (1.206, 1.417)
+//   B                (0.227, 5.841)     (2.000, 5.500)
+//   T (main star)    (0.561, 1.063)     (0.210, 0.618)   magenta
+// Not measured: Y dwarfs as a main star (a Y companion, disc (1.161, 3.482), never lit the ship), O and Wolf-Rayet stars: they take
+// the nearest measured star's tint.
+struct Anchor { float dg, db, g, b; };
 constexpr Anchor kAnchors[] = {
-    {0.052f, 0.525f, 0.176f}, {0.172f, 0.681f, 0.260f}, {0.345f, 0.753f, 0.400f}, {0.950f, 0.980f, 0.761f}, {2.012f, 1.086f, 1.385f},
+    {0.184f, 0.f, 0.184f, 0.208f},     {0.227f, 0.052f, 0.525f, 0.176f}, {0.421f, 0.141f, 0.680f, 0.257f}, {0.431f, 0.152f, 0.680f, 0.257f},
+    {0.448f, 0.172f, 0.681f, 0.260f},  {0.567f, 0.345f, 0.753f, 0.400f}, {1.125f, 0.951f, 0.980f, 0.761f}, {1.610f, 2.012f, 1.086f, 1.385f},
+    {1.301f, 4.008f, 1.206f, 1.417f},  {0.227f, 5.841f, 2.000f, 5.500f}, {0.561f, 1.063f, 0.210f, 0.618f},
 };
 constexpr int kAnchorCount = sizeof(kAnchors) / sizeof(kAnchors[0]);
+constexpr float kFloor = 0.005f;   // a disc channel at 0 (the L dwarf's blue) is read as this much of red
 
-// The tint for a disc colour, red 1, interpolated in log(ratio) and held at the ends. False when the disc is no colour.
+// The tint for a disc colour, red 1: the nearest measured star's. False when the disc is no colour.
 inline bool tintFor(const float disc[3], float out[3]) {
-    if (!(disc[0] > 0.f) || !(disc[2] >= 0.f) || !std::isfinite(disc[0]) || !std::isfinite(disc[2])) return false;
-    const float x = std::log(std::fmax(disc[2] / disc[0], 1e-4f));
-    out[0] = 1.f;
-    if (x <= std::log(kAnchors[0].ratio)) { out[1] = kAnchors[0].g; out[2] = kAnchors[0].b; return true; }
-    for (int i = 1; i < kAnchorCount; ++i) {
-        const float x1 = std::log(kAnchors[i].ratio);
-        if (x <= x1) {
-            const float x0 = std::log(kAnchors[i - 1].ratio), t = (x - x0) / (x1 - x0);
-            out[1] = kAnchors[i - 1].g + t * (kAnchors[i].g - kAnchors[i - 1].g);
-            out[2] = kAnchors[i - 1].b + t * (kAnchors[i].b - kAnchors[i - 1].b);
-            return true;
-        }
+    for (int k = 0; k < 3; ++k) if (!std::isfinite(disc[k]) || disc[k] < 0.f) return false;
+    if (!(disc[0] > 0.f)) return false;
+    const float lg = std::log(std::fmax(disc[1] / disc[0], kFloor)), lb = std::log(std::fmax(disc[2] / disc[0], kFloor));
+    int best = 0;
+    float bestD = 1e30f;
+    for (int i = 0; i < kAnchorCount; ++i) {
+        const float dg = lg - std::log(std::fmax(kAnchors[i].dg, kFloor)), db = lb - std::log(std::fmax(kAnchors[i].db, kFloor));
+        const float d = dg * dg + db * db;
+        if (d < bestD) { bestD = d; best = i; }
     }
-    out[1] = kAnchors[kAnchorCount - 1].g;
-    out[2] = kAnchors[kAnchorCount - 1].b;
+    out[0] = 1.f;
+    out[1] = kAnchors[best].g;
+    out[2] = kAnchors[best].b;
     return true;
 }
 

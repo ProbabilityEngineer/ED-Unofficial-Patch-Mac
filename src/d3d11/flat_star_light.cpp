@@ -51,6 +51,17 @@ float g_tint[3] = {1, 1, 1};                  // the last one used (the window l
 bool g_havePick = false;                      // a confident choice was made: g_tint is its tint
 int g_lastLogged = -1;
 
+// The system's own tint, learned on arrival. Right after a jump the game's light is its star's full, unwhitened tint (every arrival
+// flown on 2026-11-15, at 1.7 to 8.7 Ls), and the game picks it by class: a late F star with a G star's disc colour was lit with
+// the F tint. So the most saturated light of the first seconds after a jump is the tint used in that system; the prediction from
+// the disc colour is the fallback, for a session that starts away from an arrival (at a station).
+constexpr ULONGLONG kArrivalMs = 12000;
+bool g_arriving = false;                      // a jump was seen (the light went to zero); learning until g_arrivalEnd
+ULONGLONG g_arrivalEnd = 0;                   // 0: the first light after the jump has not come yet
+bool g_learned = false;
+float g_learnedTint[3] = {1, 1, 1};
+float g_learnedSat = 0.f;                     // its distance from the game's white (red 1)
+
 ComPtr<ID3D11Buffer> g_staging[kMaxStars];    // one read's copies in flight: the star quads of one frame
 unsigned g_stagingCount = 0;                  // copies queued this read
 unsigned g_stagingAge = 0;
@@ -80,13 +91,39 @@ void tint(void* data, uint32_t bytesFromStart, uint32_t windowStart) {
     std::memcpy(light, row, sizeof(light));
     std::memcpy(g_starLightGameLight, light, sizeof(light));
     if (light[0] == 0.f && light[1] == 0.f && light[2] == 0.f) {
-        // No light: the jump, or no star. The next system's star must be seen before it tints anything.
+        // No light: the jump, or no star. The next system's star must be seen before it tints anything, and its arrival is learned.
         g_haveTint = false;
         g_havePick = false;
         g_starCount = 0;
+        g_learned = false;
+        g_learnedSat = 0.f;
+        g_arriving = true;
+        g_arrivalEnd = 0;
         return;
     }
-    if (!g_haveTint || g_strength <= 0) return;
+    if (g_arriving && light[0] > 0.f) {
+        const ULONGLONG now = GetTickCount64();
+        if (!g_arrivalEnd) g_arrivalEnd = now + kArrivalMs;
+        const float c[3] = {1.f, light[1] / light[0], light[2] / light[0]};
+        const float dg = c[1] - starlight::kWhite[1], db = c[2] - starlight::kWhite[2];
+        const float sat = std::sqrt(dg * dg + db * db);
+        if (sat > g_learnedSat) { g_learnedSat = sat; std::memcpy(g_learnedTint, c, sizeof(c)); g_learned = true; }
+        if (now >= g_arrivalEnd) {
+            g_arriving = false;
+            if (g_learned)
+                Log::get().note("star light: arrival: the game's own tint here is (%.3f,%.3f,%.3f); it is used in this system (the disc colour's prediction is the fallback)",
+                                g_learnedTint[0], g_learnedTint[1], g_learnedTint[2]);
+        }
+    }
+    if (g_strength <= 0) return;
+    if (g_learned) {
+        std::memcpy(g_tint, g_learnedTint, sizeof(g_tint));
+        starlight::apply(light, g_tint, g_strength / 100.f);
+        std::memcpy(row, light, sizeof(light));
+        ++g_tinted;
+        return;
+    }
+    if (!g_haveTint) return;
     int best = 0;
     float bestFit = 1e30f, second = 1e30f;
     for (unsigned i = 0; i < g_starCount; ++i) {
@@ -279,7 +316,7 @@ void starLightFrameBoundary(ID3D11DeviceContext* ctx) {
     if (now - g_windowStart >= 30000) {
         Log::get().note("star light: this window: sun buffer writes %llu, tinted %llu; tint %s (%.3f,%.3f,%.3f), strength %d%%",
                         static_cast<unsigned long long>(g_writes), static_cast<unsigned long long>(g_tinted),
-                        g_haveTint ? "from the star" : "none yet (the star not seen since the jump)", g_tint[0], g_tint[1], g_tint[2], g_strength);
+                        g_learned ? "learned on arrival" : g_haveTint ? "predicted from the star's colour" : "none yet (no arrival seen, the star not seen)", g_tint[0], g_tint[1], g_tint[2], g_strength);
         g_writes = g_tinted = 0;
         g_windowStart = now;
     }
