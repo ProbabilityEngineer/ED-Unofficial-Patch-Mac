@@ -497,14 +497,15 @@ void panelTable(const std::string& root, const std::string& gen) {
         check(same, "the Performance tab has the flat page's eight rows in their order (HUD Anti-Aliasing directly under UI quality, Window 3D distance directly under Optimized stations, "
                     "Skip rooms behind doors under that)");
     }
-    check(kFlatVisualRowCount == 8 && std::strcmp(kFlatVisualRows[0].section, "visual") == 0 && std::strcmp(kFlatVisualRows[0].key, "intro_video") == 0 &&
+    check(kFlatVisualRowCount == 9 && std::strcmp(kFlatVisualRows[0].section, "visual") == 0 && std::strcmp(kFlatVisualRows[0].key, "intro_video") == 0 &&
               std::strcmp(kFlatVisualRows[1].section, "visual") == 0 && std::strcmp(kFlatVisualRows[1].key, "star_glow") == 0 &&
-              std::strcmp(kFlatVisualRows[2].section, "visual") == 0 && std::strcmp(kFlatVisualRows[2].key, "cockpit_glass") == 0 &&
-              std::strcmp(kFlatVisualRows[3].section, "visual") == 0 && std::strcmp(kFlatVisualRows[3].key, "cockpit_glass_dirt") == 0 &&
-              std::strcmp(kFlatVisualRows[4].section, "visual") == 0 && std::strcmp(kFlatVisualRows[4].key, "cockpit_glass_lights") == 0 &&
-              std::strcmp(kFlatVisualRows[5].section, "fix") == 0 && std::strcmp(kFlatVisualRows[5].key, "particle_billboard") == 0 &&
-              std::strcmp(kFlatVisualRows[6].section, "fix") == 0 && std::strcmp(kFlatVisualRows[6].key, "character_motion") == 0 &&
-              std::strcmp(kFlatVisualRows[7].section, "fix") == 0 && std::strcmp(kFlatVisualRows[7].key, "hdr") == 0 &&
+              std::strcmp(kFlatVisualRows[2].section, "visual") == 0 && std::strcmp(kFlatVisualRows[2].key, "star_light_colour") == 0 &&
+              std::strcmp(kFlatVisualRows[3].section, "visual") == 0 && std::strcmp(kFlatVisualRows[3].key, "cockpit_glass") == 0 &&
+              std::strcmp(kFlatVisualRows[4].section, "visual") == 0 && std::strcmp(kFlatVisualRows[4].key, "cockpit_glass_dirt") == 0 &&
+              std::strcmp(kFlatVisualRows[5].section, "visual") == 0 && std::strcmp(kFlatVisualRows[5].key, "cockpit_glass_lights") == 0 &&
+              std::strcmp(kFlatVisualRows[6].section, "fix") == 0 && std::strcmp(kFlatVisualRows[6].key, "particle_billboard") == 0 &&
+              std::strcmp(kFlatVisualRows[7].section, "fix") == 0 && std::strcmp(kFlatVisualRows[7].key, "character_motion") == 0 &&
+              std::strcmp(kFlatVisualRows[8].section, "fix") == 0 && std::strcmp(kFlatVisualRows[8].key, "hdr") == 0 &&
               flatVisualHasRow("visual", "star_glow") && flatVisualHasRow("visual", "cockpit_glass") && flatVisualHasRow("visual", "cockpit_glass_dirt") &&
               flatVisualHasRow("fix", "particle_billboard") && !flatVisualHasRow("fix", "temporal_aa") && flatProfileReadsKey("fix.particle_billboard") &&
               flatProfileReadsKey("visual.cockpit_glass_dirt") && flatVisualHasRow("visual", "cockpit_glass_lights") && flatProfileReadsKey("visual.cockpit_glass_lights"),

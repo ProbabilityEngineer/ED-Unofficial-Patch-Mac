@@ -4,6 +4,7 @@
 #include "flat_compute_readback.h"   // FlatComputeInternalScope: EDVR's own copies pass the hooks straight through
 #include "flat_deferred_camera.h"    // kFlatDeferredHdrVs/Ps: the sun pair
 #include "flat_star_glow_math.h"     // kFlatStarQuadBVs/Ps: the star quad whose PS b2[0].yzw is the star's colour
+#include "flat_star_light.h"         // g_starLightGameLight: the game's light before visual.star_light_colour
 
 #include "../common/config.h"
 #include "../common/log.h"
@@ -155,9 +156,12 @@ void finish(ID3D11DeviceContext* ctx) {
         }
     }
     const float peak = std::fmax(star[0], std::fmax(star[1], star[2]));
-    Log::get().note("star light: sample %llu: star colour %s (%.4f,%.4f,%.4f) | sun draws %u, buffers read %u, positive rows %u, "
+    const float* game = g_starLightGameLight;
+    const float gr = game[0] > 0.f ? game[0] : 1.f;
+    Log::get().note("star light: sample %llu: game light before the fix (%.1f,%.1f,%.1f) chroma (1,%.3f,%.3f) | star colour %s (%.4f,%.4f,%.4f) | sun draws %u, buffers read %u, positive rows %u, "
                     "with the star's chromaticity %u:%s | other positive rows:%s",
-                    static_cast<unsigned long long>(g_sample), haveStar ? "" : "(no star quad drawn: the star off screen)",
+                    static_cast<unsigned long long>(g_sample), game[0], game[1], game[2], game[1] / gr, game[2] / gr,
+                    haveStar ? "" : "(no star quad drawn: the star off screen)",
                     peak > 0.f ? star[0] / peak : 0.f, peak > 0.f ? star[1] / peak : 0.f, peak > 0.f ? star[2] / peak : 0.f,
                     g_sunDraws, static_cast<unsigned>(got.size()), positive, matched, matches.empty() ? " none" : matches.c_str(),
                     others.empty() ? " none" : others.c_str());
