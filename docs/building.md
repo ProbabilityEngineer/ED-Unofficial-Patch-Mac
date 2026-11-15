@@ -83,6 +83,28 @@ proof artifact, not a release asset. The branch push trigger works before this
 workflow reaches `main`. GitHub does not offer its manual **Run workflow**
 control for a new workflow until the workflow file is on the default branch.
 
+### macOS: graphics-only builds under CrossOver
+
+The same tool builds the graphics test DLL on a Mac, with CrossOver standing in
+for Wine (`tools/macos_wine/`: `wine` and `wineboot` scripts that run CrossOver
+with the toolchain's prefix as a private bottle; the tool puts them on `PATH`):
+
+```
+brew install msitools
+python3 tools/linux_toolchain.py setup --accept-license
+python3 tools/linux_toolchain.py build-graphics
+```
+
+`build-graphics` runs `build.bat --compile-only --graphics-only`, the build CI's
+`graphics_only` job makes, into `build/graphics-compile/d3d11.dll`, and prints its
+SHA-256. Like that job it writes no receipt and runs no rig: an unvalidated test
+DLL. The tool holds the tree's lock on the host, so `build.bat` is told it is
+guarded (its own lock cannot name an owner under Wine). Measured 2026-11-15 on
+Apple Silicon: setup about 4 GB; a cold build 17 min, a rebuild with nothing
+changed 29 s. Visual Studio's telemetry helper may print a FATAL UNHANDLED
+EXCEPTION under Wine after the link; it does not affect the build. The export
+list differs from CI's as described below.
+
 ### Linux: compile-only builds under Wine
 
 For a test flight on a Steam Deck or another Linux machine that runs Elite

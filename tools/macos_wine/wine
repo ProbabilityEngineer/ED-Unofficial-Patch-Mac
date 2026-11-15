@@ -1,0 +1,6 @@
+#!/bin/sh
+# macOS: tools/linux_toolchain.py's `wine`, mapped to CrossOver. Its WINEPREFIX is used as a private CrossOver bottle at that absolute path.
+CX="${EDVR_CROSSOVER:-/Applications/CrossOver Preview.app}/Contents/SharedSupport/CrossOver/bin"
+[ -n "$WINEPREFIX" ] || { echo "wine shim: WINEPREFIX not set" >&2; exit 2; }
+if [ "$1" = "--version" ]; then exec "$CX/wine" --bottle "$WINEPREFIX" --no-update wine --version 2>/dev/null || echo "crossover"; fi
+exec "$CX/wine" --bottle "$WINEPREFIX" --no-update --wait-children "$@"

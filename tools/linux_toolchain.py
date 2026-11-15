@@ -15,7 +15,16 @@ full Windows build stays the validation for a merge or a release (AGENTS.md,
     python3 tools/linux_toolchain.py setup --accept-license
     python3 tools/linux_toolchain.py doctor
     python3 tools/linux_toolchain.py build-dlls [--root DIR] [--clean]
+    python3 tools/linux_toolchain.py build-graphics [--root DIR] [--clean]
     python3 tools/linux_toolchain.py --self-test
+
+build-graphics runs `build.bat --compile-only --graphics-only`: the graphics DLL
+alone, in <root>/build/graphics-compile, the build CI's graphics_only job makes.
+Like that job it writes no receipt: an unvalidated test DLL.
+
+macOS: CrossOver stands in for Wine.  tools/macos_wine/ holds `wine` and
+`wineboot` scripts that run CrossOver with the prefix as a private bottle, and
+this tool puts that folder first on PATH there; msitools comes from Homebrew.
 
 setup needs wine, msitools and git from the system's package manager and never
 runs sudo itself.  Its compiler download (msvc-wine's vsdownload.py, pinned
@@ -87,6 +96,9 @@ NINJA_URL = "https://github.com/ninja-build/ninja/releases/download/v%s/ninja-wi
 NINJA_SHA256 = "07fc8261b42b20e71d1720b39068c2e14ffcee6396b76fb7a795fb460b78dc65"
 HOST_TOOLS = ("wine", "msiextract", "git")
 HOST_INSTALL = "sudo pacman -S --needed wine msitools git"
+if sys.platform == "darwin":   # wine is CrossOver through tools/macos_wine (main puts it on PATH)
+    HOST_INSTALL = "brew install msitools git, and CrossOver Preview in /Applications"
+MACOS_WINE = Path(__file__).resolve().parent / "macos_wine"
 WINE_OVERRIDES = "mscoree,mshtml=;winemenubuilder.exe=d;d3dcompiler_47=n"
 
 # (folder under deps/, fetch tool, its destination flag, the build.bat variable
@@ -417,6 +429,43 @@ def _run_build(layout, root, env, clean):
     return _run(argv, cwd=root, env=env)
 
 
+def build_graphics(layout, root, clean=False):
+    """build.bat --compile-only --graphics-only: the graphics DLL alone, as CI's graphics_only job builds it. No receipt (that
+    job writes none either): an unvalidated test DLL."""
+    root = Path(root).resolve()
+    if b"--graphics-only" not in (root / "build.bat").read_bytes():
+        print("linux_toolchain: %s\\build.bat has no --graphics-only" % root)
+        return 1
+    missing = [label for label, ok, required, _d in checks(layout, root) if required and not ok]
+    if missing:
+        print("linux_toolchain: not ready (%s); run python3 tools/linux_toolchain.py setup" % ", ".join(missing))
+        return 1
+    deps = [row[0] for row in deps_for(root) if (layout.deps / row[0] / row[4]).is_file()]
+    for name, tool, *_rest in deps_for(root):
+        if name not in deps:
+            print("linux_toolchain: WARNING: no %s SDK in %s; this build goes without it" % (name, layout.deps))
+    with _tree_lock(root):
+        describe = compile_only.describe(root)
+        env = wine_env(layout, describe, deps)
+        # build.bat takes build_lock.py for a graphics-only build (its Windows route), which cannot name its owner under
+        # Wine (os.getppid fails). This host lock (_tree_lock) holds the tree for the whole compile instead, as for
+        # --compile-only (build.bat, "tools\\linux_toolchain.py holds its own lock"): build.bat is told it is guarded.
+        env["EDVR_BUILD_GUARDED"] = "1"
+        _start_pdb_server(layout, env)
+        argv = ["wine", "cmd", "/c", to_wine(root / "build.bat"), "--compile-only", "--graphics-only", "--jobs",
+                str(max(1, min(os.cpu_count() or 4, 8)))] + (["--clean"] if clean else [])
+        rc = _run(argv, cwd=root, env=env)
+    dll = root / "build" / "graphics-compile" / "d3d11.dll"
+    if rc or not dll.is_file():
+        print("linux_toolchain: build.bat --compile-only --graphics-only failed (exit %s)" % rc)
+        return rc or 1
+    print("linux_toolchain: GRAPHICS-ONLY test DLL of %s (%s), NOT Windows validated:\n    %s\n    SHA-256 %s"
+          % (root, describe, dll, _sha256(dll)))
+    if describe.endswith("-dirty"):
+        print("linux_toolchain: WARNING: compiled from a dirty tree; commit, then compile, before a build that will be flown")
+    return 0
+
+
 def build_dlls(layout, root, clean=False):
     root = Path(root).resolve()
     if b"--compile-only" not in (root / "build.bat").read_bytes():
@@ -598,9 +647,9 @@ def self_test():
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("command", nargs="?", choices=("setup", "doctor", "build-dlls"))
+    parser.add_argument("command", nargs="?", choices=("setup", "doctor", "build-dlls", "build-graphics"))
     parser.add_argument("--root", type=Path, default=REPO, help="the tree build-dlls compiles (default: this checkout)")
-    parser.add_argument("--clean", action="store_true", help="build-dlls: remove the compile-build first")
+    parser.add_argument("--clean", action="store_true", help="build-dlls, build-graphics: build from clean")
     parser.add_argument("--accept-license", action="store_true",
                         help="setup: you have read and accept VS 2022's Build Tools licence (see the module docstring)")
     parser.add_argument("--dry-run", action="store_true",
@@ -616,11 +665,15 @@ def main(argv=None):
     if os.name == "nt":
         print("linux_toolchain: on Windows, run build.bat itself")
         return 2
+    if sys.platform == "darwin" and MACOS_WINE.is_dir():
+        os.environ["PATH"] = str(MACOS_WINE) + os.pathsep + os.environ.get("PATH", "")
     layout = Layout(toolchain_home(args.root))
     if args.command == "doctor":
         return doctor(layout, args.root)
     if args.command == "setup":
         return setup(layout, args.root, accept_license=args.accept_license, dry_run=args.dry_run)
+    if args.command == "build-graphics":
+        return build_graphics(layout, args.root, clean=args.clean)
     return build_dlls(layout, args.root, clean=args.clean)
 
 

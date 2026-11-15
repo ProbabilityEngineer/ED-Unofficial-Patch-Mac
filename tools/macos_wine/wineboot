@@ -1,0 +1,9 @@
+#!/bin/sh
+# macOS: `wineboot -i` creates the CrossOver bottle at WINEPREFIX (win10_64) when it is missing.
+CX="${EDVR_CROSSOVER:-/Applications/CrossOver Preview.app}/Contents/SharedSupport/CrossOver/bin"
+[ -n "$WINEPREFIX" ] || { echo "wineboot shim: WINEPREFIX not set" >&2; exit 2; }
+if [ ! -f "$WINEPREFIX/system.reg" ]; then
+  mkdir -p "$(dirname "$WINEPREFIX")"
+  "$CX/cxbottle" --bottle "$WINEPREFIX" --create --template win10_64 --description "EDVR MSVC toolchain" || exit $?
+fi
+exec "$CX/wine" --bottle "$WINEPREFIX" --no-update --wait-children wineboot "$@"
