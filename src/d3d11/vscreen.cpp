@@ -41,6 +41,7 @@
 #include "weapon_motion.h"
 #include "night_vision.h"
 #include "device_hook.h"  // contextHookModeFor
+#include "flat_star_light_diag.h"   // TEMPORARY
 #include "draw_census.h"
 #include "draw_gate.h"    // the sampled subscriber gate the draw path reads
 #include "draw_fast_path.h"   // the AA-off draw path's decisions (2026-10-13)
@@ -5452,6 +5453,9 @@ struct DrawClock {
 static void flatCensusDraw(ID3D11DeviceContext* self, char kind, uint32_t count, uint32_t instances, const DrawArgs& args) {
     if (drawCensusArmed()) drawCensusOffDraw(self, kind, count, instances, args);
     if (self == g_state->ownerCtx && hdrOutputOn()) hdrOutputNoteDraw(self);   // fix.hdr: tone-target learning (hdr_output.h)
+    // TEMPORARY (flat_star_light_diag.h): a sample frame copies the sun draw's and the star quad's constants; one relaxed load otherwise.
+    if (starLightDiagCapturing() && self == g_state->ownerCtx)
+        starLightDiagDraw(self, bindingShaderHash(BindSlot::Vs), bindingShaderHash(BindSlot::Ps));
 }
 
 // Built v14.34: the optimized station's sun skip in the flat profile. Flat draws never reach beginPanelOverride (VR's verdict makes the same call after its
@@ -6824,6 +6828,7 @@ void vScreenReclaimTick() {
 namespace {
 EDVR_BOUNDARY_TICK(tkQuadProbe, "quad_probe");
 EDVR_BOUNDARY_TICK(tkDrawCensusTick, "draw_census_tick");
+EDVR_BOUNDARY_TICK(tkStarLightDiag, "star_light_diag");   // TEMPORARY (flat_star_light_diag.h)
 EDVR_BOUNDARY_TICK(tkObjectProbe, "object_probe");
 EDVR_BOUNDARY_TICK(tkPixelProbe, "pixel_probe");
 EDVR_BOUNDARY_TICK(tkBlendProbe, "blend_probe");   // TEMPORARY (blend_probe.h): arms, advances and reports a capture
@@ -6892,6 +6897,7 @@ void vScreenFrameBoundary() {
     if (g_state && g_state->ownerCtx) {
         tkQuadProbe.run([&] { quadProbeTick(g_state->ownerCtx); });
         tkDrawCensusTick.run([&] { drawCensusTick(g_state->ownerCtx); });
+        tkStarLightDiag.run([&] { starLightDiagFrameBoundary(g_state->ownerCtx); });
         tkObjectProbe.run([&] { objectProbeFrameBoundary(g_state->ownerCtx); });
         tkPixelProbe.run([&] { pixelProbeFrameBoundary(g_state->ownerCtx); depthWriterFrameBoundary(g_state->ownerCtx); });
         // Before drawGateSet below re-samples the draw gate, so a capture that starts here is seen by the next frame's first draw.
