@@ -72,6 +72,8 @@ inline constexpr FlatPageRow kFlatVisualRows[] = {
     {"fix", "particle_billboard", FlatRowRead::Allowlist},
     // Character motion (2026-11-14): on-foot characters' own motion for the temporal AA (the second skin, engine_velocity.cpp). Live.
     {"fix", "character_motion", FlatRowRead::Allowlist},
+    // HDR output (2026-11-15): fix.hdr, takes a restart (the swapchain's format is settled when it is created); the menu marks a change pending.
+    {"fix", "hdr", FlatRowRead::Allowlist},
 };
 inline constexpr size_t kFlatVisualRowCount = sizeof(kFlatVisualRows) / sizeof(kFlatVisualRows[0]);
 
