@@ -98,7 +98,10 @@ python3 tools/linux_toolchain.py build-graphics
 `build-graphics` runs `build.bat --compile-only --graphics-only`, the build CI's
 `graphics_only` job makes, into `build/graphics-compile/d3d11.dll`, and prints its
 SHA-256. Like that job it writes no receipt and runs no rig: an unvalidated test
-DLL. The tool holds the tree's lock on the host, so `build.bat` is told it is
+DLL. Each good build is also kept in
+`build/graphics-builds/<time>-<branch>-<describe>/` (the DLL and a `build.json`
+with its describe, branch and SHA-256), so an earlier one can be flown again;
+the newest 30 stay (`--keep N`, 0 keeps all), and `list-graphics` lists them. The tool holds the tree's lock on the host, so `build.bat` is told it is
 guarded (its own lock cannot name an owner under Wine). `wine` waits for the
 program it runs, not for its children: `mspdbsrv.exe` lingers for minutes by
 design, and waiting for it left the build idle long after it was done. Measured
