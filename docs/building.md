@@ -99,8 +99,11 @@ python3 tools/linux_toolchain.py build-graphics
 `graphics_only` job makes, into `build/graphics-compile/d3d11.dll`, and prints its
 SHA-256. Like that job it writes no receipt and runs no rig: an unvalidated test
 DLL. The tool holds the tree's lock on the host, so `build.bat` is told it is
-guarded (its own lock cannot name an owner under Wine). Measured 2026-11-15 on
-Apple Silicon: setup about 4 GB; a cold build 17 min, a rebuild with nothing
+guarded (its own lock cannot name an owner under Wine). `wine` waits for the
+program it runs, not for its children: `mspdbsrv.exe` lingers for minutes by
+design, and waiting for it left the build idle long after it was done. Measured
+2026-11-15 on Apple Silicon (14 cores): setup about 4 GB; a cold build of a new
+worktree 113 s, recompiling about half the tree 56 s, a rebuild with nothing
 changed 29 s. Visual Studio's telemetry helper may print a FATAL UNHANDLED
 EXCEPTION under Wine after the link; it does not affect the build. The export
 list differs from CI's as described below.
