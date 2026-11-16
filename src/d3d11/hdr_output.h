@@ -125,6 +125,23 @@ void hdrOutputWidenedCreated(ID3D11Texture2D* texture, const D3D11_TEXTURE2D_DES
 // shapes). Otherwise one pointer compare.
 void hdrOutputNoteDraw(ID3D11DeviceContext* ctx);
 
+// The live nits (2026-11-16): EDVR's tone, no-bloom tone and copy shaders read scene white, UI white and peak from PS b13, so
+// advanced.hdr_*_nits = auto can follow macOS's SDR white without a restart. Bind returns true and saves the game's b13 when the
+// bound pixel shader is one of those three (one pointer compare otherwise); Restore puts the saved buffer back and releases it.
+bool hdrOutputNitsBind(ID3D11DeviceContext* ctx, ID3D11Buffer** saved);
+void hdrOutputNitsRestore(ID3D11DeviceContext* ctx, ID3D11Buffer* saved);
+class HdrNitsScope {
+public:
+    HdrNitsScope(ID3D11DeviceContext* ctx, bool armed) : ctx_(ctx) { if (armed) bound_ = hdrOutputNitsBind(ctx, &saved_); }
+    ~HdrNitsScope() { if (bound_) hdrOutputNitsRestore(ctx_, saved_); }
+    HdrNitsScope(const HdrNitsScope&) = delete;
+    HdrNitsScope& operator=(const HdrNitsScope&) = delete;
+private:
+    ID3D11DeviceContext* ctx_;
+    ID3D11Buffer* saved_ = nullptr;
+    bool bound_ = false;
+};
+
 // The view format to use over a resource this feature widened. Returns true
 // when `mapped` holds a format to use instead of `asked`: an 8-bit RGBA view
 // over a 16-bit-float resource reads as R16G16B16A16_FLOAT. Stateless -- it

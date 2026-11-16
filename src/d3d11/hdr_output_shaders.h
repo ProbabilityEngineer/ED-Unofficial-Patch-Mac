@@ -168,6 +168,11 @@ Texture2D<float4> t2 : register(t2);
 #endif
 Texture2D<float4> t1 : register(t1);
 cbuffer           cb2 : register(b2) { float4 cb2[16]; };
+// EDVR's live nits (2026-11-16, hdr_output.cpp): x scene white, y UI white, z peak. EDVR binds it for its own shaders' draws only;
+// unbound it reads 0 and the nits macros fall back to the values compiled in.
+#ifdef EDVR_LIVE_NITS
+cbuffer edvrHdrNits : register(b13) { float4 edvrNits; };
+#endif
 
 // --- Working-oracle values from ED_RENO's installed ReShade preset ---
 // ReShade.ini [renodx-preset1]: ToneMapPeakNits=1589, ToneMapGameNits=261,
@@ -428,6 +433,11 @@ inline constexpr char kHdrCopyScalePs[] = R"HLSL(
 // test/run_stage11_gamescale_test.sh enforces it.
 Texture2D<float4> t0 : register(t0);
 SamplerState      s0_s : register(s0);
+// EDVR's live nits (2026-11-16, hdr_output.cpp): x scene white, y UI white, z peak. EDVR binds it for its own shaders' draws only;
+// unbound it reads 0 and the nits macros fall back to the values compiled in.
+#ifdef EDVR_LIVE_NITS
+cbuffer edvrHdrNits : register(b13) { float4 edvrNits; };
+#endif
 
 // Working-oracle values from ED_RENO's installed ReShade.ini [renodx-preset1].
 // NOT the public-source defaults (1000/203/203). EDVR passes both as macros
@@ -466,6 +476,11 @@ inline constexpr char kHdrOutDecodePs[] = R"HLSL(
 Texture2D<float4> t0 : register(t0);
 SamplerState      s0 : register(s0);
 #define DISPLAY_GAMMA 2.2
+// EDVR's live nits (2026-11-16, hdr_output.cpp): x scene white, y UI white, z peak. EDVR binds it for its own shaders' draws only;
+// unbound it reads 0 and the nits macros fall back to the values compiled in.
+#ifdef EDVR_LIVE_NITS
+cbuffer edvrHdrNits : register(b13) { float4 edvrNits; };
+#endif
 #ifndef OUTDECODE_GAIN
 #define OUTDECODE_GAIN 1.0
 #endif
