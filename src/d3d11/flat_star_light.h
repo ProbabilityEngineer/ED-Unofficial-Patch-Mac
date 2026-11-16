@@ -1,7 +1,7 @@
 #pragma once
 // visual.star_light_colour (2026-11-15): the sun's light in the star's colour, far from the star too.
 // 2026-11-16: the same change also reaches the light buffers of the forward and atmosphere draws and the planetary ring dust's light (below),
-// and the setting is scaled per star toward equal visible colour (flat_star_light_math.h equalStrength).
+// and the setting can be scaled per star toward equal visible colour (flat_star_light_math.h equalStrength; off since 2026-11-16, kEqualVisibleColour).
 //
 // Odyssey lights a ship in the star's colour only within a few light seconds of it; farther out the light fades to near-white
 // (flights of 2026-11-15, diag.star_light_log: the colour row of the sun draw is mix(tint, white, f), f rising to ~1 by ~5 Ls).

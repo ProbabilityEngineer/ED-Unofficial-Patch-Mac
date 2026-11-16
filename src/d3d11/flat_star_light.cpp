@@ -31,6 +31,10 @@ float g_starLightGameLight[3] = {0, 0, 0};   // the game's own light, before the
 
 namespace {
 
+// Equal visible colour (flat_star_light_math.h equalStrength) is OFF since 2026-11-16 at the user's request: the setting is used as it is
+// for every star. Set true to scale it per star by the tint's Oklab chroma again.
+constexpr bool kEqualVisibleColour = false;
+
 using Microsoft::WRL::ComPtr;
 
 constexpr unsigned kRow = 40;                 // the light's colour times brightness, in the sun draw's b2 window
@@ -53,6 +57,12 @@ Star g_stars[kMaxStars];
 unsigned g_starCount = 0;
 bool g_haveTint = false;                      // g_starCount > 0
 float g_tint[3] = {1, 1, 1};                  // the last one used (the window line)
+
+// The strength applied to g_tint: the setting, or with kEqualVisibleColour the setting scaled per star.
+float strengthNow() {
+    const float setting = g_strength / 100.f;
+    return kEqualVisibleColour ? starlight::equalStrength(g_tint, setting) : std::fmin(std::fmax(setting, 0.f), 1.f);
+}
 bool g_havePick = false;                      // a confident choice was made: g_tint is its tint
 int g_lastLogged = -1;
 
@@ -72,6 +82,11 @@ float g_learnedSat = 0.f;                     // its distance from the game's wh
 constexpr float kForeignMisfit = 0.15f;
 constexpr unsigned kForeignWrites = 60;
 unsigned g_foreignWrites = 0;
+constexpr ULONGLONG kDarkMs = 2000;             // a light dark this long is a jump (or no star), not a shadow's flicker
+ULONGLONG g_darkSince = 0;                     // the first of the current run of zero-light writes (0: lit)
+bool g_darkReset = false;                      // that run has reset the tint
+bool g_heldValid = false;                      // the learned tint before the dark, kept aside
+float g_heldTint[3] = {1, 1, 1};
 
 ComPtr<ID3D11Buffer> g_staging[kMaxStars];    // one read's copies in flight: the star quads of one frame
 unsigned g_stagingCount = 0;                  // copies queued this read
@@ -128,16 +143,38 @@ void tint(void* data, uint32_t bytesFromStart, uint32_t windowStart) {
     std::memcpy(light, row, sizeof(light));
     std::memcpy(g_starLightGameLight, light, sizeof(light));
     if (light[0] == 0.f && light[1] == 0.f && light[2] == 0.f) {
-        // No light: the jump, or no star. The next system's star must be seen before it tints anything, and its arrival is learned.
+        // No light. A jump keeps it dark for seconds; a planet's shadow (2026-11-16, the Taygeta ring) gives some of the sun writes zero and
+        // others the light, so only a light that stays dark for kDarkMs is read as a jump. Until then nothing is tinted and nothing is reset.
         g_factorValid = false;
-        g_haveTint = false;
-        g_havePick = false;
-        g_starCount = 0;
-        g_learned = false;
-        g_learnedSat = 0.f;
-        g_arriving = true;
-        g_arrivalEnd = 0;
+        const ULONGLONG now = GetTickCount64();
+        if (!g_darkSince) g_darkSince = now;
+        if (!g_darkReset && now - g_darkSince >= kDarkMs) {
+            // The jump, or no star: the next system's star must be seen before it tints anything, and its arrival is learned. The tint
+            // held so far is kept aside: a light that comes back fitting it (a long shadow, the same system) takes it back.
+            g_darkReset = true;
+            g_heldValid = g_learned;
+            std::memcpy(g_heldTint, g_learnedTint, sizeof(g_heldTint));
+            g_haveTint = false;
+            g_havePick = false;
+            g_starCount = 0;
+            g_learned = false;
+            g_learnedSat = 0.f;
+            g_arriving = true;
+            g_arrivalEnd = 0;
+        }
         return;
+    }
+    g_darkSince = 0;
+    if (g_darkReset) {
+        g_darkReset = false;
+        if (g_heldValid && starlight::misfit(light, g_heldTint) <= kForeignMisfit) {
+            std::memcpy(g_learnedTint, g_heldTint, sizeof(g_learnedTint));
+            g_learned = true;
+            g_arriving = false;
+            Log::get().note("star light: the light came back fitting the tint held before the dark (%.3f,%.3f,%.3f): the same system, kept",
+                            g_heldTint[0], g_heldTint[1], g_heldTint[2]);
+        }
+        g_heldValid = false;
     }
     if (g_arriving && light[0] > 0.f) {
         const ULONGLONG now = GetTickCount64();
@@ -174,7 +211,7 @@ void tint(void* data, uint32_t bytesFromStart, uint32_t windowStart) {
     if (g_strength <= 0) return;
     if (g_learned) {
         std::memcpy(g_tint, g_learnedTint, sizeof(g_tint));
-        starlight::apply(light, g_tint, starlight::equalStrength(g_tint, g_strength / 100.f));
+        starlight::apply(light, g_tint, strengthNow());
         noteFactor(row, light);
         std::memcpy(row, light, sizeof(light));
         ++g_tinted;
@@ -212,7 +249,7 @@ void tint(void* data, uint32_t bytesFromStart, uint32_t windowStart) {
         Log::get().note("star light: %u stars in view; the light (%.0f,%.0f,%.0f) fits star %d's tint (%.3f,%.3f,%.3f) best (misfit %.3f)",
                         g_starCount, light[0], light[1], light[2], best, g_tint[0], g_tint[1], g_tint[2], bestFit);
     }
-    starlight::apply(light, g_tint, starlight::equalStrength(g_tint, g_strength / 100.f));
+    starlight::apply(light, g_tint, strengthNow());
     noteFactor(row, light);
     std::memcpy(row, light, sizeof(light));
     ++g_tinted;
@@ -608,10 +645,10 @@ void starLightFrameBoundary(ID3D11DeviceContext* ctx) {
     if (!g_windowStart) g_windowStart = now;
     if (now - g_windowStart >= 30000) {
         Log::get().note("star light: this window: sun buffer writes %llu, tinted %llu; tint %s (%.3f,%.3f,%.3f), setting %d%%, this star's strength %.0f%% "
-                        "(equal visible colour, flat_star_light_math.h equalStrength)",
+                        "(equal visible colour %s)",
                         static_cast<unsigned long long>(g_writes), static_cast<unsigned long long>(g_tinted),
                         g_learned ? "learned on arrival" : g_haveTint ? "predicted from the star's colour" : "none yet (no arrival seen, the star not seen)", g_tint[0], g_tint[1], g_tint[2], g_strength,
-                        100.f * starlight::equalStrength(g_tint, g_strength / 100.f));
+                        100.f * strengthNow(), kEqualVisibleColour ? "on" : "off: the setting as it is");
         Log::get().note("star light: this window: ring dust (in flight %s): draws re-tinted %llu, left as the game's %llu (of which row %u not the game's light colour %llu)",
                         g_inFlight ? "yes" : "no", static_cast<unsigned long long>(g_hazeBound), static_cast<unsigned long long>(g_hazeSkipped), kHazeRow,
                         static_cast<unsigned long long>(g_hazeRefused));
