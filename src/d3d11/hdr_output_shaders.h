@@ -144,7 +144,7 @@ SamplerState      s1 : register(s1);
 // RenoDX's per-channel shoulder, under which a saturated highlight drifts to
 // white as it nears the peak. advanced.hdr_highlights (hue | channel).
 #ifndef HDR_TONE_HUE_PRESERVE
-#define HDR_TONE_HUE_PRESERVE 0
+#define HDR_TONE_HUE_PRESERVE 1
 #endif
 #ifndef HDR_TONE_NO_BLOOM
 #define HDR_TONE_NO_BLOOM 0

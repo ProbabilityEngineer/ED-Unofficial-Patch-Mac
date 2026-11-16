@@ -91,7 +91,7 @@ struct State {
     // and what hdrrules::resolveNits made of them once the display was asked.
     float cfgScene = 0.0f, cfgUi = 0.0f, cfgPeak = 0.0f;
     bool srgbDecode = true;      // advanced.hdr_gamma: srgb (default) | 2.2
-    bool huePreserve = false;    // advanced.hdr_highlights: channel (default) | hue
+    bool huePreserve = true;     // advanced.hdr_highlights: hue (default since 2026-11-16) | channel
     bool grading = true;         // advanced.hdr_grading: game (default) | off
     hdrrules::WidenMode widenMode = hdrrules::WidenMode::Auto;  // advanced.hdr_widen
     unsigned long long widenMask = 0;
@@ -500,7 +500,7 @@ void refreshSettings(ID3D11DeviceContext* context) {
     const float scene = autoScene ? 0.0f : cfg.getFloat("advanced.hdr_scene_nits", 0.0f);
     const float ui = autoUi ? 0.0f : cfg.getFloat("advanced.hdr_ui_nits", 0.0f);
     const float peak = cfg.getFloat("advanced.hdr_peak_nits", 0.0f);
-    const bool hue = _stricmp(cfg.getString("advanced.hdr_highlights", "channel").c_str(), "hue") == 0;
+    const bool hue = _stricmp(cfg.getString("advanced.hdr_highlights", "hue").c_str(), "channel") != 0;
     const bool grading = _stricmp(cfg.getString("advanced.hdr_grading", "game").c_str(), "off") != 0;
     if (autoScene == g.autoScene && autoUi == g.autoUi && scene == g.cfgScene && ui == g.cfgUi && peak == g.cfgPeak &&
         hue == g.huePreserve && grading == g.grading)
@@ -1011,11 +1011,13 @@ void hdrOutputStartup() {
     if (g.on && g.grading && _stricmp(grading.c_str(), "game") != 0)
         Log::get().note("hdr: advanced.hdr_grading \"%s\" is not a value this reads; using game "
                         "(game, off)", grading.c_str());
-    const std::string highlights = cfg.getString("advanced.hdr_highlights", "channel");
-    g.huePreserve = _stricmp(highlights.c_str(), "hue") == 0;
-    if (g.on && !g.huePreserve && _stricmp(highlights.c_str(), "channel") != 0)
+    // hue is the default since 2026-11-16: scaling red, green and blue together keeps a lit surface's colour; channel (RenoDX's
+    // shoulder) shifts hue and saturation with brightness.
+    const std::string highlights = cfg.getString("advanced.hdr_highlights", "hue");
+    g.huePreserve = _stricmp(highlights.c_str(), "channel") != 0;
+    if (g.on && g.huePreserve && _stricmp(highlights.c_str(), "hue") != 0)
         Log::get().note("hdr: advanced.hdr_highlights \"%s\" is not a value this reads; using "
-                        "channel (channel, hue)", highlights.c_str());
+                        "hue (hue, channel)", highlights.c_str());
     if (g.on && g.srgbDecode && _stricmp(gamma.c_str(), "srgb") != 0)
         Log::get().note("hdr: advanced.hdr_gamma \"%s\" is not a value this reads; using srgb "
                         "(srgb, 2.2)", gamma.c_str());
