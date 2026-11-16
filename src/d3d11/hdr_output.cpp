@@ -9,6 +9,7 @@
 #include <dxgi1_6.h>   // IDXGIOutput6::GetDesc1, the display's peak luminance
 
 #include <atomic>
+#include <cmath>
 #include <mutex>
 #include <new>
 #include <cstdint>
@@ -90,7 +91,7 @@ struct State {
     // and what hdrrules::resolveNits made of them once the display was asked.
     float cfgScene = 0.0f, cfgUi = 0.0f, cfgPeak = 0.0f;
     bool srgbDecode = true;      // advanced.hdr_gamma: srgb (default) | 2.2
-    bool huePreserve = false;    // advanced.hdr_highlights: channel (default) | hue
+    bool huePreserve = true;     // advanced.hdr_highlights: hue (default since 2026-11-16) | channel
     bool grading = true;         // advanced.hdr_grading: game (default) | off
     hdrrules::WidenMode widenMode = hdrrules::WidenMode::Auto;  // advanced.hdr_widen
     unsigned long long widenMask = 0;
@@ -130,9 +131,96 @@ struct State {
     unsigned widened = 0;        // textures widened in place
     unsigned inexactViews = 0;   // view formats mapped without an exact match
     unsigned passes = 0;
+
+    // advanced.hdr_scene_nits / hdr_ui_nits = auto (2026-11-16): the white follows macOS's SDR white (hdrrules::applyAutoWhite).
+    bool autoScene = false, autoUi = false;
+    hdrrules::HdrNits baseNits = hdrrules::resolveNits(0.0f, 0.0f, 0.0f, 0.0f);   // resolveNits' result, before auto
+    // The nits the shaders read live, at PS/CS b13 for EDVR's own draws (hdrOutputNitsBind); nits is what was last uploaded.
+    ID3D11Buffer* nitsCb = nullptr;
+    hdrrules::EdrReading edr;
+    bool edrEverUsable = false;
+    ULONGLONG nextNitsNote = 0;
+    float displayPeak = 0.0f;    // DXGI MaxLuminance at attach, for resolveNits on a live change
+    uint32_t cfgGeneration = 0;  // the config generation the live settings were last read at
+    float notedScene = 0.0f, notedUi = 0.0f;
+    bool edrAbsentNoted = false, edrUnusableNoted = false;
 };
 
 State g;
+
+// ---- macOS EDR, from DXMT's winemetal.dll ---------------------------------
+// The read costs ~0.9 ms (flight 2026-11-16: DXMT builds a ColorSync profile per call), so it runs on its own thread every 50 ms
+// and the render thread only loads the latest reading. A reading taken as macOS ramps the headroom up at first is still right: DXMT
+// scales by the headroom of the moment too, so the white tracks it (the 1.2 at attach, a 1333-nit white, showed as 600 nits).
+// The two exports (DXMT src/winemetal/winemetal.h, unchanged since ecc799fa 2025-05-27). The description is read into a larger,
+// zeroed buffer so a future DXMT that grows the struct cannot write past it.
+struct WmtDisplayDescription {
+    float red[2], blue[2], green[2], white[2];
+    float maximumEdr;            // maximumExtendedDynamicRangeColorComponentValue
+    float maximumPotentialEdr;   // maximumPotentialExtendedDynamicRangeColorComponentValue
+    float maximumReferenceEdr;   // maximumReferenceExtendedDynamicRangeColorComponentValue
+    float spare[21];
+};
+using PfnWmtPrimaryDisplay = uint32_t(__cdecl*)();
+using PfnWmtDisplayDescription = void(__cdecl*)(uint32_t, WmtDisplayDescription*);
+
+// false when this is not DXMT (Windows, or a DXMT without the exports). Called from the EDR thread, and once at attach before it.
+bool readEdr(hdrrules::EdrReading* out) {
+    static PfnWmtPrimaryDisplay primary = nullptr;
+    static PfnWmtDisplayDescription describe = nullptr;
+    static bool looked = false;
+    if (!looked) {
+        looked = true;
+        if (HMODULE wm = GetModuleHandleW(L"winemetal.dll")) {
+            primary = reinterpret_cast<PfnWmtPrimaryDisplay>(GetProcAddress(wm, "WMTGetPrimaryDisplayId"));
+            describe = reinterpret_cast<PfnWmtDisplayDescription>(GetProcAddress(wm, "WMTGetDisplayDescription"));
+        }
+    }
+    if (!primary || !describe) return false;
+    WmtDisplayDescription d = {};
+    describe(primary(), &d);
+    out->current = d.maximumEdr;
+    out->potential = d.maximumPotentialEdr;
+    out->reference = d.maximumReferenceEdr;
+    return true;
+}
+
+std::atomic<float> g_edrCurrent{0.0f}, g_edrPotential{0.0f}, g_edrReference{0.0f};
+std::atomic<int> g_edrState{0};   // 0 not started, 1 reading, 2 no DXMT
+std::atomic<bool> g_edrStop{false};
+
+// Detached: the graphics module stays mapped for the life of the process (it is pinned), and a join from shutdown could run under
+// the loader lock. g_edrStop ends it.
+DWORD WINAPI edrThread(void*) {
+    double totalUs = 0.0;
+    unsigned count = 0;
+    LARGE_INTEGER f;
+    QueryPerformanceFrequency(&f);
+    while (!g_edrStop.load(std::memory_order_relaxed)) {
+        hdrrules::EdrReading r;
+        LARGE_INTEGER t0, t1;
+        QueryPerformanceCounter(&t0);
+        if (!readEdr(&r)) { g_edrState.store(2, std::memory_order_relaxed); return 0; }
+        QueryPerformanceCounter(&t1);
+        g_edrCurrent.store(r.current, std::memory_order_relaxed);
+        g_edrPotential.store(r.potential, std::memory_order_relaxed);
+        g_edrReference.store(r.reference, std::memory_order_relaxed);
+        g_edrState.store(1, std::memory_order_release);
+        totalUs += 1e6 * double(t1.QuadPart - t0.QuadPart) / double(f.QuadPart);
+        if (++count == 200)
+            Log::get().note("hdr: auto white: the EDR read costs %.1f us on average, on its own thread every 50 ms", totalUs / count);
+        Sleep(50);
+    }
+    return 0;
+}
+
+void startEdrThread() {
+    static bool started = false;
+    if (started) return;
+    started = true;
+    if (HANDLE h = CreateThread(nullptr, 0, edrThread, nullptr, 0, nullptr)) CloseHandle(h);
+    else Log::get().note("hdr: auto white: the EDR reader thread would not start; the defaults hold");
+}
 
 // ---- widened-texture accounting ------------------------------------------
 // Updated from whichever thread creates or destroys a texture, so atomics.
@@ -263,6 +351,7 @@ bool saveToneShapes() {
 
 constexpr unsigned kInexactViewNotes = 8;
 constexpr unsigned kPassNotes = 4;
+constexpr UINT kNitsSlot = 13;   // edvrHdrNits : register(b13) in hdr_output_shaders.h
 
 // ---- shader compilation --------------------------------------------------
 
@@ -373,24 +462,127 @@ void releaseBackBuffer() {
 
 // The nits as HLSL macro text. The caller keeps the returned value alive for
 // as long as its D3D_SHADER_MACRO array points into it.
+// Since 2026-11-16 each is the live value from b13 (edvrHdrNits, EDVR_LIVE_NITS) with the value at compile time as the fallback
+// for a draw EDVR did not bind it for.
 struct NitsMacros {
-    char scene[32], ui[32], peak[32], linearGain[32];
+    char scene[64], ui[64], peak[64], linearGain[80];
 };
 NitsMacros nitsMacros() {
     NitsMacros m;
-    std::snprintf(m.scene, sizeof m.scene, "%.9g", g.nits.scene);
-    std::snprintf(m.ui, sizeof m.ui, "%.9g", g.nits.ui);
-    std::snprintf(m.peak, sizeof m.peak, "%.9g", g.nits.peak);
+    std::snprintf(m.scene, sizeof m.scene, "(edvrNits.x > 0.0 ? edvrNits.x : %.9g)", g.nits.scene);
+    std::snprintf(m.ui, sizeof m.ui, "(edvrNits.y > 0.0 ? edvrNits.y : %.9g)", g.nits.ui);
+    std::snprintf(m.peak, sizeof m.peak, "(edvrNits.z > 0.0 ? edvrNits.z : %.9g)", g.nits.peak);
     // Linear scRGB: 1.0 is 80 nits, so UI white lands at ui/80.
-    std::snprintf(m.linearGain, sizeof m.linearGain, "%.9g", g.nits.ui / 80.0f);
+    std::snprintf(m.linearGain, sizeof m.linearGain, "((edvrNits.y > 0.0 ? edvrNits.y : %.9g) / 80.0)", g.nits.ui);
     return m;
+}
+
+// edvrNits.w: 1 + 2 x hue-preserving highlights + 4 x the game's grading (hdr_output_shaders.h; 0 would mean "as compiled").
+float liveFlags() { return 1.0f + (g.huePreserve ? 2.0f : 0.0f) + (g.grading ? 4.0f : 0.0f); }
+
+// Upload g.nits and the switches to the live buffer (a no-op before it exists).
+void uploadNits(ID3D11DeviceContext* context) {
+    if (!g.nitsCb || !context) return;
+    const float v[4] = {g.nits.scene, g.nits.ui, g.nits.peak, liveFlags()};
+    context->UpdateSubresource(g.nitsCb, 0, nullptr, v, 0, 0);
+}
+
+// The live settings (2026-11-16): advanced.hdr_scene_nits, hdr_ui_nits, hdr_peak_nits, hdr_highlights and hdr_grading are read
+// again whenever the config changes (the ini is re-read when its file changes), so an A/B comparison needs no restart. fix.hdr,
+// hdr_encode, hdr_gamma and hdr_widen still take a restart (the swapchain, the transform's domain and the textures are settled early).
+void refreshSettings(ID3D11DeviceContext* context) {
+    const Config& cfg = Config::get();
+    const uint32_t gen = cfg.generation();
+    if (gen == g.cfgGeneration) return;
+    g.cfgGeneration = gen;
+    const bool autoScene = _stricmp(cfg.getString("advanced.hdr_scene_nits", "").c_str(), "auto") == 0;
+    const bool autoUi = _stricmp(cfg.getString("advanced.hdr_ui_nits", "").c_str(), "auto") == 0;
+    const float scene = autoScene ? 0.0f : cfg.getFloat("advanced.hdr_scene_nits", 0.0f);
+    const float ui = autoUi ? 0.0f : cfg.getFloat("advanced.hdr_ui_nits", 0.0f);
+    const float peak = cfg.getFloat("advanced.hdr_peak_nits", 0.0f);
+    const bool hue = _stricmp(cfg.getString("advanced.hdr_highlights", "hue").c_str(), "channel") != 0;
+    const bool grading = _stricmp(cfg.getString("advanced.hdr_grading", "game").c_str(), "off") != 0;
+    if (autoScene == g.autoScene && autoUi == g.autoUi && scene == g.cfgScene && ui == g.cfgUi && peak == g.cfgPeak &&
+        hue == g.huePreserve && grading == g.grading)
+        return;
+    g.autoScene = autoScene;
+    g.autoUi = autoUi;
+    g.cfgScene = scene;
+    g.cfgUi = ui;
+    g.cfgPeak = peak;
+    g.huePreserve = hue;
+    g.grading = grading;
+    g.baseNits = hdrrules::resolveNits(scene, ui, peak, g.displayPeak);
+    g.nits = hdrrules::applyAutoWhite(g.baseNits, autoScene, autoUi, g.edr);
+    if (autoScene || autoUi) {
+        hdrrules::EdrReading probe;
+        if (readEdr(&probe)) startEdrThread();
+    }
+    g.notedScene = g.nits.scene;
+    g.notedUi = g.nits.ui;
+    uploadNits(context);
+    Log::get().note("hdr: settings changed (live): scene white %.1f%s, UI white %.1f%s, peak %.0f nits; highlights rolled off %s; "
+                    "the game's display grading %s",
+                    g.nits.scene, autoScene ? " (auto)" : "", g.nits.ui, autoUi ? " (auto)" : "", g.nits.peak,
+                    hue ? "preserving hue" : "per channel", grading ? "applied" : "off");
+}
+
+// The auto whites, from the EDR thread's latest reading, checked every frame. Logs a change of 1% or more, at most every 2 s, and says once
+// why auto cannot follow (no DXMT, no usable reading yet).
+void refreshAutoWhite(ID3D11DeviceContext* context) {
+    if (!g.autoScene && !g.autoUi) return;
+    const int state = g_edrState.load(std::memory_order_acquire);
+    if (state == 0) return;
+    const ULONGLONG now = GetTickCount64();
+    hdrrules::EdrReading r;
+    r.current = g_edrCurrent.load(std::memory_order_relaxed);
+    r.potential = g_edrPotential.load(std::memory_order_relaxed);
+    r.reference = g_edrReference.load(std::memory_order_relaxed);
+    if (r.current == g.edr.current && r.potential == g.edr.potential && state == 1) return;
+    const bool read = state == 1;
+    if (!read) {
+        if (!g.edrAbsentNoted) {
+            g.edrAbsentNoted = true;
+            Log::get().note("hdr: auto white: DXMT's winemetal.dll (WMTGetDisplayDescription) is not here, so there is no macOS SDR "
+                            "white to follow; scene white %.0f, UI white %.0f nits (the defaults)", g.nits.scene, g.nits.ui);
+        }
+        return;
+    }
+    g.edr = r;
+    if (!hdrrules::edrUsable(r)) {
+        if (!g.edrUnusableNoted) {
+            g.edrUnusableNoted = true;
+            Log::get().note("hdr: auto white: macOS EDR headroom %.3f now, %.3f potential, %.3f reference: not usable yet (1.0 while "
+                            "no EDR content is shown); white held at scene %.0f, UI %.0f nits", r.current, r.potential, r.reference,
+                            g.nits.scene, g.nits.ui);
+        }
+        return;
+    }
+    g.edrEverUsable = true;
+    const hdrrules::HdrNits next = hdrrules::applyAutoWhite(g.baseNits, g.autoScene, g.autoUi, r);
+    if (next.scene == g.nits.scene && next.ui == g.nits.ui && next.peak == g.nits.peak) return;
+    g.nits = next;
+    uploadNits(context);
+    const bool big = std::fabs(next.scene - g.notedScene) > 0.01f * g.notedScene || std::fabs(next.ui - g.notedUi) > 0.01f * g.notedUi;
+    if (big && now >= g.nextNitsNote) {
+        g.nextNitsNote = now + 2000;
+        g.notedScene = next.scene;
+        g.notedUi = next.ui;
+        Log::get().note("hdr: auto white: macOS EDR headroom %.3f now of %.3f potential (reference %.3f) -> SDR white %.1f nits; "
+                        "scene white %.1f%s, UI white %.1f%s, peak %.0f nits",
+                        r.current, r.potential, r.reference, hdrrules::edrSdrWhiteNits(r), g.nits.scene, g.autoScene ? " (auto)" : "",
+                        g.nits.ui, g.autoUi ? " (auto)" : "", g.nits.peak);
+    }
 }
 
 // The display's peak luminance as DXGI reports it (DXMT: the panel's potential
 // EDR headroom x 100), from the device's adapter's first output. 0 when any
 // step fails; resolveNits then falls back.
-float displayPeakNits(ID3D11Device* device, unsigned* outputIndex) {
+// colorSpace / haveColorSpace (2026-11-16): the output's colour space, for the HDR gate. DXMT reports G2084 (PQ BT.2020) only when
+// macOS gives the screen EDR headroom (dxgi_output.cpp: potential > 1); Windows reports it while its HDR switch is on.
+float displayPeakNits(ID3D11Device* device, unsigned* outputIndex, DXGI_COLOR_SPACE_TYPE* colorSpace, bool* haveColorSpace) {
     *outputIndex = 0;
+    *haveColorSpace = false;
     float peak = 0.0f;
     IDXGIDevice* dxgiDevice = nullptr;
     IDXGIAdapter* adapter = nullptr;
@@ -403,7 +595,11 @@ float displayPeakNits(ID3D11Device* device, unsigned* outputIndex) {
         SUCCEEDED(output->QueryInterface(__uuidof(IDXGIOutput6),
                                          reinterpret_cast<void**>(&output6)))) {
         DXGI_OUTPUT_DESC1 desc = {};
-        if (SUCCEEDED(output6->GetDesc1(&desc))) peak = desc.MaxLuminance;
+        if (SUCCEEDED(output6->GetDesc1(&desc))) {
+            peak = desc.MaxLuminance;
+            *colorSpace = desc.ColorSpace;
+            *haveColorSpace = true;
+        }
     }
     if (output6) output6->Release();
     if (output) output->Release();
@@ -425,7 +621,8 @@ bool buildTransformShaders(bool pq) {
     if (g.drawVs) { g.drawVs->Release(); g.drawVs = nullptr; }
 
     const NitsMacros n = nitsMacros();
-    const D3D_SHADER_MACRO macros[] = {{"OUTDECODE_GAIN", n.linearGain},
+    const D3D_SHADER_MACRO macros[] = {{"EDVR_LIVE_NITS", "1"},
+                                       {"OUTDECODE_GAIN", n.linearGain},
                                        {"OUTDECODE_PQ", pq ? "1" : "0"},
                                        {"GRAPHICS_WHITE_NITS", n.ui},
                                        {"OUTDECODE_SRGB", g.srgbDecode ? "1" : "0"},
@@ -464,7 +661,8 @@ bool buildEncodeCompute(bool pq, unsigned width, unsigned height) {
     const NitsMacros n = nitsMacros();
     std::snprintf(w, sizeof w, "%u", width);
     std::snprintf(h, sizeof h, "%u", height);
-    const D3D_SHADER_MACRO macros[] = {{"OUTDECODE_GAIN", n.linearGain},
+    const D3D_SHADER_MACRO macros[] = {{"EDVR_LIVE_NITS", "1"},
+                                       {"OUTDECODE_GAIN", n.linearGain},
                                        {"OUTDECODE_PQ", pq ? "1" : "0"},
                                        {"GRAPHICS_WHITE_NITS", n.ui},
                                        {"OUTDECODE_SRGB", g.srgbDecode ? "1" : "0"},
@@ -667,13 +865,19 @@ bool encodeInPlace(ID3D11DeviceContext* context) {
     context->CSGetShader(&oldCs, nullptr, nullptr);
     context->CSGetUnorderedAccessViews(0, 1, &oldUav);
     context->GetPredication(&oldPredicate, &oldPredicateValue);
+    ID3D11Buffer* oldCb = nullptr;
+    context->CSGetConstantBuffers(kNitsSlot, 1, &oldCb);
 
     if (oldPredicate) context->SetPredication(nullptr, FALSE);
     context->OMSetRenderTargets(0, nullptr, nullptr);
     ID3D11UnorderedAccessView* uav = g.backUav;
     context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
     context->CSSetShader(g.encodeCs, nullptr, 0);
+    ID3D11Buffer* nits = g.nitsCb;
+    context->CSSetConstantBuffers(kNitsSlot, 1, &nits);
     context->Dispatch((g.backWidth + 7) / 8, (g.backHeight + 7) / 8, 1);
+    context->CSSetConstantBuffers(kNitsSlot, 1, &oldCb);
+    if (oldCb) oldCb->Release();
 
     // Putting slot 0 back also takes our view off it, which has to happen
     // before the backbuffer can be a render target again.
@@ -718,6 +922,8 @@ bool encodeByDraw(ID3D11DeviceContext* context) {
     context->VSGetShader(&oldVs, nullptr, nullptr);
     context->PSGetShaderResources(0, 1, &oldPsSrv);
     context->IAGetPrimitiveTopology(&oldTopology);
+    ID3D11Buffer* oldCb = nullptr;
+    context->PSGetConstantBuffers(kNitsSlot, 1, &oldCb);
 
     context->CopyResource(g.scratch, g.backBuffer);
     ID3D11RenderTargetView* target = g.backRtv;
@@ -733,7 +939,11 @@ bool encodeByDraw(ID3D11DeviceContext* context) {
     context->PSSetShader(g.drawPs, nullptr, 0);
     ID3D11ShaderResourceView* source = g.scratchSrv;
     context->PSSetShaderResources(0, 1, &source);
+    ID3D11Buffer* nits = g.nitsCb;
+    context->PSSetConstantBuffers(kNitsSlot, 1, &nits);
     context->Draw(3, 0);
+    context->PSSetConstantBuffers(kNitsSlot, 1, &oldCb);
+    if (oldCb) oldCb->Release();
 
     // Targets before textures: binding the output may have unbound an
     // aliasing view.
@@ -770,8 +980,10 @@ void hdrOutputStartup() {
     const std::string encode = cfg.getString("advanced.hdr_encode", "pq");
     const bool linear = _stricmp(encode.c_str(), "linear") == 0;
     g.wantPq = !linear;
-    g.cfgScene = cfg.getFloat("advanced.hdr_scene_nits", 0.0f);
-    g.cfgUi = cfg.getFloat("advanced.hdr_ui_nits", 0.0f);
+    g.autoScene = _stricmp(cfg.getString("advanced.hdr_scene_nits", "").c_str(), "auto") == 0;
+    g.autoUi = _stricmp(cfg.getString("advanced.hdr_ui_nits", "").c_str(), "auto") == 0;
+    g.cfgScene = g.autoScene ? 0.0f : cfg.getFloat("advanced.hdr_scene_nits", 0.0f);
+    g.cfgUi = g.autoUi ? 0.0f : cfg.getFloat("advanced.hdr_ui_nits", 0.0f);
     g.cfgPeak = cfg.getFloat("advanced.hdr_peak_nits", 0.0f);
     const std::string gamma = cfg.getString("advanced.hdr_gamma", "srgb");
     g.srgbDecode = _stricmp(gamma.c_str(), "2.2") != 0;
@@ -799,11 +1011,13 @@ void hdrOutputStartup() {
     if (g.on && g.grading && _stricmp(grading.c_str(), "game") != 0)
         Log::get().note("hdr: advanced.hdr_grading \"%s\" is not a value this reads; using game "
                         "(game, off)", grading.c_str());
-    const std::string highlights = cfg.getString("advanced.hdr_highlights", "channel");
-    g.huePreserve = _stricmp(highlights.c_str(), "hue") == 0;
-    if (g.on && !g.huePreserve && _stricmp(highlights.c_str(), "channel") != 0)
+    // hue is the default since 2026-11-16: scaling red, green and blue together keeps a lit surface's colour; channel (RenoDX's
+    // shoulder) shifts hue and saturation with brightness.
+    const std::string highlights = cfg.getString("advanced.hdr_highlights", "hue");
+    g.huePreserve = _stricmp(highlights.c_str(), "channel") != 0;
+    if (g.on && g.huePreserve && _stricmp(highlights.c_str(), "hue") != 0)
         Log::get().note("hdr: advanced.hdr_highlights \"%s\" is not a value this reads; using "
-                        "channel (channel, hue)", highlights.c_str());
+                        "hue (hue, channel)", highlights.c_str());
     if (g.on && g.srgbDecode && _stricmp(gamma.c_str(), "srgb") != 0)
         Log::get().note("hdr: advanced.hdr_gamma \"%s\" is not a value this reads; using srgb "
                         "(srgb, 2.2)", gamma.c_str());
@@ -935,8 +1149,57 @@ void hdrOutputAttach(ID3D11Device* device) {
     // while it loads and a replacement that is not ready by then is a
     // replacement that never happens.
     unsigned outputIndex = 0;
-    const float displayPeak = displayPeakNits(device, &outputIndex);
-    g.nits = hdrrules::resolveNits(g.cfgScene, g.cfgUi, g.cfgPeak, displayPeak);
+    DXGI_COLOR_SPACE_TYPE colorSpace = DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+    bool haveColorSpace = false;
+    const float displayPeak = displayPeakNits(device, &outputIndex, &colorSpace, &haveColorSpace);
+    // The HDR gate (2026-11-16): a display that does not report HDR gets the game as it ships -- nothing widened, no shader
+    // substituted, the swapchain as asked. This runs before the game's first swapchain and texture creates, so standing down here
+    // leaves nothing behind. LIMIT: this is the adapter's first output, not necessarily the one the game's window is on.
+    if (haveColorSpace && colorSpace != DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020) {
+        Log::get().note("hdr: the display (output %u) does not report HDR (colour space %u, not PQ BT.2020; peak %.0f nits): fix.hdr "
+                        "stands down for this session and the game runs as it ships. Under DXMT this means macOS gives the screen no "
+                        "EDR headroom (an SDR display); on Windows, that Windows HDR is off.",
+                        outputIndex, unsigned(colorSpace), displayPeak);
+        g.on = false;
+        g.device = nullptr;
+        return;
+    }
+    if (!haveColorSpace)
+        Log::get().note("hdr: the display's colour space could not be read (no IDXGIOutput6 on output 0); fix.hdr carries on without "
+                        "the HDR check");
+    else
+        Log::get().note("hdr: the display (output %u) reports HDR (PQ BT.2020); this is the adapter's first output, which may not be "
+                        "the one the game's window is on", outputIndex);
+    g.displayPeak = displayPeak;
+    g.cfgGeneration = Config::get().generation();
+    g.baseNits = hdrrules::resolveNits(g.cfgScene, g.cfgUi, g.cfgPeak, displayPeak);
+    g.nits = g.baseNits;
+    if (g.autoScene || g.autoUi) {
+        hdrrules::EdrReading r;
+        const bool dxmt = readEdr(&r);
+        Log::get().note("hdr: auto white (advanced.hdr_%s_nits = auto): the white follows macOS's SDR white live, 100 x potential / "
+                        "current EDR headroom in the game's nits (DXMT presents PQ scaled by current/potential). At attach: %s",
+                        g.autoScene && g.autoUi ? "scene and ui" : g.autoScene ? "scene" : "ui",
+                        !dxmt ? "no DXMT reading (winemetal.dll's WMTGetDisplayDescription); the defaults hold"
+                              : "followed from the first frame (a reader thread, every 50 ms)");
+        if (dxmt) g.nits = hdrrules::applyAutoWhite(g.baseNits, g.autoScene, g.autoUi, r);
+        if (dxmt) startEdrThread();
+        if (dxmt)
+            Log::get().note("hdr: macOS EDR headroom at attach: %.3f now, %.3f potential, %.3f reference", r.current, r.potential,
+                            r.reference);
+    }
+    {
+        D3D11_BUFFER_DESC bd = {};
+        bd.ByteWidth = 16;
+        bd.Usage = D3D11_USAGE_DEFAULT;
+        bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        const float v[4] = {g.nits.scene, g.nits.ui, g.nits.peak, liveFlags()};
+        D3D11_SUBRESOURCE_DATA init = {v, 0, 0};
+        if (FAILED(device->CreateBuffer(&bd, &init, &g.nitsCb))) {
+            g.nitsCb = nullptr;
+            Log::get().note("hdr: the live nits buffer would not create; the nits stay as compiled (auto white cannot move them)");
+        }
+    }
     Log::get().note("hdr: brightness: scene white %.0f nits%s, UI white %.0f nits%s, peak %.0f "
                     "nits (%s; the display reports %.0f on output %u); shadows decoded with %s; "
                     "highlights rolled off %s; the game's display grading %s",
@@ -953,18 +1216,21 @@ void hdrOutputAttach(ID3D11Device* device) {
     const NitsMacros n = nitsMacros();
     const char* hue = g.huePreserve ? "1" : "0";
     const char* grade = g.grading ? "1" : "0";
-    const D3D_SHADER_MACRO bloom[] = {{"PEAK_WHITE_NITS", n.peak},
+    const D3D_SHADER_MACRO bloom[] = {{"EDVR_LIVE_NITS", "1"},
+                                      {"PEAK_WHITE_NITS", n.peak},
                                       {"DIFFUSE_WHITE_NITS", n.scene},
                                       {"HDR_TONE_HUE_PRESERVE", hue},
                                       {"HDR_TONE_GRADING", grade},
                                       {nullptr, nullptr}};
-    const D3D_SHADER_MACRO noBloom[] = {{"HDR_TONE_NO_BLOOM", "1"},
+    const D3D_SHADER_MACRO noBloom[] = {{"EDVR_LIVE_NITS", "1"},
+                                        {"HDR_TONE_NO_BLOOM", "1"},
                                         {"PEAK_WHITE_NITS", n.peak},
                                         {"DIFFUSE_WHITE_NITS", n.scene},
                                         {"HDR_TONE_HUE_PRESERVE", hue},
                                         {"HDR_TONE_GRADING", grade},
                                         {nullptr, nullptr}};
-    const D3D_SHADER_MACRO copyMacros[] = {{"DIFFUSE_WHITE_NITS", n.scene},
+    const D3D_SHADER_MACRO copyMacros[] = {{"EDVR_LIVE_NITS", "1"},
+                                           {"DIFFUSE_WHITE_NITS", n.scene},
                                            {"GRAPHICS_WHITE_NITS", n.ui},
                                            {nullptr, nullptr}};
     ID3DBlob* tone = compileHlsl(kHdrToneReplacementPs, "tone_hdr_ps", "ps_5_0", "m", bloom);
@@ -1126,6 +1392,22 @@ void hdrOutputNoteDraw(ID3D11DeviceContext* ctx) {
     if (ctx) noteToneDraw(ctx);
 }
 
+bool hdrOutputNitsBind(ID3D11DeviceContext* ctx, ID3D11Buffer** saved) {
+    *saved = nullptr;
+    if (!ctx || !g.nitsCb) return false;
+    void* ps = bindingGet(BindSlot::Ps);
+    if (!ps || (ps != g.tonePs && ps != g.toneNoBloomPs && ps != g.copyPs)) return false;
+    ctx->PSGetConstantBuffers(kNitsSlot, 1, saved);
+    ID3D11Buffer* nits = g.nitsCb;
+    ctx->PSSetConstantBuffers(kNitsSlot, 1, &nits);
+    return true;
+}
+
+void hdrOutputNitsRestore(ID3D11DeviceContext* ctx, ID3D11Buffer* saved) {
+    if (ctx) ctx->PSSetConstantBuffers(kNitsSlot, 1, &saved);
+    if (saved) saved->Release();
+}
+
 void hdrOutputBeforePresent(IDXGISwapChain* swapChain, ID3D11DeviceContext* context) {
     if (g.on) reportWideTextures();
     if (!g.on || g.encodeFailed || g.shadersFailed || !swapChain || !context) return;
@@ -1136,6 +1418,9 @@ void hdrOutputBeforePresent(IDXGISwapChain* swapChain, ID3D11DeviceContext* cont
     const bool inPlace = encodeInPlace(context);
     const bool encoded = inPlace || encodeByDraw(context);
     if (runtimeFlatProfile()) flatRuntimeHdrSpanEnd();
+    // After this frame's encode, so a whole frame (tone, copy, encode) uses one white; the next frame starts with the new one.
+    refreshSettings(context);
+    refreshAutoWhite(context);
     if (!encoded) {
         g.encodeFailed = true;
         Log::get().note("hdr: neither output path could run (%ux%u); the frame is presented "
@@ -1157,6 +1442,8 @@ void hdrOutputShutdown() {
     if (g.tonePs) { g.tonePs->Release(); g.tonePs = nullptr; }
     if (g.toneNoBloomPs) { g.toneNoBloomPs->Release(); g.toneNoBloomPs = nullptr; }
     if (g.copyPs) { g.copyPs->Release(); g.copyPs = nullptr; }
+    if (g.nitsCb) { g.nitsCb->Release(); g.nitsCb = nullptr; }
+    g_edrStop.store(true, std::memory_order_relaxed);
     if (g.encodeCs) { g.encodeCs->Release(); g.encodeCs = nullptr; }
     if (g.drawVs) { g.drawVs->Release(); g.drawVs = nullptr; }
     if (g.drawPs) { g.drawPs->Release(); g.drawPs = nullptr; }

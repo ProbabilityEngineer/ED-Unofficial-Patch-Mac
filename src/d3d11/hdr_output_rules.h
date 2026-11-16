@@ -327,5 +327,41 @@ inline HdrNits resolveNits(float iniScene, float iniUi, float iniPeak, float dis
     return n;
 }
 
+// ---- automatic white from macOS EDR (2026-11-16) ----
+// advanced.hdr_scene_nits / hdr_ui_nits = auto: the white follows macOS's SDR white, live, as the brightness slider and the
+// display's ambient adaptation move it. The reading comes from DXMT's winemetal.dll (WMTGetDisplayDescription), which asks the
+// window's NSScreen: current = maximumExtendedDynamicRangeColorComponentValue (the headroom over SDR white now), potential =
+// maximumPotentialExtendedDynamicRangeColorComponentValue (the headroom at the lowest brightness; DXGI's MaxLuminance is this x 100),
+// reference = maximumReferenceExtendedDynamicRangeColorComponentValue (non-zero only in a reference preset).
+struct EdrReading {
+    float current = 0.0f;
+    float potential = 0.0f;
+    float reference = 0.0f;
+};
+
+// A reading the white can follow. macOS reports current = 1 while no EDR content is on screen (the game's first frames, before the
+// layer is tagged), which would read as "SDR white is the panel's peak": that is refused, not followed, when the panel has headroom.
+inline bool edrUsable(const EdrReading& r) {
+    const bool finite = r.current == r.current && r.potential == r.potential && r.current < 1e6f && r.potential < 1e6f;
+    return finite && r.potential > 1.0f && r.potential <= 64.0f && r.current > 1.0f && r.current <= r.potential * 1.01f;
+}
+
+// The game's nits that land on macOS's SDR white. DXMT presents a PQ swapchain by decoding to nits, scaling by current/potential and
+// encoding again (dxmt_presenter.cpp edr_scale, dxmt_command.metal fs_present_quad); macOS then shows PQ 100 nits at EDR 1.0, its
+// SDR white (the step this does not read from source: the white-match test checks it). So SDR white = 100 x potential / current in
+// the game's nits, and the brightest the panel shows is 100 x potential, at every brightness.
+inline float edrSdrWhiteNits(const EdrReading& r) { return 100.0f * r.potential / r.current; }
+
+// The configured nits with auto whites put in. base is resolveNits' result (its scene/ui are the fallbacks while no usable reading
+// exists); the peak keeps resolveNits' room-above-white rule.
+inline HdrNits applyAutoWhite(HdrNits base, bool autoScene, bool autoUi, const EdrReading& r) {
+    if ((!autoScene && !autoUi) || !edrUsable(r)) return base;
+    const float white = clampNits(edrSdrWhiteNits(r), kMinWhiteNits, kMaxWhiteNits);
+    if (autoScene) base.scene = white;
+    if (autoUi) base.ui = white;
+    if (base.peak < base.scene * kMinPeakOverScene) base.peak = base.scene * kMinPeakOverScene;
+    return base;
+}
+
 }  // namespace hdrrules
 }  // namespace edvr

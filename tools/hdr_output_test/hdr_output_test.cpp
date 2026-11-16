@@ -9,6 +9,7 @@
 #include "hdr_shader_tests.h"
 #endif
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
@@ -244,6 +245,46 @@ void theBrightnessRule() {
           "out-of-range values clamp to the documented bounds");
 }
 
+// advanced.hdr_*_nits = auto: the white from macOS EDR (DXMT's winemetal reading).
+void theAutoWhite() {
+    rules::EdrReading full;   // an XDR display at full brightness, SDR white 600 of its 1600
+    full.current = 1600.0f / 600.0f;
+    full.potential = 16.0f;
+    check(rules::edrUsable(full), "an XDR reading at full brightness is usable");
+    check(std::fabs(rules::edrSdrWhiteNits(full) - 600.0f) < 0.01f, "SDR white = 100 x potential / current (600 nits)");
+    rules::EdrReading dim = full;
+    dim.current = 1600.0f / 150.0f;
+    check(std::fabs(rules::edrSdrWhiteNits(dim) - 150.0f) < 0.01f, "a lower brightness lowers the white (150 nits)");
+    rules::EdrReading idle = full;
+    idle.current = 1.0f;   // macOS before any EDR content is shown
+    check(!rules::edrUsable(idle), "current = 1 (no EDR on screen yet) is refused, not read as a 1600-nit white");
+    rules::EdrReading sdr;   // a display with no headroom
+    sdr.current = 1.0f;
+    sdr.potential = 1.0f;
+    check(!rules::edrUsable(sdr), "an SDR display gives no auto white");
+    rules::EdrReading over = full;
+    over.current = 40.0f;
+    check(!rules::edrUsable(over), "current above potential is refused");
+    rules::EdrReading nan = full;
+    nan.current = std::nanf("");
+    check(!rules::edrUsable(nan), "NaN is refused");
+
+    const auto base = rules::resolveNits(0, 0, 0, 1600);
+    const auto same = rules::applyAutoWhite(base, false, false, full);
+    check(same.scene == base.scene && same.ui == base.ui && same.peak == base.peak, "no auto key leaves the nits alone");
+    const auto both = rules::applyAutoWhite(base, true, true, full);
+    check(std::fabs(both.scene - 600.0f) < 0.01f && std::fabs(both.ui - 600.0f) < 0.01f && both.peak == 1600.0f,
+          "auto scene and UI white follow SDR white; the peak stays the display's");
+    const auto uiOnly = rules::applyAutoWhite(base, false, true, dim);
+    check(uiOnly.scene == base.scene && std::fabs(uiOnly.ui - 150.0f) < 0.01f, "auto UI white alone moves only the UI white");
+    const auto fallback = rules::applyAutoWhite(base, true, true, idle);
+    check(fallback.scene == base.scene && fallback.ui == base.ui, "an unusable reading keeps the fallback whites");
+    rules::EdrReading glare = full;
+    glare.current = 1.05f;   // SDR white 1524: the peak keeps room above it
+    const auto bright = rules::applyAutoWhite(base, true, true, glare);
+    check(bright.peak >= bright.scene * rules::kMinPeakOverScene, "a white near the peak keeps the shoulder's room");
+}
+
 // advanced.hdr_widen: "all" or a candidate list. A list that parses to
 // nothing widens nothing, which is why the flat gate must name the key.
 void theWidenList() {
@@ -386,6 +427,7 @@ int main(int argc, char** argv) {
     theFlatProfileReadsTheHdrKeys();
     theBrightnessRule();
     theWidenList();
+    theAutoWhite();
     theShaderLiteralsFitMsvc();
     theLearnedToneTarget();
     shaderIdentities();
