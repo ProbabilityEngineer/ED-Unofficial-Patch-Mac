@@ -20,6 +20,13 @@ The brightness is now configurable under `[advanced]`, resolved by
 - `hdr_peak_nits`: unset means DXGI `MaxLuminance`. DXMT reports that as
   potential headroom x 100, which is 1600 on this panel; other panels report
   their own.
+- 2026-11-16: `hdr_scene_nits` / `hdr_ui_nits` accept `auto`: the white follows
+  macOS's SDR white live, read from DXMT's `winemetal.dll`
+  (`WMTGetDisplayDescription`: current, potential and reference EDR headroom).
+  DXMT presents PQ scaled by current/potential headroom, so SDR white in the
+  game's nits is 100 x potential / current. The shaders read the nits from a
+  constant buffer at b13 (`edvrHdrNits`), bound for EDVR's own tone, copy and
+  output draws; unbound, they fall back to the values compiled in.
 
 "Format 10" in the log is `R16G16B16A16_FLOAT`, not 10-bit. The backbuffer
 holds PQ code values in FP16 because the game's interface is drawn after the
@@ -73,6 +80,8 @@ blown out with chrome paint and crushed with black under every DXMT build and
 under D3DMetal without EDVR, so they are the game's. The window popping and
 the darker hangar come from `fix.optimized_stations`. HUD colours match
 D3DMetal in SDR. Orange too red in HDR came from `hdr_highlights = hue`.
+2026-11-16: `hue` is now the default. Rechecked at a station with auto white:
+the available colours look right, not too red.
 
 Widening census (removed 2026-11-11): a diagnostic in `4249f715` logged, per
 widened target, the shaders that wrote it (RTV 0, CS UAV 0-3) and read it
