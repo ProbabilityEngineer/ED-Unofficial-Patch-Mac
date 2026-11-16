@@ -140,6 +140,8 @@ struct State {
     hdrrules::EdrReading edr;
     bool edrEverUsable = false;
     ULONGLONG nextNitsNote = 0;
+    float displayPeak = 0.0f;    // DXGI MaxLuminance at attach, for resolveNits on a live change
+    uint32_t cfgGeneration = 0;  // the config generation the live settings were last read at
     float notedScene = 0.0f, notedUi = 0.0f;
     bool edrAbsentNoted = false, edrUnusableNoted = false;
 };
@@ -475,11 +477,54 @@ NitsMacros nitsMacros() {
     return m;
 }
 
-// Upload g.nits to the live buffer (a no-op before it exists).
+// edvrNits.w: 1 + 2 x hue-preserving highlights + 4 x the game's grading (hdr_output_shaders.h; 0 would mean "as compiled").
+float liveFlags() { return 1.0f + (g.huePreserve ? 2.0f : 0.0f) + (g.grading ? 4.0f : 0.0f); }
+
+// Upload g.nits and the switches to the live buffer (a no-op before it exists).
 void uploadNits(ID3D11DeviceContext* context) {
     if (!g.nitsCb || !context) return;
-    const float v[4] = {g.nits.scene, g.nits.ui, g.nits.peak, 0.0f};
+    const float v[4] = {g.nits.scene, g.nits.ui, g.nits.peak, liveFlags()};
     context->UpdateSubresource(g.nitsCb, 0, nullptr, v, 0, 0);
+}
+
+// The live settings (2026-11-16): advanced.hdr_scene_nits, hdr_ui_nits, hdr_peak_nits, hdr_highlights and hdr_grading are read
+// again whenever the config changes (the ini is re-read when its file changes), so an A/B comparison needs no restart. fix.hdr,
+// hdr_encode, hdr_gamma and hdr_widen still take a restart (the swapchain, the transform's domain and the textures are settled early).
+void refreshSettings(ID3D11DeviceContext* context) {
+    const Config& cfg = Config::get();
+    const uint32_t gen = cfg.generation();
+    if (gen == g.cfgGeneration) return;
+    g.cfgGeneration = gen;
+    const bool autoScene = _stricmp(cfg.getString("advanced.hdr_scene_nits", "").c_str(), "auto") == 0;
+    const bool autoUi = _stricmp(cfg.getString("advanced.hdr_ui_nits", "").c_str(), "auto") == 0;
+    const float scene = autoScene ? 0.0f : cfg.getFloat("advanced.hdr_scene_nits", 0.0f);
+    const float ui = autoUi ? 0.0f : cfg.getFloat("advanced.hdr_ui_nits", 0.0f);
+    const float peak = cfg.getFloat("advanced.hdr_peak_nits", 0.0f);
+    const bool hue = _stricmp(cfg.getString("advanced.hdr_highlights", "channel").c_str(), "hue") == 0;
+    const bool grading = _stricmp(cfg.getString("advanced.hdr_grading", "game").c_str(), "off") != 0;
+    if (autoScene == g.autoScene && autoUi == g.autoUi && scene == g.cfgScene && ui == g.cfgUi && peak == g.cfgPeak &&
+        hue == g.huePreserve && grading == g.grading)
+        return;
+    g.autoScene = autoScene;
+    g.autoUi = autoUi;
+    g.cfgScene = scene;
+    g.cfgUi = ui;
+    g.cfgPeak = peak;
+    g.huePreserve = hue;
+    g.grading = grading;
+    g.baseNits = hdrrules::resolveNits(scene, ui, peak, g.displayPeak);
+    g.nits = hdrrules::applyAutoWhite(g.baseNits, autoScene, autoUi, g.edr);
+    if (autoScene || autoUi) {
+        hdrrules::EdrReading probe;
+        if (readEdr(&probe)) startEdrThread();
+    }
+    g.notedScene = g.nits.scene;
+    g.notedUi = g.nits.ui;
+    uploadNits(context);
+    Log::get().note("hdr: settings changed (live): scene white %.1f%s, UI white %.1f%s, peak %.0f nits; highlights rolled off %s; "
+                    "the game's display grading %s",
+                    g.nits.scene, autoScene ? " (auto)" : "", g.nits.ui, autoUi ? " (auto)" : "", g.nits.peak,
+                    hue ? "preserving hue" : "per channel", grading ? "applied" : "off");
 }
 
 // The auto whites, from the EDR thread's latest reading, checked every frame. Logs a change of 1% or more, at most every 2 s, and says once
@@ -533,8 +578,11 @@ void refreshAutoWhite(ID3D11DeviceContext* context) {
 // The display's peak luminance as DXGI reports it (DXMT: the panel's potential
 // EDR headroom x 100), from the device's adapter's first output. 0 when any
 // step fails; resolveNits then falls back.
-float displayPeakNits(ID3D11Device* device, unsigned* outputIndex) {
+// colorSpace / haveColorSpace (2026-11-16): the output's colour space, for the HDR gate. DXMT reports G2084 (PQ BT.2020) only when
+// macOS gives the screen EDR headroom (dxgi_output.cpp: potential > 1); Windows reports it while its HDR switch is on.
+float displayPeakNits(ID3D11Device* device, unsigned* outputIndex, DXGI_COLOR_SPACE_TYPE* colorSpace, bool* haveColorSpace) {
     *outputIndex = 0;
+    *haveColorSpace = false;
     float peak = 0.0f;
     IDXGIDevice* dxgiDevice = nullptr;
     IDXGIAdapter* adapter = nullptr;
@@ -547,7 +595,11 @@ float displayPeakNits(ID3D11Device* device, unsigned* outputIndex) {
         SUCCEEDED(output->QueryInterface(__uuidof(IDXGIOutput6),
                                          reinterpret_cast<void**>(&output6)))) {
         DXGI_OUTPUT_DESC1 desc = {};
-        if (SUCCEEDED(output6->GetDesc1(&desc))) peak = desc.MaxLuminance;
+        if (SUCCEEDED(output6->GetDesc1(&desc))) {
+            peak = desc.MaxLuminance;
+            *colorSpace = desc.ColorSpace;
+            *haveColorSpace = true;
+        }
     }
     if (output6) output6->Release();
     if (output) output->Release();
@@ -1095,7 +1147,29 @@ void hdrOutputAttach(ID3D11Device* device) {
     // while it loads and a replacement that is not ready by then is a
     // replacement that never happens.
     unsigned outputIndex = 0;
-    const float displayPeak = displayPeakNits(device, &outputIndex);
+    DXGI_COLOR_SPACE_TYPE colorSpace = DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+    bool haveColorSpace = false;
+    const float displayPeak = displayPeakNits(device, &outputIndex, &colorSpace, &haveColorSpace);
+    // The HDR gate (2026-11-16): a display that does not report HDR gets the game as it ships -- nothing widened, no shader
+    // substituted, the swapchain as asked. This runs before the game's first swapchain and texture creates, so standing down here
+    // leaves nothing behind. LIMIT: this is the adapter's first output, not necessarily the one the game's window is on.
+    if (haveColorSpace && colorSpace != DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020) {
+        Log::get().note("hdr: the display (output %u) does not report HDR (colour space %u, not PQ BT.2020; peak %.0f nits): fix.hdr "
+                        "stands down for this session and the game runs as it ships. Under DXMT this means macOS gives the screen no "
+                        "EDR headroom (an SDR display); on Windows, that Windows HDR is off.",
+                        outputIndex, unsigned(colorSpace), displayPeak);
+        g.on = false;
+        g.device = nullptr;
+        return;
+    }
+    if (!haveColorSpace)
+        Log::get().note("hdr: the display's colour space could not be read (no IDXGIOutput6 on output 0); fix.hdr carries on without "
+                        "the HDR check");
+    else
+        Log::get().note("hdr: the display (output %u) reports HDR (PQ BT.2020); this is the adapter's first output, which may not be "
+                        "the one the game's window is on", outputIndex);
+    g.displayPeak = displayPeak;
+    g.cfgGeneration = Config::get().generation();
     g.baseNits = hdrrules::resolveNits(g.cfgScene, g.cfgUi, g.cfgPeak, displayPeak);
     g.nits = g.baseNits;
     if (g.autoScene || g.autoUi) {
@@ -1117,7 +1191,7 @@ void hdrOutputAttach(ID3D11Device* device) {
         bd.ByteWidth = 16;
         bd.Usage = D3D11_USAGE_DEFAULT;
         bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-        const float v[4] = {g.nits.scene, g.nits.ui, g.nits.peak, 0.0f};
+        const float v[4] = {g.nits.scene, g.nits.ui, g.nits.peak, liveFlags()};
         D3D11_SUBRESOURCE_DATA init = {v, 0, 0};
         if (FAILED(device->CreateBuffer(&bd, &init, &g.nitsCb))) {
             g.nitsCb = nullptr;
@@ -1343,6 +1417,7 @@ void hdrOutputBeforePresent(IDXGISwapChain* swapChain, ID3D11DeviceContext* cont
     const bool encoded = inPlace || encodeByDraw(context);
     if (runtimeFlatProfile()) flatRuntimeHdrSpanEnd();
     // After this frame's encode, so a whole frame (tone, copy, encode) uses one white; the next frame starts with the new one.
+    refreshSettings(context);
     refreshAutoWhite(context);
     if (!encoded) {
         g.encodeFailed = true;

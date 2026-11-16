@@ -158,7 +158,7 @@ SamplerState      s1 : register(s1);
 #ifndef HDR_TONE_GRADING
 #define HDR_TONE_GRADING 1
 #endif
-#if HDR_TONE_GRADING
+#if HDR_TONE_GRADING || defined(EDVR_LIVE_NITS)
 Texture3D<float4> t0 : register(t0);
 SamplerState      s0 : register(s0);
 #endif
@@ -282,7 +282,7 @@ float3 anchoredShoulder(float3 color, float peak, float anchor, float strength) 
     return mad(shoulder_range, dist / denom, color - dist);
 }
 
-#if HDR_TONE_GRADING
+#if HDR_TONE_GRADING || defined(EDVR_LIVE_NITS)
 float3 signPow(float3 x, float e) { return sign(x) * pow(abs(x), e); }
 
 // RenoDX ApplyLUT for Vanilla+: compress the brightest channel to 1.0 with the
@@ -337,18 +337,29 @@ float4 m(float3 v0 : TEXCOORD1) : SV_Target {
 
     // ---- RenoDX display transform, keeping its gamma encode ----
     float3 y = vanillaPlus(sceneLin);
-#if HDR_TONE_GRADING
-    y = max(signPow(gameGrading(signPow(y, 1.0 / DISPLAY_GAMMA)), DISPLAY_GAMMA), 0.0);
-#endif
-#if HDR_TONE_HUE_PRESERVE
-    // Below ANCHOR the shoulder is the identity, so only highlights change.
-    float peakChannel = max(max(y.r, y.g), y.b);
-    float shoulderedPeak = anchoredShoulder(peakChannel.xxx, PEAK_RATIO, ANCHOR,
-                                            SHOULDER_COMPRESSION).x;
-    y *= (peakChannel > ANCHOR) ? shoulderedPeak / peakChannel : 1.0;
+#ifdef EDVR_LIVE_NITS
+    // edvrNits.w (2026-11-16): 0 (unbound) = the switches compiled in; otherwise 1 + 2 x hue + 4 x grading, from
+    // advanced.hdr_highlights and advanced.hdr_grading, live. Uniform across the draw, so the branches cost nothing per pixel.
+    const uint liveFlags = (uint)(edvrNits.w + 0.5);
+    const bool doGrading = liveFlags != 0 ? (liveFlags & 4) != 0 : HDR_TONE_GRADING != 0;
+    const bool doHue = liveFlags != 0 ? (liveFlags & 2) != 0 : HDR_TONE_HUE_PRESERVE != 0;
 #else
-    y = anchoredShoulder(y, PEAK_RATIO, ANCHOR, SHOULDER_COMPRESSION);
+    const bool doGrading = HDR_TONE_GRADING != 0;
+    const bool doHue = HDR_TONE_HUE_PRESERVE != 0;
 #endif
+#if HDR_TONE_GRADING || defined(EDVR_LIVE_NITS)
+    if (doGrading)
+        y = max(signPow(gameGrading(signPow(y, 1.0 / DISPLAY_GAMMA)), DISPLAY_GAMMA), 0.0);
+#endif
+    if (doHue) {
+        // Below ANCHOR the shoulder is the identity, so only highlights change.
+        float peakChannel = max(max(y.r, y.g), y.b);
+        float shoulderedPeak = anchoredShoulder(peakChannel.xxx, PEAK_RATIO, ANCHOR,
+                                                SHOULDER_COMPRESSION).x;
+        y *= (peakChannel > ANCHOR) ? shoulderedPeak / peakChannel : 1.0;
+    } else {
+        y = anchoredShoulder(y, PEAK_RATIO, ANCHOR, SHOULDER_COMPRESSION);
+    }
 
     y *= cb2[10].x;                                      // token 712, output scale
 
