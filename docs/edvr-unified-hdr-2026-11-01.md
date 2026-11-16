@@ -80,6 +80,8 @@ blown out with chrome paint and crushed with black under every DXMT build and
 under D3DMetal without EDVR, so they are the game's. The window popping and
 the darker hangar come from `fix.optimized_stations`. HUD colours match
 D3DMetal in SDR. Orange too red in HDR came from `hdr_highlights = hue`.
+2026-11-16: `hue` is now the default. Rechecked at a station with auto white:
+the available colours look right, not too red.
 
 Widening census (removed 2026-11-11): a diagnostic in `4249f715` logged, per
 widened target, the shaders that wrote it (RTV 0, CS UAV 0-3) and read it
