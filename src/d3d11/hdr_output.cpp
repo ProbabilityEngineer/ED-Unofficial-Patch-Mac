@@ -139,7 +139,7 @@ struct State {
     ID3D11Buffer* nitsCb = nullptr;
     hdrrules::EdrReading edr;
     bool edrEverUsable = false;
-    ULONGLONG nextEdrPoll = 0, nextNitsNote = 0;
+    ULONGLONG nextNitsNote = 0;
     float notedScene = 0.0f, notedUi = 0.0f;
     bool edrAbsentNoted = false, edrUnusableNoted = false;
 };
@@ -147,6 +147,9 @@ struct State {
 State g;
 
 // ---- macOS EDR, from DXMT's winemetal.dll ---------------------------------
+// The read costs ~0.9 ms (flight 2026-11-16: DXMT builds a ColorSync profile per call), so it runs on its own thread every 50 ms
+// and the render thread only loads the latest reading. A reading taken as macOS ramps the headroom up at first is still right: DXMT
+// scales by the headroom of the moment too, so the white tracks it (the 1.2 at attach, a 1333-nit white, showed as 600 nits).
 // The two exports (DXMT src/winemetal/winemetal.h, unchanged since ecc799fa 2025-05-27). The description is read into a larger,
 // zeroed buffer so a future DXMT that grows the struct cannot write past it.
 struct WmtDisplayDescription {
@@ -159,7 +162,7 @@ struct WmtDisplayDescription {
 using PfnWmtPrimaryDisplay = uint32_t(__cdecl*)();
 using PfnWmtDisplayDescription = void(__cdecl*)(uint32_t, WmtDisplayDescription*);
 
-// false when this is not DXMT (Windows, or a DXMT without the exports).
+// false when this is not DXMT (Windows, or a DXMT without the exports). Called from the EDR thread, and once at attach before it.
 bool readEdr(hdrrules::EdrReading* out) {
     static PfnWmtPrimaryDisplay primary = nullptr;
     static PfnWmtDisplayDescription describe = nullptr;
@@ -178,6 +181,43 @@ bool readEdr(hdrrules::EdrReading* out) {
     out->potential = d.maximumPotentialEdr;
     out->reference = d.maximumReferenceEdr;
     return true;
+}
+
+std::atomic<float> g_edrCurrent{0.0f}, g_edrPotential{0.0f}, g_edrReference{0.0f};
+std::atomic<int> g_edrState{0};   // 0 not started, 1 reading, 2 no DXMT
+std::atomic<bool> g_edrStop{false};
+
+// Detached: the graphics module stays mapped for the life of the process (it is pinned), and a join from shutdown could run under
+// the loader lock. g_edrStop ends it.
+DWORD WINAPI edrThread(void*) {
+    double totalUs = 0.0;
+    unsigned count = 0;
+    LARGE_INTEGER f;
+    QueryPerformanceFrequency(&f);
+    while (!g_edrStop.load(std::memory_order_relaxed)) {
+        hdrrules::EdrReading r;
+        LARGE_INTEGER t0, t1;
+        QueryPerformanceCounter(&t0);
+        if (!readEdr(&r)) { g_edrState.store(2, std::memory_order_relaxed); return 0; }
+        QueryPerformanceCounter(&t1);
+        g_edrCurrent.store(r.current, std::memory_order_relaxed);
+        g_edrPotential.store(r.potential, std::memory_order_relaxed);
+        g_edrReference.store(r.reference, std::memory_order_relaxed);
+        g_edrState.store(1, std::memory_order_release);
+        totalUs += 1e6 * double(t1.QuadPart - t0.QuadPart) / double(f.QuadPart);
+        if (++count == 200)
+            Log::get().note("hdr: auto white: the EDR read costs %.1f us on average, on its own thread every 50 ms", totalUs / count);
+        Sleep(50);
+    }
+    return 0;
+}
+
+void startEdrThread() {
+    static bool started = false;
+    if (started) return;
+    started = true;
+    if (HANDLE h = CreateThread(nullptr, 0, edrThread, nullptr, 0, nullptr)) CloseHandle(h);
+    else Log::get().note("hdr: auto white: the EDR reader thread would not start; the defaults hold");
 }
 
 // ---- widened-texture accounting ------------------------------------------
@@ -442,15 +482,20 @@ void uploadNits(ID3D11DeviceContext* context) {
     context->UpdateSubresource(g.nitsCb, 0, nullptr, v, 0, 0);
 }
 
-// The auto whites, from a fresh EDR reading at most every 250 ms. Logs a change of 1% or more, at most every 2 s, and says once
+// The auto whites, from the EDR thread's latest reading, checked every frame. Logs a change of 1% or more, at most every 2 s, and says once
 // why auto cannot follow (no DXMT, no usable reading yet).
 void refreshAutoWhite(ID3D11DeviceContext* context) {
     if (!g.autoScene && !g.autoUi) return;
+    const int state = g_edrState.load(std::memory_order_acquire);
+    if (state == 0) return;
     const ULONGLONG now = GetTickCount64();
-    if (now < g.nextEdrPoll) return;
-    g.nextEdrPoll = now + 250;
     hdrrules::EdrReading r;
-    if (!readEdr(&r)) {
+    r.current = g_edrCurrent.load(std::memory_order_relaxed);
+    r.potential = g_edrPotential.load(std::memory_order_relaxed);
+    r.reference = g_edrReference.load(std::memory_order_relaxed);
+    if (r.current == g.edr.current && r.potential == g.edr.potential && state == 1) return;
+    const bool read = state == 1;
+    if (!read) {
         if (!g.edrAbsentNoted) {
             g.edrAbsentNoted = true;
             Log::get().note("hdr: auto white: DXMT's winemetal.dll (WMTGetDisplayDescription) is not here, so there is no macOS SDR "
@@ -1056,12 +1101,13 @@ void hdrOutputAttach(ID3D11Device* device) {
     if (g.autoScene || g.autoUi) {
         hdrrules::EdrReading r;
         const bool dxmt = readEdr(&r);
-        if (dxmt) g.nits = hdrrules::applyAutoWhite(g.baseNits, g.autoScene, g.autoUi, r);
         Log::get().note("hdr: auto white (advanced.hdr_%s_nits = auto): the white follows macOS's SDR white live, 100 x potential / "
                         "current EDR headroom in the game's nits (DXMT presents PQ scaled by current/potential). At attach: %s",
                         g.autoScene && g.autoUi ? "scene and ui" : g.autoScene ? "scene" : "ui",
                         !dxmt ? "no DXMT reading (winemetal.dll's WMTGetDisplayDescription); the defaults hold"
-                        : hdrrules::edrUsable(r) ? "a usable reading" : "no usable reading yet; the defaults hold until there is one");
+                              : "followed from the first frame (a reader thread, every 50 ms)");
+        if (dxmt) g.nits = hdrrules::applyAutoWhite(g.baseNits, g.autoScene, g.autoUi, r);
+        if (dxmt) startEdrThread();
         if (dxmt)
             Log::get().note("hdr: macOS EDR headroom at attach: %.3f now, %.3f potential, %.3f reference", r.current, r.potential,
                             r.reference);
@@ -1291,12 +1337,13 @@ void hdrOutputBeforePresent(IDXGISwapChain* swapChain, ID3D11DeviceContext* cont
     if (!g.on || g.encodeFailed || g.shadersFailed || !swapChain || !context) return;
     prepareDomain(swapChain);
     if (!ensureBackBuffer(swapChain) || !g.backWidth || !g.backHeight) return;
-    refreshAutoWhite(context);
     // Timed for the flat census (flat_cpu.h "GPU hdr output"); a no-op off the flat runtime's owner thread.
     if (runtimeFlatProfile()) flatRuntimeHdrSpanBegin();
     const bool inPlace = encodeInPlace(context);
     const bool encoded = inPlace || encodeByDraw(context);
     if (runtimeFlatProfile()) flatRuntimeHdrSpanEnd();
+    // After this frame's encode, so a whole frame (tone, copy, encode) uses one white; the next frame starts with the new one.
+    refreshAutoWhite(context);
     if (!encoded) {
         g.encodeFailed = true;
         Log::get().note("hdr: neither output path could run (%ux%u); the frame is presented "
@@ -1319,6 +1366,7 @@ void hdrOutputShutdown() {
     if (g.toneNoBloomPs) { g.toneNoBloomPs->Release(); g.toneNoBloomPs = nullptr; }
     if (g.copyPs) { g.copyPs->Release(); g.copyPs = nullptr; }
     if (g.nitsCb) { g.nitsCb->Release(); g.nitsCb = nullptr; }
+    g_edrStop.store(true, std::memory_order_relaxed);
     if (g.encodeCs) { g.encodeCs->Release(); g.encodeCs = nullptr; }
     if (g.drawVs) { g.drawVs->Release(); g.drawVs = nullptr; }
     if (g.drawPs) { g.drawPs->Release(); g.drawPs = nullptr; }
