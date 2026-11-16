@@ -1,6 +1,7 @@
 #pragma once
 // visual.star_light_colour's rules (flat_star_light.h): pure, no Windows API, so a rig can drive them.
 #include <cmath>
+#include <cstdint>
 
 namespace edvr { namespace starlight {
 
@@ -77,6 +78,72 @@ inline float misfit(const float light[3], const float tint[3]) {
     float e = 0.f;
     for (int k = 0; k < 3; ++k) { const float r = dc[k] - f * dw[k]; e += r * r; }
     return std::sqrt(e);
+}
+
+// ---- Option 1 (2026-11-16): about the same amount of visible colour from every star at one setting. ----
+// The owner's preferences in one evening: about 65% for a K star, about 55% for Taygeta (B). Measured as Oklab chroma (a perceptual
+// colour space) a full B tint is 1.7 times as colourful as a full K tint, yet the preferred B amount was only a little less: a partial
+// equalisation, strength * (reference chroma / the tint's chroma)^0.3, fits both, with the K tint as the reference (K stars take the setting
+// as it is; the bluest and reddest stars a little less, the pale F and A stars more, capped at the full tint). A first fit to two points.
+constexpr float kChromaRef = 0.116f;        // the K tint's Oklab chroma (mixed toward kWhite at the white's luminance)
+constexpr float kChromaPower = 0.3f;
+
+inline float oklabChroma(const float c[3]) {
+    const float l = 0.4122214708f * c[0] + 0.5363325363f * c[1] + 0.0514459929f * c[2];
+    const float m = 0.2119034982f * c[0] + 0.6806995451f * c[1] + 0.1073969566f * c[2];
+    const float s = 0.0883024619f * c[0] + 0.2817188376f * c[1] + 0.6299787005f * c[2];
+    const float l3 = std::cbrt(std::fmax(l, 0.f)), m3 = std::cbrt(std::fmax(m, 0.f)), s3 = std::cbrt(std::fmax(s, 0.f));
+    const float a = 1.9779984951f * l3 - 2.4285922050f * m3 + 0.4505937099f * s3;
+    const float b = 0.0259040371f * l3 + 0.7827717662f * m3 - 0.8086757660f * s3;
+    return std::sqrt(a * a + b * b);
+}
+
+// The tint's own chroma: the tint at the white's luminance.
+inline float tintChroma(const float tint[3]) {
+    const float tl = luminance(tint), wl = luminance(kWhite);
+    if (!(tl > 0.f)) return 0.f;
+    const float c[3] = {tint[0] * wl / tl, tint[1] * wl / tl, tint[2] * wl / tl};
+    return oklabChroma(c);
+}
+
+// The setting (0..1) as the strength apply() takes for this tint.
+inline float equalStrength(const float tint[3], float setting) {
+    if (!(setting > 0.f)) return 0.f;
+    const float c = tintChroma(tint);
+    if (!(c > 1e-4f)) return std::fmin(setting, 1.f);
+    return std::fmin(setting * std::pow(kChromaRef / c, kChromaPower), 1.f);
+}
+
+// ---- DXGI_FORMAT_R11G11B10_FLOAT, for the ring dust's ambient cube (flat_star_light.h). No sign; 5-bit exponent, bias 15. ----
+inline float decodeSmallFloat(uint32_t v, int mantBits) {
+    const uint32_t e = (v >> mantBits) & 0x1Fu, m = v & ((1u << mantBits) - 1u);
+    if (e == 0) return std::ldexp(static_cast<float>(m), -14 - mantBits);
+    if (e == 31) return m ? 0.f : 65000.f;   // NaN reads as 0, infinity as large
+    return std::ldexp(static_cast<float>(m | (1u << mantBits)), static_cast<int>(e) - 15 - mantBits);
+}
+inline uint32_t encodeSmallFloat(float f, int mantBits) {
+    if (!(f > 0.f)) return 0u;                                  // negatives and NaN to 0
+    const float maxV = std::ldexp(static_cast<float>((2u << mantBits) - 1u), 15 - mantBits);   // largest finite
+    if (f >= maxV) return (30u << mantBits) | ((1u << mantBits) - 1u);
+    int e = 0;
+    const float fr = std::frexp(f, &e);                          // f = fr * 2^e, fr in [0.5, 1)
+    int be = e - 1 + 15;                                         // biased exponent of 1.xxx * 2^(e-1)
+    if (be <= 0) {                                               // denormal
+        const uint32_t m = static_cast<uint32_t>(std::lround(std::ldexp(f, 14 + mantBits)));
+        return m >= (1u << mantBits) ? (1u << mantBits) : m;   // rounding up to the smallest normal
+    }
+    uint32_t m = static_cast<uint32_t>(std::lround((fr * 2.f - 1.f) * static_cast<float>(1u << mantBits)));
+    if (m >= (1u << mantBits)) { m = 0; ++be; }
+    if (be >= 31) return (30u << mantBits) | ((1u << mantBits) - 1u);
+    return (static_cast<uint32_t>(be) << mantBits) | m;
+}
+inline void decodeR11G11B10(uint32_t p, float out[3]) {
+    out[0] = decodeSmallFloat(p & 0x7FFu, 6);
+    out[1] = decodeSmallFloat((p >> 11) & 0x7FFu, 6);
+    out[2] = decodeSmallFloat((p >> 22) & 0x3FFu, 5);
+}
+inline uint32_t encodeR11G11B10(const float c[3]) {
+    return encodeSmallFloat(c[0], 6) | (encodeSmallFloat(c[1], 6) << 11) | (encodeSmallFloat(c[2], 5) << 22);
 }
 
 }}  // namespace edvr::starlight

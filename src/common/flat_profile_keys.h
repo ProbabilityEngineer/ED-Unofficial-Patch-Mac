@@ -18,6 +18,9 @@ inline bool flatProfileReadsKey(const char* key) {
         std::strcmp(key, "diag.flat_origin_capture") == 0 ||
         // TEMPORARY (flat_star_light_diag.h): the star-light colour samples.
         std::strcmp(key, "diag.star_light_log") == 0 ||
+        // TEMPORARY (flat_star_light_diag.h): the haze hunt.
+        std::strcmp(key, "diag.haze_hunt") == 0 ||
+        std::strcmp(key, "diag.haze_probe") == 0 ||
         // The sun's light in the star's colour far from the star too (flat_star_light.h). A Visual tab row.
         std::strcmp(key, "visual.star_light_colour") == 0 ||
         // The refusal view (flat_runtime.cpp): paints the prep's per-pixel class over the resolved image. A flat panel row on the Debug tab.
