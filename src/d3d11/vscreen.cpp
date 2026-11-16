@@ -5575,6 +5575,9 @@ void STDMETHODCALLTYPE hookedDraw(ID3D11DeviceContext* self, UINT count, UINT st
         FlatStationSunGate sun(self, flatDraw, stationSkip);   // built 2026-10-21: only a skipped sun draw is changed (no real call, or a masked one)
         {
             FlatParticleScope particle(self, 'D', count, 1);
+            // visual.star_light_colour (flat_star_light.h): the ring dust's light, for its two draws only; one relaxed load while off.
+            const bool hazeArmed = starLightLive() && self == g_state->ownerCtx;
+            StarLightHazeScope haze(self, hazeArmed, hazeArmed ? bindingShaderHash(BindSlot::Vs) : 0, hazeArmed ? bindingShaderHash(BindSlot::Ps) : 0);
             ConcoursePaneScope pane(self, count, start, 0, 'D', kConcoursePaneCalls);   // TEMPORARY (concourse_pane.h): the outside's non-indexed draws (beams, flares, the scatter) are withheld here; no mirror, the glass is indexed
             if (sun.issues() && !pane.withheld()) g_state->realDraw(self, count, start);
         }
@@ -5680,6 +5683,9 @@ void STDMETHODCALLTYPE hookedDrawIndexed(ID3D11DeviceContext* self, UINT count,
         FlatStationSunGate sun(self, flatDraw, stationSkip);
         {
             FlatParticleScope particle(self, 'I', count, 1);
+            // visual.star_light_colour (flat_star_light.h): the ring dust's light, for its two draws only; one relaxed load while off.
+            const bool hazeArmed = starLightLive() && self == g_state->ownerCtx;
+            StarLightHazeScope haze(self, hazeArmed, hazeArmed ? bindingShaderHash(BindSlot::Vs) : 0, hazeArmed ? bindingShaderHash(BindSlot::Ps) : 0);
             ConcoursePaneScope pane(self, count, startIndex, baseVertex, 'I', kConcoursePaneCalls);
             if (sun.issues() && !pane.withheld()) {
                 g_state->realDrawIndexed(self, count, startIndex, baseVertex);
@@ -5785,6 +5791,9 @@ void STDMETHODCALLTYPE hookedDrawInstanced(ID3D11DeviceContext* self, UINT perIn
         FlatStationSunGate sun(self, flatDraw, stationSkip);
         {
             FlatParticleScope particle(self, 'N', perInstance, instances);
+            // visual.star_light_colour (flat_star_light.h): the ring dust's light, for its two draws only; one relaxed load while off.
+            const bool hazeArmed = starLightLive() && self == g_state->ownerCtx;
+            StarLightHazeScope haze(self, hazeArmed, hazeArmed ? bindingShaderHash(BindSlot::Vs) : 0, hazeArmed ? bindingShaderHash(BindSlot::Ps) : 0);
             ConcoursePaneScope pane(self, perInstance, startVertex, 0, 'N', kConcoursePaneCalls);   // TEMPORARY (concourse_pane.h): the outside's non-indexed draws (beams, flares, the scatter) are withheld here; no mirror, the glass is indexed
             if (sun.issues() && !pane.withheld()) g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance);
         }
@@ -5878,6 +5887,9 @@ void STDMETHODCALLTYPE hookedDrawIndexedInstanced(ID3D11DeviceContext* self,
         FlatStationSunGate sun(self, flatDraw, stationSkip);
         {
             FlatParticleScope particle(self, 'X', perInstance, instances);
+            // visual.star_light_colour (flat_star_light.h): the ring dust's light, for its two draws only; one relaxed load while off.
+            const bool hazeArmed = starLightLive() && self == g_state->ownerCtx;
+            StarLightHazeScope haze(self, hazeArmed, hazeArmed ? bindingShaderHash(BindSlot::Vs) : 0, hazeArmed ? bindingShaderHash(BindSlot::Ps) : 0);
             ConcoursePaneScope pane(self, perInstance, startIndex, baseVertex, 'X', kConcoursePaneCalls);
             if (sun.issues() && !pane.withheld()) {
                 g_state->realDrawIndexedInstanced(self, perInstance, instances, startIndex,
