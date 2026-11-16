@@ -20,6 +20,8 @@ inline bool flatProfileReadsKey(const char* key) {
         std::strcmp(key, "diag.star_light_log") == 0 ||
         // The sun's light in the star's colour far from the star too (flat_star_light.h). A Visual tab row.
         std::strcmp(key, "visual.star_light_colour") == 0 ||
+        // Where that colour comes from (2026-11-16): the game's tint per class, or the class's temperature as a blackbody colour. A Visual tab row.
+        std::strcmp(key, "visual.star_light_tint") == 0 ||
         // The refusal view (flat_runtime.cpp): paints the prep's per-pixel class over the resolved image. A flat panel row on the Debug tab.
         // Unlisted, getBool answers false here whatever the file says.
         std::strcmp(key, "advanced.flat_refusal_view") == 0 ||

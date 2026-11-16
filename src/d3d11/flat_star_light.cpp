@@ -19,6 +19,8 @@
 #include <cmath>
 #include <cstring>
 #include <iterator>
+#include <string>
+#include <string.h>   // _stricmp
 #include <vector>
 
 namespace edvr {
@@ -58,10 +60,26 @@ unsigned g_starCount = 0;
 bool g_haveTint = false;                      // g_starCount > 0
 float g_tint[3] = {1, 1, 1};                  // the last one used (the window line)
 
-// The strength applied to g_tint: the setting, or with kEqualVisibleColour the setting scaled per star.
+// visual.star_light_tint (2026-11-16): game (the default) applies the game's tint for the star's class; physical applies the colour
+// of the class's typical temperature (flat_star_light_math.h physicalTint). Choosing the star, learning on arrival and the jump
+// checks all stay on the game's tints, which is what the game's light is made of; only the colour the light is moved to changes.
+bool g_physical = false;
+float g_physSource[3] = {0, 0, 0}, g_physTint[3] = {1, 1, 1};
+
+// The colour the light is moved to: g_tint, or its class's physical colour (cached per tint).
+const float* appliedTint() {
+    if (!g_physical) return g_tint;
+    if (std::memcmp(g_physSource, g_tint, sizeof(g_tint)) != 0) {
+        std::memcpy(g_physSource, g_tint, sizeof(g_tint));
+        if (!starlight::physicalTint(g_tint, g_physTint)) std::memcpy(g_physTint, g_tint, sizeof(g_tint));
+    }
+    return g_physTint;
+}
+
+// The strength applied to the tint: the setting, or with kEqualVisibleColour the setting scaled per star.
 float strengthNow() {
     const float setting = g_strength / 100.f;
-    return kEqualVisibleColour ? starlight::equalStrength(g_tint, setting) : std::fmin(std::fmax(setting, 0.f), 1.f);
+    return kEqualVisibleColour ? starlight::equalStrength(appliedTint(), setting) : std::fmin(std::fmax(setting, 0.f), 1.f);
 }
 bool g_havePick = false;                      // a confident choice was made: g_tint is its tint
 int g_lastLogged = -1;
@@ -213,7 +231,7 @@ void tint(void* data, uint32_t bytesFromStart, uint32_t windowStart) {
     if (g_strength <= 0) return;
     if (g_learned) {
         std::memcpy(g_tint, g_learnedTint, sizeof(g_tint));
-        starlight::apply(light, g_tint, strengthNow());
+        starlight::apply(light, appliedTint(), strengthNow());
         noteFactor(row, light);
         std::memcpy(row, light, sizeof(light));
         ++g_tinted;
@@ -251,7 +269,7 @@ void tint(void* data, uint32_t bytesFromStart, uint32_t windowStart) {
         Log::get().note("star light: %u stars in view; the light (%.0f,%.0f,%.0f) fits star %d's tint (%.3f,%.3f,%.3f) best (misfit %.3f)",
                         g_starCount, light[0], light[1], light[2], best, g_tint[0], g_tint[1], g_tint[2], bestFit);
     }
-    starlight::apply(light, g_tint, strengthNow());
+    starlight::apply(light, appliedTint(), strengthNow());
     noteFactor(row, light);
     std::memcpy(row, light, sizeof(light));
     ++g_tinted;
@@ -620,6 +638,15 @@ void starLightFrameBoundary(ID3D11DeviceContext* ctx) {
         g_genRead = true;
         g_gen = gen;
         const int v = runtimeFlatProfile() ? Config::get().getIntInRange("visual.star_light_colour", 100, 0, 100) : 0;
+        const std::string source = runtimeFlatProfile() ? Config::get().getString("visual.star_light_tint", "game") : std::string("game");
+        const bool physical = _stricmp(source.c_str(), "physical") == 0;
+        if (physical != g_physical) {
+            g_physical = physical;
+            Log::get().note("star light: visual.star_light_tint = %s%s", physical ? "physical" : "game",
+                            physical ? " (each class's typical temperature, as a blackbody colour relative to D65)" : " (the game's tint per class)");
+        }
+        if (!physical && _stricmp(source.c_str(), "game") != 0)
+            Log::get().note("star light: visual.star_light_tint \"%s\" is not a value this reads; using game (game, physical)", source.c_str());
         if (v != g_strength) {
             Log::get().note("star light: visual.star_light_colour = %d%%%s", v, v ? "" : " (off: the game's light as it ships)");
             g_strength = v;
@@ -646,10 +673,11 @@ void starLightFrameBoundary(ID3D11DeviceContext* ctx) {
     const ULONGLONG now = GetTickCount64();
     if (!g_windowStart) g_windowStart = now;
     if (now - g_windowStart >= 30000) {
-        Log::get().note("star light: this window: sun buffer writes %llu, tinted %llu; tint %s (%.3f,%.3f,%.3f), setting %d%%, this star's strength %.0f%% "
+        Log::get().note("star light: this window: sun buffer writes %llu, tinted %llu; tint %s (%.3f,%.3f,%.3f) -> applied %s (%.3f,%.3f,%.3f), setting %d%%, this star's strength %.0f%% "
                         "(equal visible colour %s)",
                         static_cast<unsigned long long>(g_writes), static_cast<unsigned long long>(g_tinted),
-                        g_learned ? "learned on arrival" : g_haveTint ? "predicted from the star's colour" : "none yet (no arrival seen, the star not seen)", g_tint[0], g_tint[1], g_tint[2], g_strength,
+                        g_learned ? "learned on arrival" : g_haveTint ? "predicted from the star's colour" : "none yet (no arrival seen, the star not seen)", g_tint[0], g_tint[1], g_tint[2],
+                        g_physical ? "physical" : "game", appliedTint()[0], appliedTint()[1], appliedTint()[2], g_strength,
                         100.f * strengthNow(), kEqualVisibleColour ? "on" : "off: the setting as it is");
         Log::get().note("star light: this window: ring dust (in flight %s): draws re-tinted %llu, left as the game's %llu (of which row %u not the game's light colour %llu)",
                         g_inFlight ? "yes" : "no", static_cast<unsigned long long>(g_hazeBound), static_cast<unsigned long long>(g_hazeSkipped), kHazeRow,

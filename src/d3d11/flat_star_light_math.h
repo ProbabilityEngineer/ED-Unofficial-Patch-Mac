@@ -51,6 +51,71 @@ inline bool tintFor(const float disc[3], float out[3]) {
     return true;
 }
 
+// ---- visual.star_light_tint = physical (2026-11-16): the light in the colour of the star's temperature ----
+// The game's tints above are its art: Taygeta's B tint (1, 2.0, 5.5) is violet, where real light from a ~14000 K star is bluish
+// white. Physical takes the class the game's tint belongs to (the anchor nearest to it), gives the class a typical temperature, and
+// uses that temperature's blackbody colour: the Planckian locus in CIE 1931 xy (Kim et al. 2002 cubic fit, 1667..25000 K), at
+// Y = 1, to linear sRGB / BT.709 with the standard D65 matrix, red scaled to 1. So the colour is relative to D65 daylight white:
+// no adaptation to the star (the game's own fade to white far from a star stays the game's).
+// Brown dwarfs are not blackbody coloured (absorption gives T dwarfs a magenta cast, which the game's T tint reflects): L keeps a
+// 1900 K blackbody (deep red-orange, close to an L dwarf's), T keeps the game's hue mixed halfway to white. Typical temperatures
+// per class, not per star: the journal's scanned SurfaceTemperature would be exact (later).
+inline void blackbodyTint(float kelvin, float out[3]) {
+    const double t = std::fmin(std::fmax(static_cast<double>(kelvin), 1667.0), 25000.0);
+    const double t1 = 1e3 / t, t2 = t1 * t1, t3 = t2 * t1;   // in thousands of kelvin, inverted
+    const double x = t <= 4000.0 ? -0.2661239 * t3 - 0.2343589 * t2 + 0.8776956 * t1 + 0.179910
+                                 : -3.0258469 * t3 + 2.1070379 * t2 + 0.2226347 * t1 + 0.240390;
+    const double x2 = x * x, x3 = x2 * x;
+    const double y = t <= 2222.0 ? -1.1063814 * x3 - 1.34811020 * x2 + 2.18555832 * x - 0.20219683
+                   : t <= 4000.0 ? -0.9549476 * x3 - 1.37418593 * x2 + 2.09137015 * x - 0.16748867
+                                 :  3.0817580 * x3 - 5.87338670 * x2 + 3.75112997 * x - 0.37001483;
+    const double X = x / y, Y = 1.0, Z = (1.0 - x - y) / y;
+    double r = 3.2404542 * X - 1.5371385 * Y - 0.4985314 * Z;
+    double g = -0.9692660 * X + 1.8760108 * Y + 0.0415560 * Z;
+    double b = 0.0556434 * X - 0.2040259 * Y + 1.0572252 * Z;
+    // Below ~2000 K the locus leaves the sRGB gamut on the blue side: clipped to a trace, not negative light.
+    r = std::fmax(r, 1e-4); g = std::fmax(g, 1e-4); b = std::fmax(b, 1e-4);
+    out[0] = 1.f;
+    out[1] = static_cast<float>(g / r);
+    out[2] = static_cast<float>(b / r);
+}
+
+// Typical temperature per anchor of kAnchors (same order); 0 = not a blackbody colour (the T dwarf).
+constexpr float kAnchorKelvin[] = {
+    1900.f,                            // L
+    3200.f,                            // M (M3)
+    4600.f, 4600.f, 4600.f,            // K (K3)
+    5700.f,                            // G (G3)
+    6700.f,                            // F (F3)
+    8600.f,                            // A (A3)
+    12000.f,                           // DA white dwarf (typical; they span ~5000..40000 K)
+    14000.f,                           // B (Taygeta is B6, ~13000 K)
+    0.f,                               // T
+};
+static_assert(sizeof(kAnchorKelvin) / sizeof(kAnchorKelvin[0]) == kAnchorCount, "one temperature per anchor");
+
+// The physical tint for a game tint (red 1): the nearest anchor's class in (log green/red, log blue/red) of the TINT. False when
+// the tint is no colour.
+inline bool physicalTint(const float tint[3], float out[3]) {
+    for (int k = 0; k < 3; ++k) if (!std::isfinite(tint[k]) || tint[k] <= 0.f) return false;
+    const float lg = std::log(tint[1] / tint[0]), lb = std::log(tint[2] / tint[0]);
+    int best = 0;
+    float bestD = 1e30f;
+    for (int i = 0; i < kAnchorCount; ++i) {
+        const float dg = lg - std::log(kAnchors[i].g), db = lb - std::log(kAnchors[i].b);
+        const float d = dg * dg + db * db;
+        if (d < bestD) { bestD = d; best = i; }
+    }
+    if (kAnchorKelvin[best] > 0.f) {
+        blackbodyTint(kAnchorKelvin[best], out);
+    } else {
+        out[0] = 1.f;
+        out[1] = 0.5f * (kAnchors[best].g + 1.f);
+        out[2] = 0.5f * (kAnchors[best].b + 1.f);
+    }
+    return true;
+}
+
 inline float luminance(const float c[3]) { return 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]; }
 
 // The light the sun draw gets: the game's light `light` (colour times brightness) with its luminance kept and its colour moved

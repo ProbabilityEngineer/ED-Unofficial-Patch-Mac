@@ -65,6 +65,9 @@ inline constexpr FlatPageRow kFlatVisualRows[] = {
     {"visual", "star_glow",   FlatRowRead::Allowlist},
     // Star light colour (2026-11-15): the sun's light keeps the star's colour far from it (flat_star_light.h). Live.
     {"visual", "star_light_colour", FlatRowRead::Allowlist},
+    // Star light tint (2026-11-16): game (each class's tint as the game has it) or physical (the class's typical temperature as a
+    // blackbody colour, flat_star_light_math.h physicalTint). Live.
+    {"visual", "star_light_tint", FlatRowRead::Allowlist},
     // Cockpit glass (2026-11-03): odyssey (the game's) or the Horizons 3.8 look, both profiles; its `menu visual` token is the page VR's menu builds too.
     {"visual", "cockpit_glass", FlatRowRead::Allowlist},
     // Legacy glass dirt (2026-11-05): how much dirt the legacy look draws, in percent. Dimmed unless cockpit_glass is legacy (menu.cpp cockpitGlassDirtRowDisabled).
