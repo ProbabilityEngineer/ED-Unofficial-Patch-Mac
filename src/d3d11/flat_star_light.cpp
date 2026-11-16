@@ -7,7 +7,6 @@
 #include "flat_star_light_math.h"
 
 #include "../common/config.h"
-#include "../common/hotkey.h"
 #include "../common/log.h"
 #include "../common/runtime_profile.h"
 #include "journal_watch.h"         // the in-flight test for the ring dust's ambient
@@ -27,8 +26,7 @@ namespace edvr {
 std::atomic<bool> g_starLightLive{false};
 std::atomic<void*> g_starLightSunBuffer{nullptr};
 std::atomic<void*> g_starLightLightBuffer[kStarLightLightBuffers] = {};
-std::atomic<void*> g_starLightProbeBuffer{nullptr};
-std::atomic<bool> g_hazeProbeOn{false};
+std::atomic<void*> g_starLightDustBuffer{nullptr};
 float g_starLightGameLight[3] = {0, 0, 0};   // the game's own light, before the fix (the diagnostic logs it)
 
 namespace {
@@ -68,14 +66,12 @@ ULONGLONG g_arrivalEnd = 0;                   // 0: the first light after the ju
 bool g_learned = false;
 float g_learnedTint[3] = {1, 1, 1};
 float g_learnedSat = 0.f;                     // its distance from the game's white (red 1)
-ULONGLONG g_arrivalStart = 0;                 // the first light after the jump
 // A jump the light does not go dark for (Taygeta from a K star, 2026-11-16: the light went from the K star's straight to Taygeta's, and the
 // K tint held there turned the system yellow). The held tint is dropped when the game's light stops fitting it (its colour off the line
 // from that tint to white, starlight::misfit) for this many writes in a row; the tint is then predicted from the star in view.
 constexpr float kForeignMisfit = 0.15f;
 constexpr unsigned kForeignWrites = 60;
 unsigned g_foreignWrites = 0;
-bool g_scanRequested = false, g_scanTaken = true;   // TEMPORARY: the copy scan's request for this arrival
 
 ComPtr<ID3D11Buffer> g_staging[kMaxStars];    // one read's copies in flight: the star quads of one frame
 unsigned g_stagingCount = 0;                  // copies queued this read
@@ -86,7 +82,7 @@ unsigned g_framesSinceRead = kReadEveryFrames;
 
 uint64_t g_writes = 0, g_tinted = 0;
 
-// TEST: the light buffers (flat_star_light.h). Learned from PS t1/t2 of the pixel shaders that read them in the scans of 2026-11-16
+// The light buffers (flat_star_light.h). Learned from PS t1/t2 of the pixel shaders that read them in the scans of 2026-11-16
 // (the ring at Taygeta, an atmospheric planet at 4000 Ls); a write is re-tinted only where a light's colour (byte 0 of each 48 bytes) has
 // the colour of the game's light at the last sun write.
 constexpr uint64_t kLightReaderPs[] = {
@@ -145,12 +141,11 @@ void tint(void* data, uint32_t bytesFromStart, uint32_t windowStart) {
     }
     if (g_arriving && light[0] > 0.f) {
         const ULONGLONG now = GetTickCount64();
-        if (!g_arrivalEnd) { g_arrivalEnd = now + kArrivalMs; g_arrivalStart = now; g_scanTaken = false; }
+        if (!g_arrivalEnd) g_arrivalEnd = now + kArrivalMs;
         const float c[3] = {1.f, light[1] / light[0], light[2] / light[0]};
         const float dg = c[1] - starlight::kWhite[1], db = c[2] - starlight::kWhite[2];
         const float sat = std::sqrt(dg * dg + db * db);
         if (sat > g_learnedSat) { g_learnedSat = sat; std::memcpy(g_learnedTint, c, sizeof(c)); g_learned = true; }
-        if (!g_scanTaken && g_learned && now - g_arrivalStart >= 1500) { g_scanTaken = true; g_scanRequested = true; }
         if (now >= g_arrivalEnd) {
             g_arriving = false;
             if (g_learned)
@@ -391,7 +386,7 @@ void finishStar(ID3D11DeviceContext* ctx) {
 
 namespace {
 
-// ---- The ring dust's light (flat_star_light.h; the haze hunt and probe of 2026-11-16) ----
+// ---- The ring dust's light (flat_star_light.h) ----
 // The ring's dust is drawn by the volume pair 203DF517/EEAAC839 and the ribbon pair B12F7A61/42AC0CAC. The probe showed its light colour is
 // row 293 of the shared constants it reads at b1 (made red, the dust went red; rows 26 and 159 did nothing; blanking its ambient cube did
 // not change its colour). b1 is rewritten by the game for nearly every draw, so its bytes are kept from each write (the Map hooks), and for
@@ -415,7 +410,7 @@ void hazeWatchB1(ID3D11DeviceContext* ctx) {
     b->GetDesc(&d);
     if (d.ByteWidth >= (kHazeRow + 1u) * 16u) {
         g_hazeB1 = b;
-        g_starLightProbeBuffer.store(b, std::memory_order_relaxed);
+        g_starLightDustBuffer.store(b, std::memory_order_relaxed);
         Log::get().note("star light: ring dust: b1 %p watched (%u bytes, usage %u); its row %u is the dust's light", static_cast<void*>(b), d.ByteWidth,
                         static_cast<unsigned>(d.Usage), kHazeRow);
     }
@@ -423,7 +418,7 @@ void hazeWatchB1(ID3D11DeviceContext* ctx) {
 }
 
 void hazeDropB1() {
-    g_starLightProbeBuffer.store(nullptr, std::memory_order_relaxed);
+    g_starLightDustBuffer.store(nullptr, std::memory_order_relaxed);
     g_hazeB1.Reset();
     g_hazeShadowOk = false;
     g_hazeMapped = nullptr;
@@ -431,7 +426,7 @@ void hazeDropB1() {
 
 // b1 with `edit` applied to the shadow, bound at VS and PS b1 through `copy` (made on first use). False: nothing bound.
 template <class Edit>
-bool hazeBindCopy(ID3D11DeviceContext* ctx, ComPtr<ID3D11Buffer>& copy, HazeProbeRestore* r, Edit edit) {
+bool hazeBindCopy(ID3D11DeviceContext* ctx, ComPtr<ID3D11Buffer>& copy, StarLightHazeRestore* r, Edit edit) {
     if (!g_hazeB1 || !g_hazeShadowOk) return false;
     ID3D11Buffer* curPs = nullptr;
     ctx->PSGetConstantBuffers(1, 1, &curPs);
@@ -459,12 +454,12 @@ bool hazeBindCopy(ID3D11DeviceContext* ctx, ComPtr<ID3D11Buffer>& copy, HazeProb
     ID3D11Buffer* mine = copy.Get();
     ctx->PSSetConstantBuffers(1, 1, &mine);
     ctx->VSSetConstantBuffers(1, 1, &mine);
-    r->kind = 3; r->slot = 1; r->ps = curPs; r->vs = curVs;
+    r->bound = true; r->ps = curPs; r->vs = curVs;
     return true;
 }
 }  // namespace
 
-void starLightHazeBind(ID3D11DeviceContext* ctx, uint64_t vs, uint64_t ps, HazeProbeRestore* r) {
+void starLightHazeBind(ID3D11DeviceContext* ctx, uint64_t vs, uint64_t ps, StarLightHazeRestore* r) {
     if (!(vs == kHazeVolumeVs && ps == kHazeVolumePs) && !(vs == kHazeRibbonVs && ps == kHazeRibbonPs)) return;
     hazeWatchB1(ctx);
     if (!g_inFlight || !g_factorValid || g_strength <= 0) { ++g_hazeSkipped; return; }
@@ -482,52 +477,7 @@ void starLightHazeBind(ID3D11DeviceContext* ctx, uint64_t vs, uint64_t ps, HazeP
     if (bound) ++g_hazeBound; else ++g_hazeSkipped;
 }
 
-// ---- TEMPORARY: the haze probe (flat_star_light.h) ----
 namespace {
-constexpr unsigned kProbeStates = 17;   // 0 none; 1..8 PS t0..t7 blank; 9..13 PS b0..b4 blank; 14..16 b1 row 26 / 159 / 293 red
-const char* probeName(unsigned st, char* buf, size_t n) {
-    if (st == 0) std::snprintf(buf, n, "nothing changed");
-    else if (st <= 8) std::snprintf(buf, n, "PS t%u blank", st - 1);
-    else if (st <= 13) std::snprintf(buf, n, "PS b%u blank", st - 9);
-    else std::snprintf(buf, n, "b1 row %u pure red", st == 14 ? 26u : st == 15 ? 159u : 293u);
-    return buf;
-}
-unsigned g_probeState = 0;
-bool g_probeDescribed = false;
-bool g_probeKeysMade = false;
-Hotkey g_probeNext, g_probePrev, g_probeReset;
-ComPtr<ID3D11Buffer> g_probeCopy;
-uint64_t g_probeDraws = 0;
-
-void probeFrameBoundary() {
-    const bool on = runtimeFlatProfile() && Config::get().getBool("diag.haze_probe", false);
-    if (on != g_hazeProbeOn.load(std::memory_order_relaxed)) {
-        Log::get().note("haze probe: %s", on ? "on: Ctrl+F9 next input, Ctrl+F11 back, Ctrl+F12 none; only the ring dust's volume draw changes" : "off");
-        g_hazeProbeOn.store(on, std::memory_order_relaxed);
-        g_probeState = 0;
-        if (!on && g_strength <= 0) hazeDropB1();
-    }
-    if (!on) return;
-    if (!g_probeKeysMade) {
-        g_probeKeysMade = true;
-        g_probeNext.setKey(VK_F9, kHotkeyCtrl);
-        g_probePrev.setKey(VK_F11, kHotkeyCtrl);
-        g_probeReset.setKey(VK_F12, kHotkeyCtrl);
-    }
-    unsigned st = g_probeState;
-    if (g_probeNext.pressed()) st = (st + 1) % kProbeStates;
-    if (g_probePrev.pressed()) st = (st + kProbeStates - 1) % kProbeStates;
-    if (g_probeReset.pressed()) st = 0;
-    if (st != g_probeState) {
-        g_probeState = st;
-        g_probeDescribed = false;
-        char b[48];
-        Log::get().note("haze probe: step %u: %s (the volume draw was seen %llu times since the last step)", st, probeName(st, b, sizeof(b)),
-                        static_cast<unsigned long long>(g_probeDraws));
-        g_probeDraws = 0;
-    }
-}
-
 void hazeMapped(void* data) { g_hazeMapped = data; }
 void hazeUnmap() {
     if (!g_hazeMapped || !g_hazeB1) return;
@@ -548,87 +498,12 @@ void hazeUpdate(const void* data, uint32_t left, uint32_t right, bool boxed) {
 }
 }  // namespace
 
-void starLightHazeProbeBind(ID3D11DeviceContext* ctx, uint64_t vs, uint64_t ps, HazeProbeRestore* r) {
-    if (!(vs == kHazeVolumeVs && ps == kHazeVolumePs)) return;
-    ++g_probeDraws;
-    hazeWatchB1(ctx);
-    const unsigned st = g_probeState;
-    if (st == 0) return;
-    char name[48];
-    probeName(st, name, sizeof(name));
-    if (st <= 8) {
-        const UINT slot = st - 1;
-        ID3D11ShaderResourceView* game = nullptr;
-        ctx->PSGetShaderResources(slot, 1, &game);
-        if (!g_probeDescribed) {
-            g_probeDescribed = true;
-            if (!game) Log::get().note("haze probe: %s: nothing is bound there", name);
-            else {
-                D3D11_SHADER_RESOURCE_VIEW_DESC vd{};
-                game->GetDesc(&vd);
-                ComPtr<ID3D11Resource> res;
-                game->GetResource(&res);
-                ComPtr<ID3D11Texture2D> t2;
-                ComPtr<ID3D11Texture3D> t3;
-                ComPtr<ID3D11Buffer> bf;
-                if (res && SUCCEEDED(res.As(&t2))) {
-                    D3D11_TEXTURE2D_DESC d{}; t2->GetDesc(&d);
-                    Log::get().note("haze probe: %s: view dimension %u, 2D %ux%u x%u, %u mips, format %u, bind 0x%X, misc 0x%X", name, vd.ViewDimension, d.Width, d.Height,
-                                    d.ArraySize, d.MipLevels, d.Format, d.BindFlags, d.MiscFlags);
-                } else if (res && SUCCEEDED(res.As(&t3))) {
-                    D3D11_TEXTURE3D_DESC d{}; t3->GetDesc(&d);
-                    Log::get().note("haze probe: %s: view dimension %u, 3D %ux%ux%u, %u mips, format %u, bind 0x%X", name, vd.ViewDimension, d.Width, d.Height, d.Depth,
-                                    d.MipLevels, d.Format, d.BindFlags);
-                } else if (res && SUCCEEDED(res.As(&bf))) {
-                    D3D11_BUFFER_DESC d{}; bf->GetDesc(&d);
-                    Log::get().note("haze probe: %s: buffer, %u bytes, stride %u, usage %u", name, d.ByteWidth, d.StructureByteStride, static_cast<unsigned>(d.Usage));
-                }
-            }
-        }
-        if (!game) return;
-        ID3D11ShaderResourceView* none = nullptr;
-        ctx->PSSetShaderResources(slot, 1, &none);
-        r->kind = 1; r->slot = slot; r->srv = game;
-        return;
-    }
-    if (st <= 13) {
-        const UINT slot = st - 9;
-        ID3D11Buffer* game = nullptr;
-        ctx->PSGetConstantBuffers(slot, 1, &game);
-        if (!g_probeDescribed) {
-            g_probeDescribed = true;
-            D3D11_BUFFER_DESC d{};
-            if (game) game->GetDesc(&d);
-            Log::get().note("haze probe: %s: %s%u bytes", name, game ? "" : "nothing bound, ", game ? d.ByteWidth : 0u);
-        }
-        if (!game) return;
-        ID3D11Buffer* none = nullptr;
-        ctx->PSSetConstantBuffers(slot, 1, &none);
-        r->kind = 2; r->slot = slot; r->ps = game;
-        return;
-    }
-    // b1 with one light row pure red (at the row's luminance), bound at VS and PS b1 for this draw.
-    const unsigned row = st == 14 ? 26u : st == 15 ? 159u : 293u;
-    const bool bound = hazeBindCopy(ctx, g_probeCopy, r, [&](uint8_t* data) {
-        float* v = reinterpret_cast<float*>(data + row * 16u);
-        const float lum = 0.2126f * v[0] + 0.7152f * v[1] + 0.0722f * v[2];
-        if (!g_probeDescribed) { g_probeDescribed = true; Log::get().note("haze probe: %s: the row was (%.5g,%.5g,%.5g,%.5g)", name, v[0], v[1], v[2], v[3]); }
-        v[0] = lum > 0.f ? lum / 0.2126f : 1.f; v[1] = 0.f; v[2] = 0.f;
-        return true;
-    });
-    if (!bound && !g_probeDescribed) { g_probeDescribed = true; Log::get().note("haze probe: %s: b1 not ready (no write of it seen yet)", name); }
-}
-
-void starLightHazeProbeRestore(ID3D11DeviceContext* ctx, HazeProbeRestore* r) {
-    if (r->kind == 1) { ctx->PSSetShaderResources(r->slot, 1, &r->srv); r->srv->Release(); }
-    else if (r->kind == 2) { ctx->PSSetConstantBuffers(r->slot, 1, &r->ps); r->ps->Release(); }
-    else if (r->kind == 3) {
-        ctx->PSSetConstantBuffers(1, 1, &r->ps);
-        ctx->VSSetConstantBuffers(1, 1, &r->vs);
-        if (r->ps) r->ps->Release();
-        if (r->vs) r->vs->Release();
-    }
-    r->kind = 0;
+void starLightHazeRestore(ID3D11DeviceContext* ctx, StarLightHazeRestore* r) {
+    ctx->PSSetConstantBuffers(1, 1, &r->ps);
+    ctx->VSSetConstantBuffers(1, 1, &r->vs);
+    if (r->ps) r->ps->Release();
+    if (r->vs) r->vs->Release();
+    r->bound = false;
 }
 
 void starLightDraw(ID3D11DeviceContext* ctx, uint64_t vs, uint64_t ps) {
@@ -700,21 +575,7 @@ const void* starLightUpdate(ID3D11Resource* res, const void* data, uint32_t left
     return copy.data();
 }
 
-bool starLightTakeScanRequest(float chroma[3]) noexcept {
-    if (!g_scanRequested) return false;
-    g_scanRequested = false;
-    std::memcpy(chroma, g_learnedTint, sizeof(g_learnedTint));
-    return true;
-}
-
-bool starLightSystemTint(float tint[3]) noexcept {
-    if (g_learned) { std::memcpy(tint, g_learnedTint, sizeof(g_learnedTint)); return true; }
-    if (g_haveTint) { std::memcpy(tint, g_tint, sizeof(g_tint)); return true; }
-    return false;
-}
-
 void starLightFrameBoundary(ID3D11DeviceContext* ctx) {
-    probeFrameBoundary();   // TEMPORARY
     const uint32_t gen = Config::get().generation();
     if (!g_genRead || gen != g_gen) {
         g_genRead = true;
@@ -728,7 +589,7 @@ void starLightFrameBoundary(ID3D11DeviceContext* ctx) {
         if (v <= 0) {
             setSunBuffer(nullptr, kRow * 16u);
             dropLightBuffers();
-            if (!g_hazeProbeOn.load(std::memory_order_relaxed)) hazeDropB1();
+            hazeDropB1();
             g_haveTint = false;
             g_havePick = false;
             g_starCount = 0;
