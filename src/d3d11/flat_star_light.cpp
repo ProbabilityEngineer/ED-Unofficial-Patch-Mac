@@ -144,14 +144,16 @@ void tint(void* data, uint32_t bytesFromStart, uint32_t windowStart) {
     std::memcpy(g_starLightGameLight, light, sizeof(light));
     if (light[0] == 0.f && light[1] == 0.f && light[2] == 0.f) {
         // No light. A jump keeps it dark for seconds; a planet's shadow (2026-11-16, the Taygeta ring) gives some of the sun writes zero and
-        // others the light, so only a light that stays dark for kDarkMs is read as a jump. Until then nothing is tinted and nothing is reset.
-        g_factorValid = false;
+        // others the light, so only a light that stays dark for kDarkMs is read as a jump. Until then nothing is reset, and the last lit
+        // write's factor stays valid: the ring dust and the light buffers drawn after a zero write keep the tint (2026-11-16: clearing it
+        // here flickered the ring dust between white and blue 1-2 times a second in the shadow).
         const ULONGLONG now = GetTickCount64();
         if (!g_darkSince) g_darkSince = now;
         if (!g_darkReset && now - g_darkSince >= kDarkMs) {
             // The jump, or no star: the next system's star must be seen before it tints anything, and its arrival is learned. The tint
             // held so far is kept aside: a light that comes back fitting it (a long shadow, the same system) takes it back.
             g_darkReset = true;
+            g_factorValid = false;
             g_heldValid = g_learned;
             std::memcpy(g_heldTint, g_learnedTint, sizeof(g_heldTint));
             g_haveTint = false;
