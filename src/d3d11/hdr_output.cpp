@@ -147,6 +147,9 @@ struct State {
 };
 
 State g;
+// The live nits at b13 (hdrOutputNitsBind): the game draws that had them, by shader, since the last report. A replacement shader drawn
+// without them reads the values compiled in at attach. 30 s windows, so a route that never binds (copy 0 with AA on) shows in a log.
+struct NitsBindCounts { uint64_t tone = 0, toneNoBloom = 0, copy = 0; uint64_t sinceMs = 0; } g_nitsBinds;
 
 // ---- macOS EDR, from DXMT's winemetal.dll ---------------------------------
 // The read costs ~0.9 ms (flight 2026-11-16: DXMT builds a ColorSync profile per call), so it runs on its own thread every 50 ms
@@ -1397,6 +1400,7 @@ bool hdrOutputNitsBind(ID3D11DeviceContext* ctx, ID3D11Buffer** saved) {
     if (!ctx || !g.nitsCb) return false;
     void* ps = bindingGet(BindSlot::Ps);
     if (!ps || (ps != g.tonePs && ps != g.toneNoBloomPs && ps != g.copyPs)) return false;
+    ++(ps == g.copyPs ? g_nitsBinds.copy : ps == g.tonePs ? g_nitsBinds.tone : g_nitsBinds.toneNoBloom);
     ctx->PSGetConstantBuffers(kNitsSlot, 1, saved);
     ID3D11Buffer* nits = g.nitsCb;
     ctx->PSSetConstantBuffers(kNitsSlot, 1, &nits);
@@ -1421,6 +1425,19 @@ void hdrOutputBeforePresent(IDXGISwapChain* swapChain, ID3D11DeviceContext* cont
     // After this frame's encode, so a whole frame (tone, copy, encode) uses one white; the next frame starts with the new one.
     refreshSettings(context);
     refreshAutoWhite(context);
+    {
+        const uint64_t now = GetTickCount64();
+        if (!g_nitsBinds.sinceMs) g_nitsBinds.sinceMs = now;
+        if (now - g_nitsBinds.sinceMs >= 30000) {
+            Log::get().note("hdr: live nits over %.0f s: bound for %llu tone, %llu tone (no bloom) and %llu final-copy draws. A replacement "
+                            "drawn without them uses the values compiled at attach; final-copy 0 while the game draws means its scene-to-UI "
+                            "scale (hdr_scene_nits / hdr_ui_nits) is not applied.",
+                            double(now - g_nitsBinds.sinceMs) / 1000.0, (unsigned long long)g_nitsBinds.tone,
+                            (unsigned long long)g_nitsBinds.toneNoBloom, (unsigned long long)g_nitsBinds.copy);
+            g_nitsBinds = NitsBindCounts{};
+            g_nitsBinds.sinceMs = now;
+        }
+    }
     if (!encoded) {
         g.encodeFailed = true;
         Log::get().note("hdr: neither output path could run (%ux%u); the frame is presented "

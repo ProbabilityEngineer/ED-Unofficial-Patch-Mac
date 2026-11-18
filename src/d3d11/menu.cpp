@@ -103,6 +103,9 @@ constexpr int kRowDefCount = static_cast<int>(sizeof(kMenuRows) / sizeof(kMenuRo
 
 // How many rows a page shows at once; the rest scroll.
 constexpr int kVisibleRows = 9;
+// ed-metalfx: the flat card asks for more; menuPanelEntryRows keeps only what fits the card at this output, so a short screen still scrolls.
+// At 9 the Visual tab's two HDR white rows (its 10th and 11th) were below the window with nothing saying so.
+constexpr int kFlatVisibleRows = 14;
 // The fade, in and out.
 constexpr uint64_t kFadeMs = 150;
 // (Hold-to-repeat's timings and the tracker live in menu_keys.h now, so
@@ -1923,14 +1926,19 @@ void addFlatPerformanceRows(Page& p) {
 // Visual (2026-10-22): the [visual] options that do something in flat, for everyone. The rows are the table in menu_flat_rows.h, kept in edvr.ini
 // order whatever page their `menu` token names: Intro movie and Star glow are `menu visual`, which VR's Visual page lists too; a row only this tab
 // shows would be `menu flat_visual`, a page VR builds none of. The generator fails the build for a row the table lists that the schema has no row for.
+// ed-metalfx: in the table's order (kFlatVisualRows), not edvr.ini's, so a row lives beside the one it belongs to whatever section its key
+// is in: the HDR whites ([advanced]) sit under HDR output ([fix]).
 void addFlatVisualRows(Page& p) {
-    for (int i = 0; i < kRowDefCount; ++i) {
-        const MenuRowDef& d = kMenuRows[i];
-        if (d.tier != MenuTier::Fix || !flatVisualHasRow(d.section, d.key)) continue;
-        Entry e;
-        e.kind = EntryKind::Setting;
-        e.def = i;
-        p.entries.push_back(e);
+    for (const FlatPageRow& r : kFlatVisualRows) {
+        for (int i = 0; i < kRowDefCount; ++i) {
+            const MenuRowDef& d = kMenuRows[i];
+            if (d.tier != MenuTier::Fix || strcmp(d.section, r.section) != 0 || strcmp(d.key, r.key) != 0) continue;
+            Entry e;
+            e.kind = EntryKind::Setting;
+            e.def = i;
+            p.entries.push_back(e);
+            break;
+        }
     }
 }
 
@@ -2749,7 +2757,7 @@ void buildContent(MenuContent& c) {
             tooltipsOn() &&
             s.tickMs >= s.highlightSinceMs + static_cast<uint64_t>(s.tooltipDelayS * 1000.0f);
         // Keep the highlight in the window.
-        const int requestedRows = p.visibleRows > 0 ? p.visibleRows : kVisibleRows;
+        const int requestedRows = p.visibleRows > 0 ? p.visibleRows : runtimeFlatProfile() ? kFlatVisibleRows : kVisibleRows;
         const int visibleRows = p.prompt ? requestedRows : menuPanelEntryRows(c, requestedRows);
         if (p.prompt) c.compact = true;   // F177: fifteen lines in the height guard
         const int total = static_cast<int>(p.entries.size());
@@ -2901,7 +2909,9 @@ void buildContent(MenuContent& c) {
             } else if (stopped) {
                 l.badge = kBadgeStopped;   // the value stays as set; the highlighted row's hint says why (xessFgRestartHint)
             } else if (d.applies == 2) {
-                l.badge = kBadgeRestart;
+                // ed-metalfx: a restart-only row says nothing until it is changed ("restart required" then, kBadgePending), but keeps
+                // the badge's line so the rows below do not move when it appears. The row's tooltip still says it needs a restart.
+                l.reserveBadge = true;
             } else if (d.applies == 0) {
                 l.badge = kBadgeUnknown;
             }
@@ -5358,7 +5368,7 @@ void menuNoteConfigReloaded() {
                 changed.push_back(text);
             } else if (!byMenu) {
                 changed.push_back(std::string(d.label) + ": " + displayValue(d, v) +
-                                 (d.applies == 2 ? " (at next launch)" : ""));
+                                 (d.applies == 2 ? " (restart required)" : ""));
             }
         }
         if (d.applies == 2 && s.snapshotTaken && openxrScaleRow) {

@@ -576,7 +576,7 @@ void layout(const MenuContent& c, std::vector<Op>& ops, std::vector<LineRect>& l
             Op b;
             b.text = true;
             b.str = l.badge == kBadgeRestart ? L"restart"
-                    : l.badge == kBadgePending ? L"at next launch"
+                    : l.badge == kBadgePending ? L"restart required"
                     : l.badge == kBadgeClash   ? L"also in Elite"
                     : l.badge == kBadgeStopped ? L"stopped"
                                                : L"?";
