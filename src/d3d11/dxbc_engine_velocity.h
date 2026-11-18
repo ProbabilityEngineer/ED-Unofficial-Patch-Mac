@@ -701,4 +701,21 @@ inline bool engineVelocityPatchPs(const void* data, size_t bytes, const EngineVe
     }
 }
 
+// Does a shader model 5 pixel shader's program contain discard (opcode 13, discard_z / discard_nz)? False when the bytecode cannot be
+// read; engineVelocityPatchPs refuses such a shader, so it is never substituted anyway. The flat discard workaround (engine_velocity.cpp)
+// asks this once per kept shader, when the game creates it.
+inline bool engineVelocityPsDiscards(const void* data, size_t bytes) {
+    using namespace dxbc_engine_velocity_detail;
+    try {
+        for (const auto& chunk : parseContainer(data, bytes, kPs50)) {
+            if (!isProgram(chunk.tag)) continue;
+            const auto words = programWords(chunk.bytes);
+            for (size_t at = 2; at < words.size(); at += instructionLength(words, at))
+                if ((words[at] & 0x7ffu) == 13u) return true;
+        }
+    } catch (...) {
+    }
+    return false;
+}
+
 } // namespace edvr

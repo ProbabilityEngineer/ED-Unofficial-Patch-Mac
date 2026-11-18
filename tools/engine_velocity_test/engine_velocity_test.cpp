@@ -40,6 +40,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -181,6 +182,9 @@ bool onePair(ID3D11Device* device, ID3D11DeviceContext* context, const std::wstr
     if (std::wcscmp(p.ps, L"ps_03B17F89B31C4788") == 0)
         ok(r.covered > 0 && r.uncoveredChecked > 0 && r.uncoveredBad == 0,
            "station alpha pair: the real corpus drives survivors and discard, with discarded MRT6 untouched");
+    if (std::wcscmp(p.ps, L"ps_91F8937EDA723663") == 0)
+        ok(edvr::engineVelocityPsDiscards(ps.data(), ps.size()),
+           "discard workaround: the station window decoration's pixel shader discards (the corpus), so the general rule covers it");
     const bool actual = std::wcscmp(p.vs, L"vs_DE545DC8EE4FBB87") != 0 ||
                         std::wcscmp(p.ps, L"ps_91F8937EDA723663") != 0 ||
                         actual_vs_link_test::run(device, context, vs, ps, pps, ok);
@@ -447,15 +451,32 @@ int wmain(int argc, wchar_t** argv) {
               "F10: the NPC pairs stay unkeyed in flat (the weapon families' foreground and source routing)");
     }
     {
-        // The station window decoration workaround (engine_velocity_families.h): the predicate names exactly this pair, and the pair
-        // stays keyed in flat, so the HDR route, frame selection and the jitter recipes are unchanged by it.
+        // The flat discard workaround (engine_velocity.cpp): it withholds the substitution only, so the station window decoration pair
+        // stays keyed and supported in flat, and the HDR route, frame selection and the jitter recipes are unchanged by it.
         namespace evf = edvr::engine_velocity_family;
         const uint64_t decoVs = 0xDE545DC8EE4FBB87ull, decoPs = 0x91F8937EDA723663ull;
-        check(evf::flatSubstitutionWithheld(decoVs, decoPs), "decoration workaround: the station window decoration pair is withheld");
-        check(!evf::flatSubstitutionWithheld(decoVs, 0x03B17F89B31C4788ull) && !evf::flatSubstitutionWithheld(0x123456789abcdef0ull, decoPs),
-              "decoration workaround: no other pair is withheld (the moving-rig material is not confirmed)");
         check(evf::keyedPs(evf::familyOfVs(decoVs), decoPs, true) && evf::supportedPair(decoVs, decoPs),
-              "decoration workaround: the pair stays keyed and supported in flat");
+              "discard workaround: the decoration pair stays keyed and supported in flat");
+        // Its question, on compiled pixel shaders: clip() compiles to discard, a plain write does not, and bytes that are not a
+        // shader read as no discard (engineVelocityPatchPs refuses them, so they are never substituted).
+        const auto compiled = [](const char* source, std::vector<BYTE>& out) {
+            ComPtr<ID3DBlob> blob, errors;
+            if (FAILED(D3DCompile(source, std::strlen(source), "discard-probe", nullptr, nullptr, "main", "ps_5_0", 0, 0, &blob, &errors)))
+                return false;
+            out.assign(static_cast<const BYTE*>(blob->GetBufferPointer()),
+                       static_cast<const BYTE*>(blob->GetBufferPointer()) + blob->GetBufferSize());
+            return true;
+        };
+        std::vector<BYTE> clips, plain;
+        const bool built = compiled("float4 main(float4 c : COLOR0) : SV_Target { clip(c.a - 0.5); return c; }", clips) &&
+                           compiled("float4 main(float4 c : COLOR0) : SV_Target { return c * 2; }", plain);
+        check(built, "discard workaround: the probe shaders compile");
+        if (built) {
+            check(edvr::engineVelocityPsDiscards(clips.data(), clips.size()), "discard workaround: a pixel shader with clip() discards");
+            check(!edvr::engineVelocityPsDiscards(plain.data(), plain.size()), "discard workaround: a plain pixel shader does not");
+        }
+        const BYTE junk[64] = {};
+        check(!edvr::engineVelocityPsDiscards(junk, sizeof(junk)), "discard workaround: unreadable bytecode reads as no discard");
     }
     edvr::g_runtimeProfile = edvr::RuntimeProfile::LegacyVr;
     shader_tests::run({device.Get(), context.Get(), &check});

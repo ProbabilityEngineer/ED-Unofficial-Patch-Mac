@@ -30,7 +30,7 @@
 #include "flat_origin_witness.h"
 #include "engine_velocity_primary_copy.h"
 #include "engine_velocity_families.h"
-#include "metal_fx_engine.h"   // dxmtFixesPartialWriteMaskDiscard: the station decoration workaround's gate
+#include "metal_fx_engine.h"   // dxmtFixesPartialWriteMaskDiscard: the flat discard workaround's gate
 #include "engine_velocity_unkeyed.h"
 #include "engine_velocity_state.h"
 #include "engine_motion_cpu.h"   // the CPU instrument: the draw side, apply, the tees and the lazy patches are timed here
@@ -148,6 +148,7 @@ struct PsInfo {
     uint64_t hash = 0;
     std::vector<BYTE> bytes;
     bool linked = false;
+    bool discards = false;   // its program discards (engineVelocityPsDiscards): the flat discard workaround's question
 };
 std::unordered_map<ID3D11VertexShader*, VsInfo> g_vs;
 std::unordered_map<ID3D11PixelShader*, PsInfo> g_ps;
@@ -537,14 +538,46 @@ struct DrawStats {
     // The flat lazy bracket (engineVelocityFlatBeginDraw): the runs of substituted draws EDVR's state was
     // bound for, the draws that found it still bound from the one before, and why the game's was put back.
     uint64_t flatRuns = 0, flatKept = 0, flatFlushBy[static_cast<unsigned>(EngineVelocityFlushCause::kCount)] = {};
-    // The station decoration's draws that kept the game's shader (flatSubstitutionWithheld), while DXMT reports no fix of its own.
+    // Draws of a discarding pixel shader that kept the game's shader (the flat discard workaround), while DXMT reports no fix of its own.
     uint64_t flatWithheld = 0;
     void clear() { *this = DrawStats{}; }
 };
 DrawStats g_draw;
-// The station decoration workaround (engine_velocity_families.h flatSubstitutionWithheld): -1 not yet decided, 0 off (DXMT reports
-// its fix), 1 on. Decided at the first flat draw of that pair that reaches the slow half, from the context it was drawn on.
-int g_decorationWorkaround = -1;
+// The flat discard workaround (2026-11-18; was the station decoration pair alone, 2026-11-17). Apple's Metal driver loses the discard,
+// and the depth/stencil write, of a pixel shader that discards and then writes a 4-channel target under a partial write mask. Every
+// substituted pixel shader writes the flat marker plane (MRT6, RGBA32F) with mask RG, so a substituted alpha-tested material's clear
+// texels paint the G-buffer (the station window decoration, vs_DE545DC8 / ps_91F8937E; the Inter Astra window logo, a second pair the
+// pair-only workaround missed). Flat only, and only while DXMT does not report its own fix (dxmtFixesPartialWriteMaskDiscard,
+// DXMT 1cdd135f): a keyed draw whose game pixel shader discards keeps the game's shader and loses only per-object motion. The pairs stay
+// keyed (supportedPair, the HDR route, the jitter recipes), so nothing else changes. -1 not yet decided, 0 off (DXMT reports its fix),
+// 1 on; decided at the first discarding keyed draw in flat, from the context it was drawn on.
+int g_discardWorkaround = -1;
+// Each withheld pair is named once (the first 16), so a flight log says which materials the workaround touched.
+uint64_t g_withheldPairs[16][2] = {};
+unsigned g_withheldPairCount = 0;
+bool discardWorkaroundOn(ID3D11DeviceContext* ctx) {
+    if (g_discardWorkaround < 0) {
+        const bool fixed = dxmtFixesPartialWriteMaskDiscard(ctx);
+        g_discardWorkaround = fixed ? 0 : 1;
+        Log::get().note(fixed ? "engine motion: discard workaround off: DXMT reports its partial write mask fix, so keyed pixel shaders "
+                                "that discard are substituted as any other keyed draw."
+                              : "engine motion: discard workaround on. This D3D11 does not report the partial write mask fix (stock "
+                                "DXMT, or not DXMT), so in flat every keyed draw whose pixel shader discards keeps the game's shader; "
+                                "it loses only per-object motion. Each such pair is named once below.");
+    }
+    return g_discardWorkaround == 1;
+}
+void noteWithheldPair(uint64_t vs, uint64_t ps) {
+    for (unsigned i = 0; i < g_withheldPairCount; ++i)
+        if (g_withheldPairs[i][0] == vs && g_withheldPairs[i][1] == ps) return;
+    if (g_withheldPairCount >= 16) return;
+    g_withheldPairs[g_withheldPairCount][0] = vs;
+    g_withheldPairs[g_withheldPairCount][1] = ps;
+    ++g_withheldPairCount;
+    Log::get().note("engine motion: discard workaround: vs_%016llX / ps_%016llX keeps the game's shader in flat (pair %u of at most "
+                    "16 named this session).", static_cast<unsigned long long>(vs), static_cast<unsigned long long>(ps),
+                    g_withheldPairCount);
+}
 uint64_t g_windowStartMs = 0;
 uint64_t g_lastGaps = 0;                 // g_emit.gaps at the last frame boundary
 uint32_t g_lastSubstitution = ~0u;       // the present frame of the last substitution
@@ -1932,18 +1965,11 @@ void slowPath(ID3D11DeviceContext* ctx, bool rtv0Eye) {
     // vertex patch where the family needs one. Nothing -- slot target, clear,
     // snapshot, MRT6 -- is prepared for a draw that cannot export ownership;
     // a declined draw puts the game's state back, as before.
-    if (runtimeFlatProfile() && engine_velocity_family::flatSubstitutionWithheld(vsHash, psHash)) {
-        if (g_decorationWorkaround < 0) {
-            const bool fixed = dxmtFixesPartialWriteMaskDiscard(ctx);
-            g_decorationWorkaround = fixed ? 0 : 1;
-            Log::get().note(fixed ? "engine motion: station window decoration: DXMT reports its partial write mask fix, so the "
-                                    "decoration (vs_DE545DC8 / ps_91F8937E) is substituted as any other keyed draw."
-                                  : "engine motion: station window decoration: workaround on. This D3D11 does not report the partial "
-                                    "write mask fix (stock DXMT, or not DXMT), so the decoration (vs_DE545DC8 / ps_91F8937E) keeps the "
-                                    "game's shader in flat; it loses only per-object motion. Counted in the flat draw bracket line.");
-        }
-        if (g_decorationWorkaround == 1) {
+    if (runtimeFlatProfile() && keyedPs(f, psHash, true)) {
+        const auto psInfo = g_ps.find(ps);
+        if (psInfo != g_ps.end() && psInfo->second.discards && discardWorkaroundOn(ctx)) {
             ++g_draw.flatWithheld;
+            noteWithheldPair(vsHash, psHash);
             restore(ctx);
             return;
         }
@@ -2588,10 +2614,11 @@ void summaryLocked(uint64_t now, ID3D11DeviceContext* ctx) {
                         u(by[unsigned(Cause::kOverlay)]),
                         u(by[unsigned(Cause::kEager)]),
                         substituted ? double(stateCallsWindow) / double(substituted) : 0.0);
-        Log::get().note("engine motion: station window decoration over %.0f s: %s.", seconds,
-                        g_decorationWorkaround < 0 ? "not drawn yet (no decision)"
-                        : g_decorationWorkaround == 0 ? "DXMT's fix, substituted as usual"
-                        : (std::string("workaround on, ") + std::to_string(g_draw.flatWithheld) + " draws kept the game's shader").c_str());
+        Log::get().note("engine motion: discard workaround over %.0f s: %s.", seconds,
+                        g_discardWorkaround < 0 ? "no keyed discarding draw yet (no decision)"
+                        : g_discardWorkaround == 0 ? "off, DXMT's fix: substituted as usual"
+                        : (std::string("on, ") + std::to_string(g_draw.flatWithheld) + " draws of " + std::to_string(g_withheldPairCount) +
+                           " pairs kept the game's shader").c_str());
     }
     // The snapshots' copy traffic (item 4, measured only): logical bytes
     // submitted, not GPU time -- a CopyResource's CPU submission prices
@@ -2986,6 +3013,7 @@ void engineVelocityRememberPs(ID3D11PixelShader* shader, uint64_t hash, const vo
     info.object = shader;
     info.hash = hash;
     info.linked = linked;
+    info.discards = engineVelocityPsDiscards(bytecode, bytes);
     info.bytes.assign(static_cast<const BYTE*>(bytecode), static_cast<const BYTE*>(bytecode) + bytes);
     g_ps.emplace(shader, std::move(info));
 }
