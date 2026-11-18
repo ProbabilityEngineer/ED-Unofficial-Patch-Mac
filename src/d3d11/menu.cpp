@@ -2631,7 +2631,7 @@ void buildContent(MenuContent& c) {
 
     // If the FPS overlay is locked to the menu, show the same readout at the
     // top of the menu panel so both are visible for A/B testing.
-    if (s.overlay && s.overlayLock) {
+    if (s.overlayLock) {   // ed-metalfx: independent of the on-screen level, which may be off
         char line[120];
         perfMonitorOverlayLine(line, sizeof(line));
         strncpy(c.overlayLine, line, sizeof(c.overlayLine) - 1);
@@ -5091,7 +5091,23 @@ static float menuReadTooltipDelay(Config& cfg) {
     return delay;
 }
 
-// menu.fps_overlay (off | compact | detailed; the old on and off still read) and menu.fps_overlay_lock, in both profiles (the flat allow-list carries them,
+// The readout level now in force (menu.fps_overlay), from the config or the readout key. ed-metalfx: one setting decides what the flat screen shows while
+// flying -- off, the compact line, the detailed card, or full (the monitor panel) -- so the key and the F8 row can never disagree.
+static void setOverlayMode(FpsOverlayMode mode) {
+    State& s = g_s;
+    if (s.configured && mode != s.overlayMode) {
+        Log::get().note("menu: the frame-rate overlay is %s.", fpsOverlayWord(mode));
+        if (s.open && s.overlayLock) s.contentDirty = true;
+        s.overlayTextMs = 0;   // the next tick builds the new shape at once
+        s.overlayText.clear();
+        s.flatReadout.clear();
+    }
+    s.overlayMode = mode;
+    s.overlay = mode != FpsOverlayMode::Off;
+    s.monitorPanelOpen = runtimeFlatProfile() && mode == FpsOverlayMode::Full;
+}
+
+// menu.fps_overlay (off | compact | detailed | full; the old on and off still read) and menu.fps_overlay_lock, in both profiles (the flat allow-list carries them,
 // flat_profile_keys.h); the yaw and pitch are the headset's and are read, with their defaults, in both.
 static void menuReadFpsOverlayKeys(Config& cfg) {
     State& s = g_s;
@@ -5101,20 +5117,12 @@ static void menuReadFpsOverlayKeys(Config& cfg) {
     float pitch = cfg.getFloat("menu.fps_overlay_pitch", 20.0f);
     if (!(yaw >= -60.0f) || yaw > 60.0f) yaw = 0.0f;
     if (!(pitch >= -45.0f) || pitch > 45.0f) pitch = 20.0f;
-    if (s.configured && mode != s.overlayMode) {
-        Log::get().note("menu: the frame-rate overlay is %s.", fpsOverlayWord(mode));
-        if (s.open && (ovLock || s.overlayLock)) s.contentDirty = true;
-        s.overlayTextMs = 0;   // the next tick builds the new shape at once
-        s.overlayText.clear();
-        s.flatReadout.clear();
-    }
     if (s.configured && ovLock != s.overlayLock) {
-        Log::get().note("menu: the frame-rate overlay is %s while the menu is open.", ovLock ? "locked on" : "no longer locked");
-        if (s.open && mode != FpsOverlayMode::Off) s.contentDirty = true;
+        Log::get().note("menu: the frame-rate line is %s the open menu.", ovLock ? "shown in" : "no longer shown in");
+        if (s.open) s.contentDirty = true;
     }
-    s.overlayMode = mode;
-    s.overlay = mode != FpsOverlayMode::Off;
     s.overlayLock = ovLock;
+    setOverlayMode(mode);
     s.overlayYaw = yaw;
     s.overlayPitch = pitch;
 }
@@ -5222,7 +5230,6 @@ void menuConfigure(Config& cfg) {
                 }
             }
         }
-        if (!s.monitorKey.bound()) s.monitorPanelOpen = false;   // nothing could put it away again
     }
     if (pol.adoptGameKeys) menuAdoptGameBindingsSwitch(cfg, summonChanged, key);
     if (pol.readsMenuKeys) {
@@ -5637,9 +5644,18 @@ void menuTick(ID3D11Device* dev) {
         // The flat monitor panel's key: up or down whatever the menu is doing. The panel takes no input, so the press is only watched (the game sees it too);
         // a hotkey row waiting for its input takes the edge as a candidate instead. pressed() is read every tick so its edge latch stays current.
         if (pol.monitorPanel) {
-            const bool was = s.monitorPanelOpen;
-            s.monitorPanelOpen = menuMonitorPanelToggle(s.monitorKey.pressed(), s.monitorPanelOpen, hotkeysPage && s.captureEntry >= 0);
-            if (s.monitorPanelOpen != was) Log::get().note("menu: the monitor panel is %s (%s).", s.monitorPanelOpen ? "up" : "down", s.monitorKeyName.c_str());
+            // ed-metalfx: the key steps the readout level (off -> compact -> detailed -> full) and saves it through the F8 row's own write, so the row shows it.
+            if (menuMonitorPanelToggle(s.monitorKey.pressed(), false, hotkeysPage && s.captureEntry >= 0)) {
+                const FpsOverlayMode next = nextFpsOverlay(s.overlayMode);
+                for (int i = 0; i < kRowDefCount; ++i) {
+                    if (strcmp(kMenuRows[i].section, "menu") == 0 && strcmp(kMenuRows[i].key, "fps_overlay") == 0) {
+                        applyChange(i, fpsOverlayWord(next));
+                        break;
+                    }
+                }
+                setOverlayMode(next);
+                Log::get().note("menu: %s set the frame-rate readout to %s.", s.monitorKeyName.c_str(), fpsOverlayWord(next));
+            }
             if (s.monitorKey.takeMissedWhileUnfocused())
                 Log::get().note("menu: %s (the monitor panel key) was pressed while Elite was unfocused.", s.monitorKeyName.c_str());
         }
@@ -5776,7 +5792,7 @@ void menuTick(ID3D11Device* dev) {
                     s.anchorValid = headPose(pose);
                     if (s.anchorValid) {
                         // compact: twice a second; detailed: about four times a second, and always re-rasterised (its strip moves).
-                        const bool detailed = s.overlayMode == FpsOverlayMode::Detailed;
+                        const bool detailed = s.overlayMode == FpsOverlayMode::Detailed || s.overlayMode == FpsOverlayMode::Full;
                         if (!s.overlayUp || dueMs(s.overlayTextMs, detailed ? 250 : 500)) {
                             s.overlayTextMs = stampMs();
                             if (detailed) {
@@ -5824,8 +5840,7 @@ void menuTick(ID3D11Device* dev) {
         // The flat frame-rate readout (menu.fps_overlay): it has the monitor slot (menuPanelSubmitMonitor), top right, so the menu card and the notices (the menu's
         // slot, top left) never hold it back and it never holds them back. It shares the slot with the monitor panel, which is why the two are never wanted at once
         // (flatReadoutWanted): each machine reads the slot's serial before its first submit and is composited only once the serial has moved, so the other's
-        // raster left in the slot is never shown as its own. With menu.fps_overlay_lock the open menu's card carries the readout line itself, so the separate
-        // readout waits for the menu to close.
+        // raster left in the slot is never shown as its own. The open menu's own line (menu.fps_overlay_lock) does not hold it back (ed-metalfx).
         if (pol.noticePlacement == MenuNoticePlacement::ScreenCorner) {
             const bool wanted = flatReadoutWanted(s.overlayMode != FpsOverlayMode::Off, s.monitorPanelOpen, s.open, s.overlayLock);
             const bool detailed = s.overlayMode == FpsOverlayMode::Detailed;
@@ -5924,7 +5939,7 @@ void menuTick(ID3D11Device* dev) {
                 }
                 // The locked FPS readout refreshes at the same cadence as the
                 // head-locked overlay: twice a second, cheaply.
-                if (s.open && s.overlay && s.overlayLock && dueMs(s.menuOverlayTextMs, 500)) {
+                if (s.open && s.overlayLock && dueMs(s.menuOverlayTextMs, 500)) {
                     s.menuOverlayTextMs = stampMs();
                     s.contentDirty = true;
                 }

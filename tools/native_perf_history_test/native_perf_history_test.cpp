@@ -840,6 +840,10 @@ void fpsOverlayModes() {
     check(parseFpsOverlay("  Detailed \r")==FpsOverlayMode::Detailed&&parseFpsOverlay("ON")==FpsOverlayMode::Compact,"fps overlay: case and surrounding blanks do not matter");
     check(parseFpsOverlay("")==FpsOverlayMode::Off&&parseFpsOverlay(nullptr)==FpsOverlayMode::Off&&parseFpsOverlay("loud")==FpsOverlayMode::Off,"fps overlay: empty, missing and unknown read as the default, off");
     check(!std::strcmp(fpsOverlayWord(FpsOverlayMode::Compact),"compact")&&parseFpsOverlay(fpsOverlayWord(FpsOverlayMode::Detailed))==FpsOverlayMode::Detailed,"fps overlay: the words the menu writes read back");
+    check(parseFpsOverlay("full")==FpsOverlayMode::Full&&parseFpsOverlay(fpsOverlayWord(FpsOverlayMode::Full))==FpsOverlayMode::Full,"fps overlay: full (the monitor panel) reads and writes back");
+    check(nextFpsOverlay(FpsOverlayMode::Off)==FpsOverlayMode::Compact&&nextFpsOverlay(FpsOverlayMode::Compact)==FpsOverlayMode::Detailed&&
+              nextFpsOverlay(FpsOverlayMode::Detailed)==FpsOverlayMode::Full&&nextFpsOverlay(FpsOverlayMode::Full)==FpsOverlayMode::Off,
+          "fps overlay: the readout key steps off, compact, detailed, full, off");
 }
 void detailedText() {
     char a[96],b[96];

@@ -9,7 +9,7 @@
 
 namespace edvr {
 
-enum class FpsOverlayMode { Off, Compact, Detailed };
+enum class FpsOverlayMode { Off, Compact, Detailed, Full };
 
 inline FpsOverlayMode parseFpsOverlay(const char* text) {
   if (!text) return FpsOverlayMode::Off;
@@ -22,11 +22,21 @@ inline FpsOverlayMode parseFpsOverlay(const char* text) {
   if (!std::strcmp(word, "compact") || !std::strcmp(word, "on") || !std::strcmp(word, "true") || !std::strcmp(word, "yes") || !std::strcmp(word, "1"))
     return FpsOverlayMode::Compact;
   if (!std::strcmp(word, "detailed")) return FpsOverlayMode::Detailed;
+  // full (ed-metalfx): the flat monitor panel; the headset shows it as detailed.
+  if (!std::strcmp(word, "full")) return FpsOverlayMode::Full;
   return FpsOverlayMode::Off;
 }
 
 inline const char* fpsOverlayWord(FpsOverlayMode m) {
-  return m == FpsOverlayMode::Compact ? "compact" : m == FpsOverlayMode::Detailed ? "detailed" : "off";
+  return m == FpsOverlayMode::Compact ? "compact" : m == FpsOverlayMode::Detailed ? "detailed" : m == FpsOverlayMode::Full ? "full" : "off";
+}
+
+// The readout key's step (ed-metalfx, hotkey.monitor_panel): off -> compact -> detailed -> full -> off.
+inline FpsOverlayMode nextFpsOverlay(FpsOverlayMode m) {
+  return m == FpsOverlayMode::Off ? FpsOverlayMode::Compact
+       : m == FpsOverlayMode::Compact ? FpsOverlayMode::Detailed
+       : m == FpsOverlayMode::Detailed ? FpsOverlayMode::Full
+       : FpsOverlayMode::Off;
 }
 
 }  // namespace edvr

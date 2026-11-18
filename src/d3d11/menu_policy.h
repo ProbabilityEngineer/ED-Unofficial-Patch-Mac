@@ -182,11 +182,14 @@ inline bool menuMonitorPanelToggle(bool pressed, bool panelUp, bool captureActiv
   return !panelUp;
 }
 
-// The flat frame-rate readout is wanted: it is on, the monitor panel is down (the panel shares its slot and corner and shows everything the readout does), and
-// the menu card is not carrying the readout's line itself (menu.fps_overlay_lock). The menu being open, or a notice, does not hold it back: they have the
-// menu's slot, in the upper left.
+// The flat frame-rate readout is wanted: it is on and the monitor panel is down (the panel shares its slot and corner and shows everything the readout does).
+// The menu being open, a notice, or the menu's own line does not hold it back: they have the menu's slot, in the upper left.
 inline bool flatReadoutWanted(bool readoutOn, bool monitorPanelUp, bool menuOpen, bool lockedIntoMenu) {
-  return readoutOn && !monitorPanelUp && !(menuOpen && lockedIntoMenu);
+  // ed-metalfx: the menu's own compact line (menu.fps_overlay_lock) no longer hides the readout. The readout is the one the readout key chose and shows more
+  // than that line, and it has the other corner, so both are drawn.
+  (void)menuOpen;
+  (void)lockedIntoMenu;
+  return readoutOn && !monitorPanelUp;
 }
 
 // A status page (the Status page) hands the keyboard back to the game, unless the profile's panel always takes it (flat, MenuProfilePolicy::keyboardAlwaysPrivate:
