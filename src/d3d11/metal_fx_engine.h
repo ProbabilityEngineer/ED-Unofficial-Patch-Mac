@@ -142,7 +142,12 @@ static_assert(sizeof(TemporalUpscaleDesc) % alignof(TemporalUpscaleDesc) == 0, "
 // GPU supports temporal scaling (id<MTLFXTemporalScaler>). DXMT answers FALSE
 // rather than an error when it does not, so a FALSE here is a normal outcome
 // and not a fault.
-enum class Feature : int { MetalFxTemporalScaler = 0 };
+enum class Feature : int {
+    MetalFxTemporalScaler = 0,
+    // ed-metalfx's DXMT fork only (its d3d11_interfaces.hpp, MTL_FEATURE_PRIVATE_PARTIAL_WRITEMASK_DISCARD_FIXED): the build emulates
+    // partial colour write masks in pixel shaders that discard, which the Apple driver mishandles. Stock DXMT answers E_INVALIDARG.
+    PrivatePartialWriteMaskDiscardFixed = 0x45440001,
+};
 
 // dxmt/src/d3d11/d3d11_interfaces.hpp:24. The base is IUnknown with DXMT's
 // three methods in DXMT's order, so TemporalUpscale is vtable slot 3 and
@@ -225,5 +230,11 @@ inline float mfxJitterOffsetY(float jy) { return kJitterSign * jy; }
 bool mfxEvaluate(ID3D11DeviceContext* ctx, ID3D11Texture2D* colour, ID3D11Texture2D* depth,
                  ID3D11Texture2D* mv, ID3D11Texture2D* out, uint32_t w, uint32_t h, uint32_t outW,
                  uint32_t outH, float jx, float jy, bool reset, const char** why, bool autoExposure);
+
+// Whether the D3D11 under the game is a DXMT that says it has fixed the Apple fault with a pixel shader that discards and a
+// partial colour write mask (Feature::PrivatePartialWriteMaskDiscardFixed). False for stock DXMT (an unknown feature), for any
+// D3D11 without DXMT's interface, and for a failed query: the caller then keeps its own workaround. Asks DXMT once per
+// context; logs nothing (the caller says what it decided).
+bool dxmtFixesPartialWriteMaskDiscard(ID3D11DeviceContext* ctx);
 
 } // namespace edvr

@@ -237,4 +237,24 @@ bool mfxEvaluate(ID3D11DeviceContext *ctx, ID3D11Texture2D *colour, ID3D11Textur
     return true;
 }
 
+bool dxmtFixesPartialWriteMaskDiscard(ID3D11DeviceContext *ctx) {
+    static ID3D11DeviceContext *s_context = nullptr;
+    static bool s_fixed = false;
+    if (!ctx) return false;
+    if (ctx == s_context) return s_fixed;
+    s_context = ctx;
+    s_fixed = false;
+    mfx::ContextExt *base = nullptr;
+    if (FAILED(ctx->QueryInterface(mfx::kIidContextExt, reinterpret_cast<void **>(&base))) || !base) return false;
+    mfx::ContextExt1 *ext1 = nullptr;
+    const bool haveExt1 = SUCCEEDED(base->QueryInterface(mfx::kIidContextExt1, reinterpret_cast<void **>(&ext1))) && ext1;
+    base->Release();
+    if (!haveExt1) return false;
+    BOOL fixed = FALSE;
+    const HRESULT hr = ext1->CheckFeatureSupport(mfx::Feature::PrivatePartialWriteMaskDiscardFixed, &fixed, sizeof(fixed));
+    ext1->Release();
+    s_fixed = SUCCEEDED(hr) && fixed;
+    return s_fixed;
+}
+
 } // namespace edvr
