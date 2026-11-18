@@ -502,7 +502,7 @@ void panelTable(const std::string& root, const std::string& gen) {
               flatVisualHasRow("visual", "star_glow") && flatVisualHasRow("visual", "cockpit_glass") && flatVisualHasRow("visual", "cockpit_glass_dirt") &&
               flatVisualHasRow("fix", "particle_billboard") && !flatVisualHasRow("fix", "temporal_aa") && flatProfileReadsKey("fix.particle_billboard") &&
               flatProfileReadsKey("visual.cockpit_glass_dirt") && flatVisualHasRow("visual", "cockpit_glass_lights") && flatProfileReadsKey("visual.cockpit_glass_lights"),
-          "the Visual tab has the Intro movie, the Star glow, the Cockpit glass, its Legacy glass dirt and lights and the Billboards (the table's order; the tab's is edvr.ini's), and the flat gate reads the dirt and lights keys");
+          "the Visual tab has the Intro movie, the Star glow, the Cockpit glass, its Legacy glass dirt and lights and the Billboards (the tab follows the table's order since 2026-11-18, so the HDR whites sit under HDR output), and the flat gate reads the dirt and lights keys");
     check(!flatPageHasRow("fix", "particle_billboard") && !flatDebugHasRow("fix", "particle_billboard"), "the Billboards row is on the Visual tab only");
     check(!flatPageHasRow("visual", "star_glow") && !flatDebugHasRow("visual", "star_glow") && !flatVisualHasRow("advanced", "flat_cpu_timing"),
           "no key is on two tabs");

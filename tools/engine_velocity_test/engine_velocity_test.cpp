@@ -446,6 +446,17 @@ int wmain(int argc, wchar_t** argv) {
               !edvr::engine_velocity_family::supportedPair(a.vs, a.ps),
               "F10: the NPC pairs stay unkeyed in flat (the weapon families' foreground and source routing)");
     }
+    {
+        // The station window decoration workaround (engine_velocity_families.h): the predicate names exactly this pair, and the pair
+        // stays keyed in flat, so the HDR route, frame selection and the jitter recipes are unchanged by it.
+        namespace evf = edvr::engine_velocity_family;
+        const uint64_t decoVs = 0xDE545DC8EE4FBB87ull, decoPs = 0x91F8937EDA723663ull;
+        check(evf::flatSubstitutionWithheld(decoVs, decoPs), "decoration workaround: the station window decoration pair is withheld");
+        check(!evf::flatSubstitutionWithheld(decoVs, 0x03B17F89B31C4788ull) && !evf::flatSubstitutionWithheld(0x123456789abcdef0ull, decoPs),
+              "decoration workaround: no other pair is withheld (the moving-rig material is not confirmed)");
+        check(evf::keyedPs(evf::familyOfVs(decoVs), decoPs, true) && evf::supportedPair(decoVs, decoPs),
+              "decoration workaround: the pair stays keyed and supported in flat");
+    }
     edvr::g_runtimeProfile = edvr::RuntimeProfile::LegacyVr;
     shader_tests::run({device.Get(), context.Get(), &check});
     overlay_depth_gpu_tests::run(device.Get(), context.Get(), &check);

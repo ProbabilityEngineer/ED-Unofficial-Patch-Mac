@@ -5135,7 +5135,7 @@ void STDMETHODCALLTYPE hookedDrawIndexedInstancedIndirect(
             if (!pane.withheld()) g_state->realDrawIndexedInstancedIndirect(self, args, off);
         }
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
-        flatDraw.uiReissue([&] { ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawIndexedInstancedIndirect(self, args, off); });
+        flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawIndexedInstancedIndirect(self, args, off); });
         return;
     }
     if (g_vrWorldInternal) { g_state->realDrawIndexedInstancedIndirect(self, args, off); return; }
@@ -5176,7 +5176,7 @@ void STDMETHODCALLTYPE hookedDrawInstancedIndirect(ID3D11DeviceContext* self,
             if (!pane.withheld()) g_state->realDrawInstancedIndirect(self, args, off);
         }
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
-        flatDraw.uiReissue([&] { ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawInstancedIndirect(self, args, off); });
+        flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawInstancedIndirect(self, args, off); });
         return;
     }
     if (g_vrWorldInternal) { g_state->realDrawInstancedIndirect(self, args, off); return; }
@@ -5578,7 +5578,7 @@ void STDMETHODCALLTYPE hookedDraw(ID3D11DeviceContext* self, UINT count, UINT st
             // visual.star_light_colour (flat_star_light.h): the ring dust's light, for its two draws only; one relaxed load while off.
             const bool hazeArmed = starLightLive() && self == g_state->ownerCtx;
             StarLightHazeScope haze(self, hazeArmed, hazeArmed ? bindingShaderHash(BindSlot::Vs) : 0, hazeArmed ? bindingShaderHash(BindSlot::Ps) : 0);
-            HdrNitsScope hdrNits(self, self == g_state->ownerCtx && hdrOutputOn());   // fix.hdr: the live nits at PS b13 for EDVR's tone and copy shaders
+            HdrNitsScope hdrNits(self, self == g_state->ownerCtx && hdrOutputOn(), flatDraw.outputCopy);   // fix.hdr: the live nits at PS b13 for EDVR's tone and copy shaders
             ConcoursePaneScope pane(self, count, start, 0, 'D', kConcoursePaneCalls);   // TEMPORARY (concourse_pane.h): the outside's non-indexed draws (beams, flares, the scatter) are withheld here; no mirror, the glass is indexed
             if (sun.issues() && !pane.withheld()) g_state->realDraw(self, count, start);
         }
@@ -5586,7 +5586,7 @@ void STDMETHODCALLTYPE hookedDraw(ID3D11DeviceContext* self, UINT count, UINT st
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
         // visual.cockpit_glass = legacy (cockpit_glass.h): over the game's ice or condensation canopy draw, the legacy dirt, drawn again with EDVR's overlay; one relaxed load otherwise
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx && cockpitGlassOverlayBegin(self)) { g_state->realDraw(self, count, start); cockpitGlassOverlayEnd(self); }
-        if (!stationSkip) flatDraw.uiReissue([&] { ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDraw(self, count, start); });
+        if (!stationSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDraw(self, count, start); });
         return;
     }
     if (g_vrWorldInternal) { g_state->realDraw(self, count, start); return; }   // the world route's own draw (vr_world_route.h)
@@ -5649,7 +5649,7 @@ void STDMETHODCALLTYPE hookedDrawAuto(ID3D11DeviceContext* self) {
             if (!pane.withheld()) g_state->realDrawAuto(self);
         }
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
-        flatDraw.uiReissue([&] { ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawAuto(self); });
+        flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawAuto(self); });
         return;
     }
     if (g_vrWorldInternal) { g_state->realDrawAuto(self); return; }
@@ -5687,7 +5687,7 @@ void STDMETHODCALLTYPE hookedDrawIndexed(ID3D11DeviceContext* self, UINT count,
             // visual.star_light_colour (flat_star_light.h): the ring dust's light, for its two draws only; one relaxed load while off.
             const bool hazeArmed = starLightLive() && self == g_state->ownerCtx;
             StarLightHazeScope haze(self, hazeArmed, hazeArmed ? bindingShaderHash(BindSlot::Vs) : 0, hazeArmed ? bindingShaderHash(BindSlot::Ps) : 0);
-            HdrNitsScope hdrNits(self, self == g_state->ownerCtx && hdrOutputOn());   // fix.hdr: the live nits at PS b13 for EDVR's tone and copy shaders
+            HdrNitsScope hdrNits(self, self == g_state->ownerCtx && hdrOutputOn(), flatDraw.outputCopy);   // fix.hdr: the live nits at PS b13 for EDVR's tone and copy shaders
             ConcoursePaneScope pane(self, count, startIndex, baseVertex, 'I', kConcoursePaneCalls);
             if (sun.issues() && !pane.withheld()) {
                 g_state->realDrawIndexed(self, count, startIndex, baseVertex);
@@ -5697,7 +5697,7 @@ void STDMETHODCALLTYPE hookedDrawIndexed(ID3D11DeviceContext* self, UINT count,
         sun.restore();
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx && cockpitGlassOverlayBegin(self)) { g_state->realDrawIndexed(self, count, startIndex, baseVertex); cockpitGlassOverlayEnd(self); }
-        if (!stationSkip) flatDraw.uiReissue([&] { ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawIndexed(self, count, startIndex, baseVertex); });
+        if (!stationSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawIndexed(self, count, startIndex, baseVertex); });
         return;
     }
     if (g_vrWorldInternal) { g_state->realDrawIndexed(self, count, startIndex, baseVertex); return; }
@@ -5796,14 +5796,14 @@ void STDMETHODCALLTYPE hookedDrawInstanced(ID3D11DeviceContext* self, UINT perIn
             // visual.star_light_colour (flat_star_light.h): the ring dust's light, for its two draws only; one relaxed load while off.
             const bool hazeArmed = starLightLive() && self == g_state->ownerCtx;
             StarLightHazeScope haze(self, hazeArmed, hazeArmed ? bindingShaderHash(BindSlot::Vs) : 0, hazeArmed ? bindingShaderHash(BindSlot::Ps) : 0);
-            HdrNitsScope hdrNits(self, self == g_state->ownerCtx && hdrOutputOn());   // fix.hdr: the live nits at PS b13 for EDVR's tone and copy shaders
+            HdrNitsScope hdrNits(self, self == g_state->ownerCtx && hdrOutputOn(), flatDraw.outputCopy);   // fix.hdr: the live nits at PS b13 for EDVR's tone and copy shaders
             ConcoursePaneScope pane(self, perInstance, startVertex, 0, 'N', kConcoursePaneCalls);   // TEMPORARY (concourse_pane.h): the outside's non-indexed draws (beams, flares, the scatter) are withheld here; no mirror, the glass is indexed
             if (sun.issues() && !pane.withheld()) g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance);
         }
         sun.restore();
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx && cockpitGlassOverlayBegin(self)) { g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance); cockpitGlassOverlayEnd(self); }
-        if (!stationSkip) flatDraw.uiReissue([&] { ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance); });
+        if (!stationSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance); });
         return;
     }
     if (g_vrWorldInternal) { g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance); return; }
@@ -5893,7 +5893,7 @@ void STDMETHODCALLTYPE hookedDrawIndexedInstanced(ID3D11DeviceContext* self,
             // visual.star_light_colour (flat_star_light.h): the ring dust's light, for its two draws only; one relaxed load while off.
             const bool hazeArmed = starLightLive() && self == g_state->ownerCtx;
             StarLightHazeScope haze(self, hazeArmed, hazeArmed ? bindingShaderHash(BindSlot::Vs) : 0, hazeArmed ? bindingShaderHash(BindSlot::Ps) : 0);
-            HdrNitsScope hdrNits(self, self == g_state->ownerCtx && hdrOutputOn());   // fix.hdr: the live nits at PS b13 for EDVR's tone and copy shaders
+            HdrNitsScope hdrNits(self, self == g_state->ownerCtx && hdrOutputOn(), flatDraw.outputCopy);   // fix.hdr: the live nits at PS b13 for EDVR's tone and copy shaders
             ConcoursePaneScope pane(self, perInstance, startIndex, baseVertex, 'X', kConcoursePaneCalls);
             if (sun.issues() && !pane.withheld()) {
                 g_state->realDrawIndexedInstanced(self, perInstance, instances, startIndex,
@@ -5906,7 +5906,7 @@ void STDMETHODCALLTYPE hookedDrawIndexedInstanced(ID3D11DeviceContext* self,
         sun.restore();
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx && cockpitGlassOverlayBegin(self)) { g_state->realDrawIndexedInstanced(self, perInstance, instances, startIndex, baseVertex, startInstance); cockpitGlassOverlayEnd(self); }
-        if (!stationSkip) flatDraw.uiReissue([&] { ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawIndexedInstanced(self, perInstance, instances, startIndex, baseVertex, startInstance); });
+        if (!stationSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawIndexedInstanced(self, perInstance, instances, startIndex, baseVertex, startInstance); });
         return;
     }
     if (g_vrWorldInternal) { g_state->realDrawIndexedInstanced(self, perInstance, instances, startIndex, baseVertex, startInstance); return; }

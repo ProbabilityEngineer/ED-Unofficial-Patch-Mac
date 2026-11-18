@@ -147,6 +147,11 @@ struct State {
 };
 
 State g;
+// The live nits at b13 (hdrOutputNitsBind): the game draws that had them, by shader, since the last report. A replacement shader drawn
+// without them reads the values compiled in at attach. 30 s windows, so a route that never binds (copy 0 with AA on) shows in a log.
+// copyByContext: output copies the binding shadow missed but the context's own PS showed to be ours (the AA route's copy, item 28);
+// copyOther: output copies whose bound PS is not EDVR's copy replacement at all, so no scene-to-UI scale can reach them.
+struct NitsBindCounts { uint64_t tone = 0, toneNoBloom = 0, copy = 0, copyByContext = 0, copyOther = 0; uint64_t sinceMs = 0; } g_nitsBinds;
 
 // ---- macOS EDR, from DXMT's winemetal.dll ---------------------------------
 // The read costs ~0.9 ms (flight 2026-11-16: DXMT builds a ColorSync profile per call), so it runs on its own thread every 50 ms
@@ -487,6 +492,13 @@ void uploadNits(ID3D11DeviceContext* context) {
     context->UpdateSubresource(g.nitsCb, 0, nullptr, v, 0, 0);
 }
 
+// Scene white is auto when it says so or is not set at all (2026-11-18: the unset default follows macOS's SDR white; 261, the
+// RenoDX preset's diffuse white, stays only as resolveNits' fallback where auto has no EDR reading). UI white keeps 500 unset.
+bool sceneNitsAuto(const Config& cfg) {
+    const std::string v = cfg.getString("advanced.hdr_scene_nits", "");
+    return v.empty() || _stricmp(v.c_str(), "auto") == 0;
+}
+
 // The live settings (2026-11-16): advanced.hdr_scene_nits, hdr_ui_nits, hdr_peak_nits, hdr_highlights and hdr_grading are read
 // again whenever the config changes (the ini is re-read when its file changes), so an A/B comparison needs no restart. fix.hdr,
 // hdr_encode, hdr_gamma and hdr_widen still take a restart (the swapchain, the transform's domain and the textures are settled early).
@@ -495,7 +507,7 @@ void refreshSettings(ID3D11DeviceContext* context) {
     const uint32_t gen = cfg.generation();
     if (gen == g.cfgGeneration) return;
     g.cfgGeneration = gen;
-    const bool autoScene = _stricmp(cfg.getString("advanced.hdr_scene_nits", "").c_str(), "auto") == 0;
+    const bool autoScene = sceneNitsAuto(cfg);
     const bool autoUi = _stricmp(cfg.getString("advanced.hdr_ui_nits", "").c_str(), "auto") == 0;
     const float scene = autoScene ? 0.0f : cfg.getFloat("advanced.hdr_scene_nits", 0.0f);
     const float ui = autoUi ? 0.0f : cfg.getFloat("advanced.hdr_ui_nits", 0.0f);
@@ -980,7 +992,7 @@ void hdrOutputStartup() {
     const std::string encode = cfg.getString("advanced.hdr_encode", "pq");
     const bool linear = _stricmp(encode.c_str(), "linear") == 0;
     g.wantPq = !linear;
-    g.autoScene = _stricmp(cfg.getString("advanced.hdr_scene_nits", "").c_str(), "auto") == 0;
+    g.autoScene = sceneNitsAuto(cfg);
     g.autoUi = _stricmp(cfg.getString("advanced.hdr_ui_nits", "").c_str(), "auto") == 0;
     g.cfgScene = g.autoScene ? 0.0f : cfg.getFloat("advanced.hdr_scene_nits", 0.0f);
     g.cfgUi = g.autoUi ? 0.0f : cfg.getFloat("advanced.hdr_ui_nits", 0.0f);
@@ -1392,11 +1404,26 @@ void hdrOutputNoteDraw(ID3D11DeviceContext* ctx) {
     if (ctx) noteToneDraw(ctx);
 }
 
-bool hdrOutputNitsBind(ID3D11DeviceContext* ctx, ID3D11Buffer** saved) {
+bool hdrOutputNitsBind(ID3D11DeviceContext* ctx, ID3D11Buffer** saved, bool outputCopy) {
     *saved = nullptr;
     if (!ctx || !g.nitsCb) return false;
     void* ps = bindingGet(BindSlot::Ps);
+    // The game's output copy (the flat runtime says which draw it is, once a frame): the shader actually bound decides, not the
+    // shadow. With flat AA on, the copy's draw scope resolves before the game's issue and the shadow stopped naming the copy's
+    // pixel shader (flight 2026-11-18 03:45: 0 final-copy binds with AA on, one per tone draw with it off).
+    if (outputCopy && ps != g.copyPs) {
+        ID3D11PixelShader* bound = nullptr;
+        ctx->PSGetShader(&bound, nullptr, nullptr);
+        if (bound) bound->Release();   // identity only; the context keeps its own reference
+        if (bound == g.copyPs) {
+            ps = bound;
+            ++g_nitsBinds.copyByContext;
+        } else {
+            ++g_nitsBinds.copyOther;
+        }
+    }
     if (!ps || (ps != g.tonePs && ps != g.toneNoBloomPs && ps != g.copyPs)) return false;
+    ++(ps == g.copyPs ? g_nitsBinds.copy : ps == g.tonePs ? g_nitsBinds.tone : g_nitsBinds.toneNoBloom);
     ctx->PSGetConstantBuffers(kNitsSlot, 1, saved);
     ID3D11Buffer* nits = g.nitsCb;
     ctx->PSSetConstantBuffers(kNitsSlot, 1, &nits);
@@ -1421,6 +1448,21 @@ void hdrOutputBeforePresent(IDXGISwapChain* swapChain, ID3D11DeviceContext* cont
     // After this frame's encode, so a whole frame (tone, copy, encode) uses one white; the next frame starts with the new one.
     refreshSettings(context);
     refreshAutoWhite(context);
+    {
+        const uint64_t now = GetTickCount64();
+        if (!g_nitsBinds.sinceMs) g_nitsBinds.sinceMs = now;
+        if (now - g_nitsBinds.sinceMs >= 30000) {
+            Log::get().note("hdr: live nits over %.0f s: bound for %llu tone, %llu tone (no bloom) and %llu final-copy draws (%llu of them "
+                            "found by the bound shader where the binding shadow missed; %llu output copies drew a shader that is not EDVR's "
+                            "copy). A replacement drawn without them uses the values compiled at attach; final-copy 0 while the game draws "
+                            "means its scene-to-UI scale (hdr_scene_nits / hdr_ui_nits) is not applied.",
+                            double(now - g_nitsBinds.sinceMs) / 1000.0, (unsigned long long)g_nitsBinds.tone,
+                            (unsigned long long)g_nitsBinds.toneNoBloom, (unsigned long long)g_nitsBinds.copy,
+                            (unsigned long long)g_nitsBinds.copyByContext, (unsigned long long)g_nitsBinds.copyOther);
+            g_nitsBinds = NitsBindCounts{};
+            g_nitsBinds.sinceMs = now;
+        }
+    }
     if (!encoded) {
         g.encodeFailed = true;
         Log::get().note("hdr: neither output path could run (%ux%u); the frame is presented "

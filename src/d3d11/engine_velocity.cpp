@@ -30,6 +30,7 @@
 #include "flat_origin_witness.h"
 #include "engine_velocity_primary_copy.h"
 #include "engine_velocity_families.h"
+#include "metal_fx_engine.h"   // dxmtFixesPartialWriteMaskDiscard: the station decoration workaround's gate
 #include "engine_velocity_unkeyed.h"
 #include "engine_velocity_state.h"
 #include "engine_motion_cpu.h"   // the CPU instrument: the draw side, apply, the tees and the lazy patches are timed here
@@ -536,9 +537,14 @@ struct DrawStats {
     // The flat lazy bracket (engineVelocityFlatBeginDraw): the runs of substituted draws EDVR's state was
     // bound for, the draws that found it still bound from the one before, and why the game's was put back.
     uint64_t flatRuns = 0, flatKept = 0, flatFlushBy[static_cast<unsigned>(EngineVelocityFlushCause::kCount)] = {};
+    // The station decoration's draws that kept the game's shader (flatSubstitutionWithheld), while DXMT reports no fix of its own.
+    uint64_t flatWithheld = 0;
     void clear() { *this = DrawStats{}; }
 };
 DrawStats g_draw;
+// The station decoration workaround (engine_velocity_families.h flatSubstitutionWithheld): -1 not yet decided, 0 off (DXMT reports
+// its fix), 1 on. Decided at the first flat draw of that pair that reaches the slow half, from the context it was drawn on.
+int g_decorationWorkaround = -1;
 uint64_t g_windowStartMs = 0;
 uint64_t g_lastGaps = 0;                 // g_emit.gaps at the last frame boundary
 uint32_t g_lastSubstitution = ~0u;       // the present frame of the last substitution
@@ -1926,6 +1932,22 @@ void slowPath(ID3D11DeviceContext* ctx, bool rtv0Eye) {
     // vertex patch where the family needs one. Nothing -- slot target, clear,
     // snapshot, MRT6 -- is prepared for a draw that cannot export ownership;
     // a declined draw puts the game's state back, as before.
+    if (runtimeFlatProfile() && engine_velocity_family::flatSubstitutionWithheld(vsHash, psHash)) {
+        if (g_decorationWorkaround < 0) {
+            const bool fixed = dxmtFixesPartialWriteMaskDiscard(ctx);
+            g_decorationWorkaround = fixed ? 0 : 1;
+            Log::get().note(fixed ? "engine motion: station window decoration: DXMT reports its partial write mask fix, so the "
+                                    "decoration (vs_DE545DC8 / ps_91F8937E) is substituted as any other keyed draw."
+                                  : "engine motion: station window decoration: workaround on. This D3D11 does not report the partial "
+                                    "write mask fix (stock DXMT, or not DXMT), so the decoration (vs_DE545DC8 / ps_91F8937E) keeps the "
+                                    "game's shader in flat; it loses only per-object motion. Counted in the flat draw bracket line.");
+        }
+        if (g_decorationWorkaround == 1) {
+            ++g_draw.flatWithheld;
+            restore(ctx);
+            return;
+        }
+    }
     if (!keyedPs(f, psHash, runtimeFlatProfile())) {
         if (selfMarkPs) {
             // Compatibility path for a marker-bearing shader: latch target
@@ -2566,6 +2588,10 @@ void summaryLocked(uint64_t now, ID3D11DeviceContext* ctx) {
                         u(by[unsigned(Cause::kOverlay)]),
                         u(by[unsigned(Cause::kEager)]),
                         substituted ? double(stateCallsWindow) / double(substituted) : 0.0);
+        Log::get().note("engine motion: station window decoration over %.0f s: %s.", seconds,
+                        g_decorationWorkaround < 0 ? "not drawn yet (no decision)"
+                        : g_decorationWorkaround == 0 ? "DXMT's fix, substituted as usual"
+                        : (std::string("workaround on, ") + std::to_string(g_draw.flatWithheld) + " draws kept the game's shader").c_str());
     }
     // The snapshots' copy traffic (item 4, measured only): logical bytes
     // submitted, not GPU time -- a CopyResource's CPU submission prices

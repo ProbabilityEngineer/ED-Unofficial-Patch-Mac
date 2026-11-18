@@ -160,6 +160,9 @@ struct FlatRuntimeDrawScope {
     // Begin bound the layer), the game's tonemap admitted for its re-issue (uiTone), the output copy that composites
     // (uiComposite).
     bool uiTake=false,uiTaken=false,uiEnded=false,uiTone=false,uiComposite=false;
+    // The game's output copy (pairFact.copyPair into the frame's output): fix.hdr's live nits read the copy's bound pixel shader for
+    // this draw (hdr_output.h HdrNitsScope), since the resolve above may leave the binding shadow not naming it.
+    bool outputCopy=false;
     uint64_t uiVs=0,uiPs=0;
     // The supercruise bars (2026-11-03, supercruise_bars.h): the decided draw is the bars family (uiBars; uiBarsVertices is its count), so its issue into the
     // layer goes through the private strip shader. Prepare runs before the layer's Begin, the strip's Begin after a true one (uiBarsBound), its End before

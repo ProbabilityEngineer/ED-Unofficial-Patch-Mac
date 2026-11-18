@@ -6486,6 +6486,7 @@ FlatRuntimeDrawScope::FlatRuntimeDrawScope(ID3D11DeviceContext* context, uint32_
     k.kind = flatContractKind(d.supported, k.color, k.depth, k.width, k.height, k.format, s.prefix.width, s.prefix.height, k.color == s.prefix.output);
     const bool tone = pairFact.toneSlot != ~0u;
     const bool copy = pairFact.copyPair && k.color == s.prefix.output;
+    outputCopy = copy;
     if(!copy && s.drawCapture.active()) {
         FlatComputeInternalScope guard;
         // This repeats the later source predicate only while F10 is armed, so
