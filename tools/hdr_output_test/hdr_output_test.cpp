@@ -223,7 +223,7 @@ void theFlatProfileReadsTheHdrKeys() {
 void theBrightnessRule() {
     const auto unset = rules::resolveNits(0, 0, 0, 1600);
     check(unset.scene == 261.0f && unset.ui == 500.0f,
-          "unset scene and UI white keep 261 and 500 nits");
+          "with no auto reading, unset scene and UI white fall back to 261 and 500 nits (unset scene is auto under DXMT)");
     check(unset.peak == 1600.0f && unset.peakFromDisplay,
           "an unset peak is the display's MaxLuminance (MacBook Pro XDR: 1600)");
     check(rules::resolveNits(0, 0, 0, 2000).peak == 2000.0f,

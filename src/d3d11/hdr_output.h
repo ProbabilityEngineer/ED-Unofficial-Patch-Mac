@@ -128,11 +128,15 @@ void hdrOutputNoteDraw(ID3D11DeviceContext* ctx);
 // The live nits (2026-11-16): EDVR's tone, no-bloom tone and copy shaders read scene white, UI white and peak from PS b13, so
 // advanced.hdr_*_nits = auto can follow macOS's SDR white without a restart. Bind returns true and saves the game's b13 when the
 // bound pixel shader is one of those three (one pointer compare otherwise); Restore puts the saved buffer back and releases it.
-bool hdrOutputNitsBind(ID3D11DeviceContext* ctx, ID3D11Buffer** saved);
+// `outputCopy`: the flat runtime named this draw the game's output copy (FlatRuntimeDrawScope::outputCopy, once a frame), so the
+// pixel shader is read from the context when the binding shadow does not name the copy replacement.
+bool hdrOutputNitsBind(ID3D11DeviceContext* ctx, ID3D11Buffer** saved, bool outputCopy = false);
 void hdrOutputNitsRestore(ID3D11DeviceContext* ctx, ID3D11Buffer* saved);
 class HdrNitsScope {
 public:
-    HdrNitsScope(ID3D11DeviceContext* ctx, bool armed) : ctx_(ctx) { if (armed) bound_ = hdrOutputNitsBind(ctx, &saved_); }
+    HdrNitsScope(ID3D11DeviceContext* ctx, bool armed, bool outputCopy = false) : ctx_(ctx) {
+        if (armed) bound_ = hdrOutputNitsBind(ctx, &saved_, outputCopy);
+    }
     ~HdrNitsScope() { if (bound_) hdrOutputNitsRestore(ctx_, saved_); }
     HdrNitsScope(const HdrNitsScope&) = delete;
     HdrNitsScope& operator=(const HdrNitsScope&) = delete;

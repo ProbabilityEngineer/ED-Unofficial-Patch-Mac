@@ -294,7 +294,7 @@ struct HdrNits {
     bool peakFromDisplay = false;  // peak came from the output's MaxLuminance
 };
 
-constexpr float kDefaultSceneNits = 261.0f;   // RenoDX Elite preset's diffuse white
+constexpr float kDefaultSceneNits = 261.0f;   // RenoDX Elite preset's diffuse white; unset now means auto, so this is auto's no-reading fallback
 constexpr float kDefaultUiNits = 500.0f;      // RenoDX Elite preset's graphics white
 constexpr float kFallbackPeakNits = 1000.0f;  // no usable display report, no ini value
 constexpr float kMinWhiteNits = 80.0f;
