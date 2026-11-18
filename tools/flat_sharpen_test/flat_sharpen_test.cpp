@@ -487,7 +487,7 @@ void panelTable(const std::string& root, const std::string& gen) {
         check(same, "the Performance tab has the flat page's nine rows in their order (HUD Anti-Aliasing directly under UI quality, "
                     "Window 3D distance directly under Optimized stations, Skip closed rooms under that, then the two frame-rate readout rows)");
     }
-    check(kFlatVisualRowCount == 9 && std::strcmp(kFlatVisualRows[0].section, "visual") == 0 && std::strcmp(kFlatVisualRows[0].key, "intro_video") == 0 &&
+    check(kFlatVisualRowCount == 11 && std::strcmp(kFlatVisualRows[0].section, "visual") == 0 && std::strcmp(kFlatVisualRows[0].key, "intro_video") == 0 &&
               std::strcmp(kFlatVisualRows[1].section, "visual") == 0 && std::strcmp(kFlatVisualRows[1].key, "star_glow") == 0 &&
               std::strcmp(kFlatVisualRows[2].section, "visual") == 0 && std::strcmp(kFlatVisualRows[2].key, "star_light_colour") == 0 &&
               std::strcmp(kFlatVisualRows[3].section, "visual") == 0 && std::strcmp(kFlatVisualRows[3].key, "cockpit_glass") == 0 &&
@@ -496,6 +496,9 @@ void panelTable(const std::string& root, const std::string& gen) {
               std::strcmp(kFlatVisualRows[6].section, "fix") == 0 && std::strcmp(kFlatVisualRows[6].key, "particle_billboard") == 0 &&
               std::strcmp(kFlatVisualRows[7].section, "fix") == 0 && std::strcmp(kFlatVisualRows[7].key, "character_motion") == 0 &&
               std::strcmp(kFlatVisualRows[8].section, "fix") == 0 && std::strcmp(kFlatVisualRows[8].key, "hdr") == 0 &&
+              std::strcmp(kFlatVisualRows[9].section, "advanced") == 0 && std::strcmp(kFlatVisualRows[9].key, "hdr_scene_nits") == 0 &&
+              std::strcmp(kFlatVisualRows[10].section, "advanced") == 0 && std::strcmp(kFlatVisualRows[10].key, "hdr_ui_nits") == 0 &&
+              flatProfileReadsKey("advanced.hdr_scene_nits") && flatProfileReadsKey("advanced.hdr_ui_nits") &&
               flatVisualHasRow("visual", "star_glow") && flatVisualHasRow("visual", "cockpit_glass") && flatVisualHasRow("visual", "cockpit_glass_dirt") &&
               flatVisualHasRow("fix", "particle_billboard") && !flatVisualHasRow("fix", "temporal_aa") && flatProfileReadsKey("fix.particle_billboard") &&
               flatProfileReadsKey("visual.cockpit_glass_dirt") && flatVisualHasRow("visual", "cockpit_glass_lights") && flatProfileReadsKey("visual.cockpit_glass_lights"),

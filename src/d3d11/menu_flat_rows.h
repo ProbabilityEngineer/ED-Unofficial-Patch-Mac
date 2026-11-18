@@ -80,6 +80,9 @@ inline constexpr FlatPageRow kFlatVisualRows[] = {
     {"fix", "character_motion", FlatRowRead::Allowlist},
     // HDR output (2026-11-15): fix.hdr, takes a restart (the swapchain's format is settled when it is created); the menu marks a change pending.
     {"fix", "hdr", FlatRowRead::Allowlist},
+    // HDR whites (2026-11-18): auto (macOS's SDR white, live) or a value in nits; advanced.hdr_*_nits, live (hdr_output.cpp refreshSettings).
+    {"advanced", "hdr_scene_nits", FlatRowRead::Allowlist},
+    {"advanced", "hdr_ui_nits", FlatRowRead::Allowlist},
 };
 inline constexpr size_t kFlatVisualRowCount = sizeof(kFlatVisualRows) / sizeof(kFlatVisualRows[0]);
 

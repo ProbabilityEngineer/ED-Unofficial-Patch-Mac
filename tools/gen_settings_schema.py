@@ -194,7 +194,9 @@ MENU_ROW_SECTIONS = ('fix', 'visual', 'menu')
 # Exceptions: [advanced] keys that carry a `menu <page>` token on their ui: line and are rows of the in-headset menu for everyone (Fix tier), not
 # developer-tier rows. The flat profile's Debug tab (2026-10-16): two toggles every flat user may reach, labelled debug. Flat-only keys, so VR's
 # developer tier loses nothing by their having no row of their own there. Their page is `debug`, which only the flat panel builds.
-MENU_ADVANCED_EXCEPTIONS = ('advanced.flat_cpu_timing', 'advanced.flat_refusal_view')
+# The HDR whites (2026-11-18, ed-metalfx): auto or a value in nits, rows of the flat Visual tab, live.
+MENU_ADVANCED_EXCEPTIONS = ('advanced.flat_cpu_timing', 'advanced.flat_refusal_view',
+                            'advanced.hdr_scene_nits', 'advanced.hdr_ui_nits')
 # Settings that were taken off every menu on purpose, and must stay off.
 #
 # The three field-of-view trims were [fix] rows on the Performance page until
@@ -970,7 +972,9 @@ def run(root, out, check):
             flatListed[table_name] = rows_listed
     if flatListed:
         haveRow = set('%s.%s' % (s.section, s.key) for s in settings
-                      if s.menuPage and not s.hidden and s.section in MENU_ROW_SECTIONS and '%s.%s' % (s.section, s.key) in code)
+                      if s.menuPage and not s.hidden
+                      and (s.section in MENU_ROW_SECTIONS or '%s.%s' % (s.section, s.key) in MENU_ADVANCED_EXCEPTIONS)
+                      and '%s.%s' % (s.section, s.key) in code)
         lacking = sorted((table_name, dotted) for table_name, rows_listed in flatListed.items() for dotted in rows_listed if dotted not in haveRow)
         if lacking:
             print('gen_settings_schema: ERROR: %d row(s) named by the flat panel\'s tables (%s) have no row in the menu schema, '
