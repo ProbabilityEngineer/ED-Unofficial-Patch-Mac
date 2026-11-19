@@ -391,6 +391,9 @@ FlatMonoResolvePreflightResult flatMonoResolvePreflight(
 // backends' and restored on every exit: by ID3D11DeviceContext1::SwapDeviceContextState (which
 // needs D3D11.1) on every device but DXMT's, by the explicit state capture on DXMT's
 // (flatMonoResolveSetIsolation). The caller supplies only jitter that was actually rendered into these inputs.
+// True once the MetalFX output-size guard has turned MetalFX off for the session on stock DXMT (flat_mono_resolve.cpp,
+// g_mfxOutputSizes): flat_runtime then runs FSR wherever mfx is asked for, until Elite restarts.
+bool flatMfxStoodDown();
 bool flatMonoResolve(ID3D11Device*, ID3D11DeviceContext*, const FlatMonoResolveFrame&,
                      ID3D11ShaderResourceView** output, const char** reason);
 // The GPU census's timestamp pairs (flat_cpu.h): Whole begins just before the resolver's own

@@ -5,6 +5,7 @@
 #include "map_easu.h"
 #include "map_smaa.h"
 #include "metal_fx_engine.h"
+#include "menu.h"   // menuShowNotice: the MetalFX output-size guard's notice
 #include "temporal_shader_bytecode.h"
 #include <d3d11_1.h>
 #include <wrl/client.h>
@@ -53,6 +54,16 @@ struct SpanGuard {
 bool g_crumbOn = false, g_hdrCall = false;
 // The MetalFX input size last logged (resources(): "MFX: inputs at a fixed ..."), so the line is written once per size, not per reallocation.
 uint32_t g_mfxNotedWidth = 0, g_mfxNotedHeight = 0;
+// The MetalFX output-size guard (mfxOutputSizeAdmitted). DXMT caches one MetalFX scaler per input and output size, and stock DXMT
+// never frees one. The inputs are at a fixed size per output (mfxDepth's declaration), but MetalFX has no output content size, so each
+// new output size (a resolution change, or a game window resized) is a new scaler kept for the session. On a DXMT that does not report
+// ED Unofficial Patch for Mac's fixes (stock DXMT), a session may use kMfxStockOutputSizes output sizes; the next new one turns MetalFX
+// off for the session and FSR takes over (flat_runtime.cpp maps mfx to fsr while flatMfxStoodDown()). The fix report is the write-mask
+// one: the DXMT fork that reports it (elite-mac) also frees idle scalers, so it needs no guard.
+constexpr unsigned kMfxStockOutputSizes = 3;
+uint32_t g_mfxOutputSizes[kMfxStockOutputSizes][2] = {};
+unsigned g_mfxOutputSizeCount = 0;
+bool g_mfxStoodDown = false;
 struct CrumbScope {
     const bool previous, previousCall;
     explicit CrumbScope(bool hdr) : previous(g_crumbOn), previousCall(g_hdrCall) { g_hdrCall = hdr; g_crumbOn = hdr && hdrCrumbLive(); }
@@ -1126,6 +1137,28 @@ void flatMonoResolveSetSpanHooks(FlatMonoResolveSpanFn begin, FlatMonoResolveSpa
     g_spanEnd = begin && end ? end : nullptr;
 }
 
+// The MetalFX output-size guard (g_mfxOutputSizes' declaration says why). True when this output size may have a MetalFX scaler: one
+// already used this session, any size on a DXMT that frees idle scalers, or a new one while fewer than kMfxStockOutputSizes are used.
+static bool mfxOutputSizeAdmitted(ID3D11DeviceContext* context,uint32_t outW,uint32_t outH) {
+    if(g_mfxStoodDown)return false;
+    for(unsigned i=0;i<g_mfxOutputSizeCount;++i)
+        if(g_mfxOutputSizes[i][0]==outW && g_mfxOutputSizes[i][1]==outH)return true;
+    if(dxmtFixesPartialWriteMaskDiscard(context))return true;
+    if(g_mfxOutputSizeCount<kMfxStockOutputSizes) {
+        g_mfxOutputSizes[g_mfxOutputSizeCount][0]=outW;g_mfxOutputSizes[g_mfxOutputSizeCount][1]=outH;++g_mfxOutputSizeCount;
+        return true;
+    }
+    g_mfxStoodDown=true;
+    Log::get().note("MFX: output size guard: %ux%u would be MetalFX's output size number %u this session; this DXMT does not report "
+                    "ED Unofficial Patch for Mac's fixes (stock DXMT keeps every MetalFX scaler it makes), so MetalFX is off for the rest "
+                    "of the session and FSR takes over. Restart Elite to use MetalFX again.",
+                    outW,outH,kMfxStockOutputSizes+1);
+    menuShowNotice("MetalFX switched to FSR until Elite restarts: too many screen sizes this session on stock DXMT (memory)");
+    return false;
+}
+
+bool flatMfxStoodDown() { return g_mfxStoodDown; }
+
 bool flatMonoResolve(ID3D11Device* device,ID3D11DeviceContext* context,const FlatMonoResolveFrame& f,
                      ID3D11ShaderResourceView** output,const char** reason) {
     CrumbScope crumbs(f.hdr);   // the HDR route's breadcrumbs (flat_hdr_crumbs.h) for every step below
@@ -1260,6 +1293,9 @@ bool flatMonoResolve(ID3D11Device* device,ID3D11DeviceContext* context,const Fla
            !(desc.BindFlags&D3D11_BIND_SHADER_RESOURCE) || owner.Get()!=g.device.Get())
             return fail(reason,"flat-resolve-foreground-view-mismatch");
     }
+    // MetalFX's output is E (evalW x evalH, above): the guard counts it (mfxOutputSizeAdmitted).
+    if(f.mode==FlatMonoResolveMode::Mfx && !mfxOutputSizeAdmitted(context,evalW,evalH))
+        return fail(reason,"flat-mfx-output-size-guard");
     if(!resources(f,reason))return false;
     if(untrusted && f.mode==FlatMonoResolveMode::Taa && !ensureOutputDomains(f.outputWidth,f.outputHeight))
         return fail(reason,"flat-resolve-output-domain-create-failed");

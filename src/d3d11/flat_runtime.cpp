@@ -4489,6 +4489,9 @@ void flatRuntimePresent(IDXGISwapChain* swap, uint64_t frame, HRESULT hr, UINT f
         s.refusalView = refusalViewWanted; s.refusalViewRead = true;
         Log::get().note("flat runtime: refusal view %s (advanced.flat_refusal_view): %s", refusalViewWanted ? "on" : "off", flatMonoViewLegend());
     }
+    // The MetalFX output-size guard turned MetalFX off for the session (flatMfxStoodDown): forget the mode, so the block below maps
+    // mfx to FSR from the next frame, with the usual reset and log line.
+    if (s.engine == FlatMonoResolveMode::Mfx && flatMfxStoodDown()) s.mode.clear();
     if (mode != s.mode) {
         s.haveResolvePlan=false;s.resolvePreflight={};s.resolvePreflightRetryMs=0;
         s.mode = mode; reset();
@@ -4499,12 +4502,15 @@ void flatRuntimePresent(IDXGISwapChain* swap, uint64_t frame, HRESULT hr, UINT f
         // fsr and mfx are the only modes (temporalModeEnabled); Taa stays the "no backend" value of a mode that is off.
         s.engine = _stricmp(mode.c_str(), "fsr") == 0 ? FlatMonoResolveMode::Fsr :
             _stricmp(mode.c_str(), "mfx") == 0 ? FlatMonoResolveMode::Mfx : FlatMonoResolveMode::Taa;
+        if (s.engine == FlatMonoResolveMode::Mfx && flatMfxStoodDown()) s.engine = FlatMonoResolveMode::Fsr;   // the output-size guard
         if(s.engine==FlatMonoResolveMode::Taa) {
             s.foregroundRoute.clear();for(auto& candidate:s.foregroundCandidates)retireDomainCandidate(s,candidate);
             s.foregroundSelectedDepth=nullptr;s.foregroundLastH={};
             foregroundDomainActive.store(false,std::memory_order_release);
         }
         Log::get().note("flat runtime: mode=%s experimental mono temporal; game SS controls render size; jitter uses qualified D3D11 projection scopes", mode.c_str());
+        if (_stricmp(mode.c_str(), "mfx") == 0 && s.engine == FlatMonoResolveMode::Fsr)
+            Log::get().note("flat runtime: mfx asked for, FSR running: the MetalFX output-size guard turned MetalFX off for this session");
     }
     g_flatRuntimeLive.store(false, std::memory_order_release);
     // Engine motion follows the stand-down (s.enginePaused); the mode of the frame that
