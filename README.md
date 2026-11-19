@@ -1,6 +1,6 @@
 # ED Unofficial Patch for Mac
 
-**Based on ED-Unoffical-Patch so [give them your $$$](https://ko-fi.com/seancharacterecho)
+**Based on ED-Unoffical-Patch** so [give them your $$$](https://ko-fi.com/seancharacterecho)
 
 **ED Unofficial Patch for Mac** is an independent macOS/CrossOver port of
 [ED Unofficial Patch](https://github.com/characterecho-sean/ed-unofficial-patch)
