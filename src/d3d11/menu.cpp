@@ -35,6 +35,7 @@
 #include "../common/vr_supersample_notice.h"
 #include "../common/vscreen_fit.h"
 #include "aa_compare.h"     // aaCompareNoteMenuEdit(): an F8 pick of the AA mode ends an AA comparison
+#include "../common/aa_compare.h"   // aacmp::noticeText: notice cards are at least as wide as F7's off notice
 #include "cockpit_glass_core.h"   // parseLook, dirtRowDim: the Legacy glass dirt row dims unless visual.cockpit_glass is legacy
 #include "device_hook.h"
 #include "elite_binds.h"
@@ -3347,6 +3348,19 @@ void buildToastContent(MenuContent& c, const std::string& text, float widthDeg, 
     // Measured in the font the notice is drawn in: the row face (menu_panel.cpp, Font::Row), not the cap size the footer measures with --
     // the first cut used the cap size, so a notice the row face ellipsised measured as fitting and never wrapped (flown 2026-11-19).
     const int rowPx = c.rowFontPx > 0 ? c.rowFontPx : c.capPx * 10 / 7;
+    // The card fits its text instead of a fixed width (the black box ran far past "AA off, press F7 to restore", flown 2026-11-19),
+    // never narrower than F7's off notice, so F7's off and restore notices are one size and do not jump. Never wider than before:
+    // a longer notice wraps (below).
+    {
+        const int padPx = c.capPx * 8 / 10;
+        const std::string sizeLike = aacmp::noticeText(aacmp::Press::WentOff, std::string(), aaCompareKeyText());
+        const int textPx = (std::max)(menuPanelMeasureLine(text.c_str(), rowPx), menuPanelMeasureLine(sizeLike.c_str(), rowPx));
+        const int needPx = textPx + 2 * padPx + padPx / 2;
+        if (needPx > 0 && needPx < c.cardPx) {
+            c.cardPx = needPx;
+            c.widthPx = needPx;
+        }
+    }
     const int roomPx = c.cardPx - 2 * (c.capPx * 8 / 10);
     if (roomPx > 0 && menuPanelMeasureLine(text.c_str(), rowPx) > roomPx) {
         constexpr int kMaxNoticeLines = 3;
