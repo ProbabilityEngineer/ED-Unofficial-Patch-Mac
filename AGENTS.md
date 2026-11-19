@@ -10,7 +10,8 @@ Test flights are expensive: distinguish local checks from actual game results.
 ## Repository identity and Entire
 
 Git operations for this checkout belong to
-`ProbabilityEngineer/edvr-unofficial-patch`, not the separate DXMT repository.
+`ProbabilityEngineer/ED-Unofficial-Patch-Mac` (formerly `ed-metalfx`), not the
+separate DXMT repository.
 After a session or checkout move, verify the repository with
 `git rev-parse --show-toplevel` and `git remote -v` before making changes.
 
