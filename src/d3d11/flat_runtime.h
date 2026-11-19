@@ -68,6 +68,9 @@ bool flatRuntimeTaaAboveOutput();
 // into, and the swap chain's), refreshed at every final copy that has a scene and true once one has since a resize last cleared
 // it. The runtime's own measurement, never Elite's settings file. Any thread. The F8 warning and the stand-down line name the
 // render size from it when the refusal is render-size-does-not-fit-output.
+// fix.temporal_aa = mfx running as FSR: 0 no, 1 Supersampling above 1.0 on stock DXMT, 2 the MetalFX output-size guard (until a restart).
+// The F8 Anti-aliasing row shows it (menu.cpp).
+int flatRuntimeMfxAsFsr();
 bool flatRuntimeSceneSizes(uint32_t* renderWidth, uint32_t* renderHeight, uint32_t* outputWidth, uint32_t* outputHeight);
 // The upstream camera injector's read points into the phase machine: the
 // current phase in render pixels and the validated resolve plan's render

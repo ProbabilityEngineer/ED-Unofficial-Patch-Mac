@@ -114,6 +114,8 @@ bool FlatMapBounceD3DDriver::verify(void* real, const void* cached, size_t bytes
     return std::memcmp(real, cached, bytes) == 0;
 }
 std::atomic<bool> g_flatRuntimeLive{false};
+// mfx running as FSR (flatRuntimePresent, s.mfxAsFsr), for the F8 Anti-aliasing row: 0 no, 1 Supersampling above 1.0, 2 the output-size guard.
+std::atomic<int> g_mfxAsFsrShown{0};
 std::atomic<FlatMapBounce*> g_flatMapBounce{nullptr};   // flat_runtime.h: flatRuntimeMapBounceAnyOpen
 namespace {
 std::atomic<bool> nativeScale{false};
@@ -3569,6 +3571,7 @@ bool flatRuntimeStructureAdmission() {
 bool flatRuntimeTaaAboveOutput() {
     return (g_refusalPublished.load(std::memory_order_acquire) & 9u) == 9u;
 }
+int flatRuntimeMfxAsFsr() { return g_mfxAsFsrShown.load(std::memory_order_acquire); }
 bool flatRuntimeSceneSizes(uint32_t* renderWidth, uint32_t* renderHeight, uint32_t* outputWidth, uint32_t* outputHeight) {
     return flatHdrUnpackSizes(g_sceneSizes.load(std::memory_order_acquire), renderWidth, renderHeight, outputWidth,
                               outputHeight);
@@ -4510,6 +4513,7 @@ void flatRuntimePresent(IDXGISwapChain* swap, uint64_t frame, HRESULT hr, UINT f
         }
         if (asFsr != s.mfxAsFsr) { s.mfxAsFsr = asFsr; s.mfxAsFsrWhy = why; s.mode.clear(); }
     } else if (s.mfxAsFsr) { s.mfxAsFsr = false; s.mfxAsFsrWhy = nullptr; }
+    g_mfxAsFsrShown.store(!s.mfxAsFsr ? 0 : flatMfxStoodDown() ? 2 : 1, std::memory_order_release);
     if (mode != s.mode) {
         s.haveResolvePlan=false;s.resolvePreflight={};s.resolvePreflightRetryMs=0;
         s.mode = mode; reset();

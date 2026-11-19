@@ -259,6 +259,7 @@ struct State {
     uint32_t    dimRowsGen = 0;
     bool        dimRowsGenSeen = false;
     unsigned    dimRows = 0;
+    int         mfxAsFsrShown = 0;   // flatRuntimeMfxAsFsr as the page was last drawn (mfxAsFsrTick)
     // Elite's Supersampling below 1.0 in VR (vr_supersample_notice.h, design section 83): the headset toast is said once a
     // session, the Status line and the settings pages' note whenever vScreen has measured it. Never in a flat session.
     bool        vrSupersamplingToasted = false;
@@ -1396,6 +1397,17 @@ void starGlowBloomTick() {
 // The rows that dim on another setting (Sharpening and HUD Anti-Aliasing on the anti-aliasing, the DLSS preset row, the glass dirt and station rows) read
 // the config, which a menu step moves only once the worker's write and the reload behind it are done: the page redrawn at the step showed the OLD state
 // (stepping MetalFX -> off -> FSR left Sharpening dimmed under FSR until the next key). Looked at when the generation moves; a changed state redraws.
+// MetalFX standing in as FSR (flatRuntimeMfxAsFsr) changes with Supersampling, not with the config, so it is looked at every tick:
+// a change redraws the page, and the Anti-aliasing row says what runs.
+void mfxAsFsrTick() {
+    State& s = g_s;
+    const int now = runtimeFlatProfile() ? flatRuntimeMfxAsFsr() : 0;
+    if (now != s.mfxAsFsrShown) {
+        s.mfxAsFsrShown = now;
+        s.contentDirty = true;
+    }
+}
+
 void dimRowsTick() {
     State& s = g_s;
     const uint32_t generation = Config::get().generation();
@@ -2894,6 +2906,13 @@ void buildContent(MenuContent& c) {
             }
             std::string v = openxrScaleRow ? openxrResolutionValue(res)
                                            : displayValue(d, r.value);
+            // MetalFX chosen, FSR running (flatRuntimeMfxAsFsr): the row says what runs, and why in two words.
+            if (runtimeFlatProfile() && strcmp(d.section, "fix") == 0 && strcmp(d.key, "temporal_aa") == 0 &&
+                _stricmp(r.value.c_str(), "mfx") == 0) {
+                const int asFsr = flatRuntimeMfxAsFsr();
+                if (asFsr == 1) v = "FSR3 (above 1.0)";
+                else if (asFsr == 2) v = "FSR3 (until restart)";
+            }
             if (editingThis) {
                 // What has been typed, with a caret. The raster shows a
                 // typed row in the value colour whatever its kind.
@@ -3199,23 +3218,33 @@ void buildContent(MenuContent& c) {
         else if (!s.lastWrite.empty()) write = FooterWrite::Saved;
         // The installed version, on every page, drawn at the right end of this same
         // footer line (menu_panel.cpp). Flat only: VR's footer does not carry it.
-        snprintf(c.footerTag, sizeof(c.footerTag), "ED-UP for Mac %s", EDVR_VERSION_STRING);
-        // The second line is "<key> close | <count waiting for a restart> | saved" and the tag shares it at the right end: the long wording is
-        // measured against the raster's own ruler with the tag and a gap, and the short one (the VR footer's) is used if it would touch the tag.
+        // The second line is "<key> close | <count waiting for a restart> | saved" and the tag shares it at the right end, measured against the
+        // raster's own ruler with a gap. The tag shortens first (the product name goes, then the commit hash: "ED-UP for Mac" is on the status
+        // page anyway), then the wording takes the VR footer's short form; the first pair that fits is drawn. A long development build name
+        // (v0.22.3-mfx-25-g9e3f4d7c) ran into the words on the 2026-11-19 flight.
+        char tags[3][sizeof(c.footerTag)];
+        snprintf(tags[0], sizeof(tags[0]), "ED-UP for Mac %s", EDVR_VERSION_STRING);
+        snprintf(tags[1], sizeof(tags[1]), "%s", EDVR_VERSION_STRING);
+        snprintf(tags[2], sizeof(tags[2]), "%s", EDVR_VERSION_STRING);
+        if (char* hash = strstr(tags[2], "-g")) *hash = '\0';
         const int linePx = c.cardPx - 2 * (c.capPx * 8 / 10);
-        const int tagPx = menuPanelMeasureLine(c.footerTag, c.capPx) + c.capPx * 2;
         char status[160], line2[200];
-        for (int shortForm = 0; shortForm < 2; ++shortForm) {
+        int tagUsed = 2;
+        bool fits = false;
+        for (int shortForm = 0; shortForm < 2 && !fits; ++shortForm) {
             // The flat panel keeps the keyboard private on every page, so "ready" is the same on a status page as on any other.
             menuFlatFooterStatus(write, s.flatKeysReadyShown, pendingN, shortForm != 0, status, sizeof(status));
             if (s.padReady) snprintf(line2, sizeof(line2), "LB/RB pages  %s close%s", s.summonName.c_str(), status);
             else snprintf(line2, sizeof(line2), "%s/Esc close%s", s.summonName.c_str(), status);
-            if (shortForm || menuPanelMeasureLine(line2, c.capPx) + tagPx <= linePx) break;
-            if (!s.flatFooterShortNoted) {
+            const int wordsPx = menuPanelMeasureLine(line2, c.capPx);
+            for (int t = 0; t < 3 && !fits; ++t)
+                if (wordsPx + menuPanelMeasureLine(tags[t], c.capPx) + c.capPx * 2 <= linePx) { fits = true; tagUsed = t; }
+            if (!fits && !shortForm && !s.flatFooterShortNoted) {
                 s.flatFooterShortNoted = true;
-                Log::get().note("menu panel: the flat footer's restart count does not fit beside the version in %d px; using the short wording.", linePx);
+                Log::get().note("menu panel: the flat footer's words do not fit beside the version in %d px; using the short wording.", linePx);
             }
         }
+        snprintf(c.footerTag, sizeof(c.footerTag), "%s", tags[tagUsed]);
         // The first line names what the keys do on the highlighted row: a hotkey row is rebound with Enter (or A) and Left/Right do nothing there; while a row
         // waits for its key, the capture's own keys.
         const bool hotkeyRow = !p.status && p.highlight >= 0 && p.highlight < static_cast<int>(p.entries.size()) &&
@@ -5671,6 +5700,7 @@ void menuTick(ID3D11Device* dev) {
         }
         starGlowBloomTick();
         dimRowsTick();
+        mfxAsFsrTick();
         if (pol.closesOnFocusLoss && s.open && !gameHasFocus()) closeMenu("Elite lost focus");
 
         // Refresh the read-only OpenXR sizing snapshot while the menu is
