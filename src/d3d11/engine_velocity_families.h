@@ -184,15 +184,6 @@ inline bool keyedPs(int family, uint64_t hash, bool flat = false) noexcept {
     for (uint64_t h : kFamilies[family].ps) if (h == hash) return true;
     return flat && kFamilies[family].flatPs == hash;
 }
-// The station window decoration (vs_DE545DC8 / ps_91F8937E, an alpha-tested G-buffer material that discards). Apple's Metal driver loses
-// the discard, and the depth/stencil write, for a pixel shader that discards and then writes a 4-channel target under a partial write mask:
-// EDVR's patched copy writes the flat marker plane (MRT6, RGBA32F) with mask RG, so the decoration's clear texels paint the G-buffer and it
-// looks washed out. Flat only, and only while DXMT does not report its own fix (dxmtFixesPartialWriteMaskDiscard): the draw keeps the
-// game's shader and loses only per-object motion, on pixels the glass already left as stale slots. The pair stays keyed everywhere else
-// (supportedPair, the HDR route, the jitter recipes), so nothing else changes.
-inline bool flatSubstitutionWithheld(uint64_t vs, uint64_t ps) noexcept {
-    return vs == 0xDE545DC8EE4FBB87ull && ps == 0x91F8937EDA723663ull;
-}
 inline bool supportedPair(uint64_t vs, uint64_t ps) noexcept {
     // Flat recipe/metadata consumers include pairs qualified only for flat.
     return keyedPs(familyOfVs(vs), ps, true);
