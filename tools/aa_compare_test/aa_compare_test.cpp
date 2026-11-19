@@ -144,7 +144,8 @@ static void wordsCells() {
     check(noticeText(Press::Restored, "dlss", "F7") == "AA restored: DLSS", "the restore notice names the mode");
     check(noticeText(Press::Restored, "on", "F7") == "AA restored: TAA" && noticeText(Press::Restored, "dlaa", "F7") == "AA restored: DLAA" &&
           noticeText(Press::Restored, "fsr", "F7") == "AA restored: FSR3" && noticeText(Press::Restored, "xess", "F7") == "AA restored: XeSS" &&
-          noticeText(Press::Restored, "mfx", "F7") == "AA restored: MetalFX",
+          noticeText(Press::Restored, "mfx", "F7") == "AA restored: MetalFX" &&
+          noticeText(Press::Restored, "dittosr", "F7") == "AA restored: DittoSR",
           "every mode has its name");
     check(!noticeText(Press::NothingToCompare, "off", "F7").empty(), "the nothing-to-compare notice exists");
     check(modeLabel("") == "off" && modeLabel("mystery") == "mystery", "an unknown mode is shown as written");

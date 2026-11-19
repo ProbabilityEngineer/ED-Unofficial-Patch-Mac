@@ -25,6 +25,9 @@ Upstream credit remains with characterecho-sean and the ED-UP contributors.
   Mac.
 - **MetalFX anti-aliasing and upscaling.** Apple's MetalFX temporal scaler,
   reached through DXMT, next to FSR 3.1 (F8 menu, Anti-aliasing).
+- **DittoSR (experimental).** DittoSR 0.5.0, brought over from upstream, as a
+  third anti-aliasing choice; its four picture rows sit under Anti-aliasing
+  in F8.
 - **HDR output** on EDR displays. Scene white follows macOS's own SDR white
   live by default (`auto`), so HDR brightness tracks the display brightness.
 - **Star-coloured lighting.** Light in a system takes the colour of its star,
@@ -161,7 +164,11 @@ upstream's notice. The `fsr` engine is AMD's FidelityFX Super Resolution 3.1
 upscaler through its community Direct3D 11 port (the optiscaler project's
 FidelityFX-SDK-DX11, MIT), compiled into `d3d11.dll`; its notice ships as
 `FIDELITYFX-SDK-DX11-LICENSE.txt`. The DXBC hash and miniz notices ship as
-`DXBC-HASH-LICENSE.txt` and `MINIZ-LICENSE.txt`. DXMT is LGPL; the DXMT fixes' source is in
+`DXBC-HASH-LICENSE.txt` and `MINIZ-LICENSE.txt`. The `dittosr` engine is
+[DittoSR](https://github.com/Vancete/DittoSR) 0.5.0 by Vancete (MIT), built on
+Qualcomm's Snapdragon Game Super Resolution 2 (BSD-3-Clause), compiled into
+`d3d11.dll`; its notices ship as `DITTOSR-LICENSE.txt` and
+`DITTOSR-GSR-LICENSE.txt`. DXMT is LGPL; the DXMT fixes' source is in
 [ProbabilityEngineer/dxmt](https://github.com/ProbabilityEngineer/dxmt).
 
 Not affiliated with, endorsed by, or supported by Frontier Developments plc,

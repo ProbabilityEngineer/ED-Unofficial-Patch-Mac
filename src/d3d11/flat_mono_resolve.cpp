@@ -2,6 +2,7 @@
 #include "flat_mono_resolve.h"
 #include "upscaler_slots.h"
 #include "fsr3_engine.h"
+#include "dittosr_engine.h"
 #include "map_easu.h"
 #include "map_smaa.h"
 #include "metal_fx_engine.h"
@@ -528,7 +529,7 @@ bool rowsJitterValid(const FlatMonoResolveFrame& f) {
 bool resolveModeValid(FlatMonoResolveMode mode) {
     return mode==FlatMonoResolveMode::Taa || mode==FlatMonoResolveMode::Dlaa ||
         mode==FlatMonoResolveMode::Dlss || mode==FlatMonoResolveMode::Fsr || mode==FlatMonoResolveMode::Xess ||
-        mode==FlatMonoResolveMode::Mfx;
+        mode==FlatMonoResolveMode::Mfx || mode==FlatMonoResolveMode::Ditto;
 }
 bool preflightMetadataValid(const FlatMonoResolvePreflight& f,const char** reason) {
     if(!f.renderWidth || !f.renderHeight || !f.outputWidth || !f.outputHeight ||
@@ -995,16 +996,17 @@ void drawHdrTarget(ID3D11DeviceContext* context,ID3D11PixelShader* ps,uint32_t w
 // initialisation (NGX's, or AMD's), the first call into code that has never run on a DXMT device, so the crumbs bracket it.
 // Later asks are a flag test and are not written. DLAA and DLSS share NGX.
 bool backendAvailable(FlatMonoResolveMode mode,ID3D11Device* device,ID3D11DeviceContext* context,const char** reason) {
-    static bool crumbed[4]={false,false,false,false};
+    static bool crumbed[5]={false,false,false,false,false};
     // One answer per trained backend. MFX asks DXMT's own extension interface and the Metal device behind it, a
     // different question from AMD's, Intel's or NVIDIA's, so it gets its own crumb slot.
-    const unsigned which=mode==FlatMonoResolveMode::Mfx?3u:mode==FlatMonoResolveMode::Xess?2u:mode==FlatMonoResolveMode::Fsr?1u:0u;
+    const unsigned which=mode==FlatMonoResolveMode::Ditto?4u:mode==FlatMonoResolveMode::Mfx?3u:mode==FlatMonoResolveMode::Xess?2u:mode==FlatMonoResolveMode::Fsr?1u:0u;
     const bool first=g_crumbOn && !crumbed[which];
     if(first)crumbed[which]=true;
-    HdrCrumbSpan span(first,"backend-available","backend=%s",which==3u?"mfx":which==2u?"xess":which?"fsr":"ngx");
-    // DLAA, DLSS (NGX) and XeSS were removed in ed-metalfx (stage 2b): only FSR and MetalFX answer.
+    HdrCrumbSpan span(first,"backend-available","backend=%s",which==4u?"dittosr":which==3u?"mfx":which==2u?"xess":which?"fsr":"ngx");
+    // DLAA, DLSS (NGX) and XeSS were removed in ed-metalfx (stage 2b): only FSR, MetalFX and DittoSR answer.
     bool ok=false;
-    if(which==3u)ok=mfxAvailable(context,reason);
+    if(which==4u)ok=dittoAvailable(device,reason);
+    else if(which==3u)ok=mfxAvailable(context,reason);
     else if(which==1u)ok=fsr3Available(device,reason);
     else if(reason)*reason="flat-backend-removed";
     span.result("ok=%u reason=%s",ok?1u:0u,(reason && *reason)?*reason:"none");
@@ -1562,6 +1564,13 @@ bool flatMonoResolve(ID3D11Device* device,ID3D11DeviceContext* context,const Fla
         context->CopySubresourceRegion(g.mfxMotion.texture.Get(),0,0,0,0,g.motion.texture.Get(),0,&content);
         ok=mfxEvaluate(context,g.mfxColor.texture.Get(),g.mfxDepth.texture.Get(),g.mfxMotion.texture.Get(),
             g.output[0].texture.Get(),f.renderWidth,f.renderHeight,evalW,evalH,f.jitterX,f.jitterY,reset,reason,hdrColor);
+    } else if(f.mode==FlatMonoResolveMode::Ditto) {
+        // DittoSR 0.5.0 (dittosr_engine.h): compute shaders on the same views FSR is handed, the rejection mask as its
+        // reactive input. `hdr` (not hdrColor) as upstream passes it: the HDR route's colour is scene-linear.
+        const char* route=f.slot==0?"flat":upscalerSlotLabel(static_cast<int>(f.slot));
+        ok=dittoEvaluate(context,f.slot,route,
+            {g.color.srv.Get(),g.depth[depthIndex].srv.Get(),g.motion.srv.Get(),g.rejection.srv.Get(),g.output[0].uav.Get()},
+            f.renderWidth,f.renderHeight,evalW,evalH,f.jitterX,f.jitterY,reset,reason,hdr);
     } else {
         ok=false;   // DLAA, DLSS and XeSS were removed in ed-metalfx (stage 2b); backendAvailable refuses them first
         if(reason)*reason="flat-backend-removed";
@@ -1843,7 +1852,7 @@ bool flatMonoResolveSpatialFallback(ID3D11Device* device,ID3D11DeviceContext* co
        f.outputWidth>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION || f.outputHeight>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
        !jitterValid(f) || (f.mode!=FlatMonoResolveMode::Taa && f.mode!=FlatMonoResolveMode::Dlaa &&
        f.mode!=FlatMonoResolveMode::Dlss && f.mode!=FlatMonoResolveMode::Fsr &&
-       f.mode!=FlatMonoResolveMode::Xess && f.mode!=FlatMonoResolveMode::Mfx))
+       f.mode!=FlatMonoResolveMode::Xess && f.mode!=FlatMonoResolveMode::Mfx && f.mode!=FlatMonoResolveMode::Ditto))
         return fail(reason,"flat-spatial-invalid-frame");
     const bool hdr=f.hdr;
     if(hdr && (f.renderWidth<f.outputWidth || f.renderHeight<f.outputHeight))return fail(reason,"flat-spatial-hdr-requires-render-at-least-output");

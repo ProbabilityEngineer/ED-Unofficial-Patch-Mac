@@ -33,6 +33,11 @@ struct FlatPageRow {
 
 inline constexpr FlatPageRow kFlatPageRows[] = {
     {"fix", "temporal_aa",       FlatRowRead::RequestedMode},
+    // DittoSR's picture controls (experimental), under Anti-aliasing and dimmed unless it is DittoSR (menu.cpp).
+    {"fix", "dittosr_sharpness", FlatRowRead::Allowlist},
+    {"fix", "dittosr_frame_weight", FlatRowRead::Allowlist},
+    {"fix", "dittosr_anti_shimmer", FlatRowRead::Allowlist},
+    {"fix", "dittosr_sharpen", FlatRowRead::Allowlist},
     {"fix", "render_sharpness",  FlatRowRead::Allowlist},
     {"fix", "ui_quality",        FlatRowRead::Allowlist},
     // HUD Anti-Aliasing (2026-10-24), directly under UI quality: flat only. Its `menu flat_performance` token (tools\gen_settings_schema.py) is a page VR's

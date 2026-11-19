@@ -8,6 +8,7 @@
 #include "../common/temporal_mode.h"
 #include "celestial_motion.h"
 #include "engine_velocity.h"
+#include "dittosr_engine.h"
 #include "fsr3_engine.h"
 #include "scheduler_stack_probe.h"
 #include "sky_ring.h"
@@ -37,6 +38,8 @@ void temporalPassConfigure(Config& cfg) {
 void temporalPassShutdown() {
     skyRingShutdown();
     fsr3Shutdown();
+    // DittoSR's shaders and histories. It does not signal or wait on the GPU, so it is safe under the loader lock.
+    dittoShutdown();
 }
 
 }  // namespace edvr

@@ -66,6 +66,7 @@ class FlatResolveInputCapture {
         case FlatMonoResolveMode::Fsr: return "fsr";
         case FlatMonoResolveMode::Xess: return "xess";
         case FlatMonoResolveMode::Mfx: return "mfx";
+        case FlatMonoResolveMode::Ditto: return "dittosr";
         default: return "taa";
         }
     }

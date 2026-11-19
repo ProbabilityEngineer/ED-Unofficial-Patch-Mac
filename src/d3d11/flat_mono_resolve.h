@@ -15,10 +15,10 @@ enum class FlatContextIsolation : uint8_t;
 // Mfx is MetalFX, the MetalFX temporal scaler invoked natively by DXMT
 // (metal_fx_engine.h). It is a trained upscaler like Fsr, Dlss and Xess and consumes
 // the same canonical inputs, so it shares their routing.
-enum class FlatMonoResolveMode { Taa, Dlaa, Dlss, Fsr, Xess, Mfx };
+enum class FlatMonoResolveMode { Taa, Dlaa, Dlss, Fsr, Xess, Mfx, Ditto };
 // The mode as the logs and the HDR route's breadcrumbs (flat_hdr_crumbs.h) spell it.
 inline const char* flatMonoResolveModeName(FlatMonoResolveMode mode) {
-    return mode == FlatMonoResolveMode::Mfx ? "mfx" : mode == FlatMonoResolveMode::Xess ? "xess" : mode == FlatMonoResolveMode::Fsr ? "fsr" : mode == FlatMonoResolveMode::Dlss ? "dlss"
+    return mode == FlatMonoResolveMode::Ditto ? "dittosr" : mode == FlatMonoResolveMode::Mfx ? "mfx" : mode == FlatMonoResolveMode::Xess ? "xess" : mode == FlatMonoResolveMode::Fsr ? "fsr" : mode == FlatMonoResolveMode::Dlss ? "dlss"
          : mode == FlatMonoResolveMode::Dlaa ? "dlaa" : "taa";
 }
 
@@ -99,7 +99,13 @@ inline FlatResolveRoute flatResolveRoute(FlatMonoResolveMode mode,
     // reaches here. So MFX needs no negotiation of its own, and adding one
     // would be a second thing to keep right. Only the names differ, so the log
     // and the panel say mfx.
+    // DittoSR (dittosr_engine.h) uses FSR's size contract too, under its own names.
     const bool mfx = mode == FlatMonoResolveMode::Mfx;
+    if (mode == FlatMonoResolveMode::Ditto) {
+        out.evalWidth = larger ? rW : dW; out.evalHeight = larger ? rH : dH; out.refused = false;
+        out.name = larger ? "dittosr-native-aa-supersample" : smaller ? "dittosr-upscale" : "dittosr-native";
+        return out;
+    }
     if (larger) {
         out.evalWidth = rW; out.evalHeight = rH; out.refused = false;
         out.name = mfx ? "mfx-native-aa-supersample" : "fsr-native-aa-supersample";

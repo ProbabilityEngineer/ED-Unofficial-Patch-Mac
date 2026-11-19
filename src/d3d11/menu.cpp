@@ -569,6 +569,27 @@ const std::string& shownValue(const char* section, const char* key) {
 
 bool flatAntiAliasingIsXess() { return _stricmp(shownValue("fix", "temporal_aa").c_str(), "xess") == 0; }
 
+// fix.dittosr_sharpness, fix.dittosr_frame_weight, fix.dittosr_anti_shimmer and fix.dittosr_sharpen (DittoSR, experimental). They stay on the
+// Performance page under Anti-aliasing and dim until it is DittoSR. The mode is the value the panel shows, so the rows light up on the same
+// change that selects DittoSR, before the ini write reaches Config.
+bool isDittoRow(const MenuRowDef& d) {
+    return strcmp(d.section, "fix") == 0 &&
+           (strcmp(d.key, "dittosr_sharpness") == 0 || strcmp(d.key, "dittosr_frame_weight") == 0 ||
+            strcmp(d.key, "dittosr_anti_shimmer") == 0 || strcmp(d.key, "dittosr_sharpen") == 0);
+}
+
+bool dittoRowDisabled() { return _stricmp(shownValue("fix", "temporal_aa").c_str(), "dittosr") != 0; }
+
+const char* dittoRowHint() { return "Choose DittoSR above to use this."; }
+
+bool dittoRowRefused(const MenuRowDef& d, const char** why) {
+    if (!isDittoRow(d) || !dittoRowDisabled()) return false;
+    static char text[120];
+    snprintf(text, sizeof(text), "%s is inactive: choose DittoSR above first.", d.label);
+    *why = text;
+    return true;
+}
+
 bool xessFgToggleOn() { return boolOf(shownValue("fix", "xess_frame_generation"), false); }
 
 bool xessFgToggleRowDisabled() { return xessFgToggleRowDim(runtimeFlatProfile(), flatAntiAliasingIsXess()); }
@@ -1417,7 +1438,8 @@ void dimRowsTick() {
     s.dimRowsGenSeen = true;
     s.dimRowsGen = generation;
     const unsigned dims = (dlssPresetDisabled() ? 1u : 0u) | (sharpenRowDisabled() ? 2u : 0u) | (hudAntiAliasingRowDisabled() ? 4u : 0u) |
-                          (cockpitGlassDirtRowDisabled() ? 8u : 0u) | (stationWindowDistanceRowDisabled() ? 16u : 0u);
+                          (cockpitGlassDirtRowDisabled() ? 8u : 0u) | (stationWindowDistanceRowDisabled() ? 16u : 0u) |
+                          (dittoRowDisabled() ? 32u : 0u);
     if (dims != s.dimRows) {
         s.dimRows = dims;
         s.contentDirty = true;
@@ -2882,7 +2904,9 @@ void buildContent(MenuContent& c) {
             const bool glassDirtRow = isCockpitGlassDirtRow(d);
             const bool windowDistanceRow = isStationWindowDistanceRow(d);
             const bool doorsRow = isRoomsBehindDoorsRow(d);
+            const bool dittoRow = isDittoRow(d);
             const bool dim = (dlssRow && dlssPresetDisabled()) ||
+                             (dittoRow && dittoRowDisabled()) ||
                              (sharpenRow && sharpenRowDisabled()) ||
                              (hudAaRow && hudAntiAliasingRowDisabled()) ||
                              (glassDirtRow && cockpitGlassDirtRowDisabled()) ||
@@ -2984,6 +3008,8 @@ void buildContent(MenuContent& c) {
                 snprintf(c.hint, sizeof(c.hint), "%s", cockpitGlassDirtHint());
             else if (hi && dim && (windowDistanceRow || doorsRow))
                 snprintf(c.hint, sizeof(c.hint), "%s", stationWindowDistanceHint());
+            else if (hi && dim && dittoRow)
+                snprintf(c.hint, sizeof(c.hint), "%s", dittoRowHint());
             else if (hi && dim && runtimeFlatProfile())
                 snprintf(c.hint, sizeof(c.hint), "%s",
                          sharpenRow ? "Turn anti-aliasing on to sharpen."
@@ -3076,6 +3102,8 @@ void buildContent(MenuContent& c) {
                         }
                         body += "\nPress R again to remove this headset's entry (back to " + fallback + ").";
                     }
+                } else if (dim && dittoRow) {
+                    body += std::string("\n") + dittoRowHint();
                 } else if (dim) {
                     body += "\nInactive: only DLSS and DLAA read this preset.";
                 } else if (s.resetArmedEntry == i) {
@@ -3577,6 +3605,11 @@ void stepRow(int defIndex, int dir, int mult) {
         g_s.contentDirty = true;
         return;
     }
+    if (const char* why = nullptr; dittoRowRefused(d, &why)) {
+        g_s.lastWrite = why;
+        g_s.contentDirty = true;
+        return;
+    }
     if (isSharpenRow(d) && sharpenRowDisabled()) {
         g_s.lastWrite = "Sharpening is inactive: turn anti-aliasing on above first.";
         g_s.contentDirty = true;
@@ -4003,6 +4036,11 @@ void beginEdit(int entryIndex, int defIndex) {
     // neither (stepRow says why).
     if (isSharpenRow(kMenuRows[defIndex]) && sharpenRowDisabled()) {
         s.lastWrite = "Sharpening is inactive: turn anti-aliasing on above first.";
+        s.contentDirty = true;
+        return;
+    }
+    if (const char* why = nullptr; dittoRowRefused(kMenuRows[defIndex], &why)) {
+        s.lastWrite = why;
         s.contentDirty = true;
         return;
     }
@@ -4482,6 +4520,9 @@ void dispatchNav(MenuNav nav, uint64_t now) {
                         }
                     } else if (isCockpitGlassDirtRow(d) && cockpitGlassDirtRowDisabled()) {
                         s.lastWrite = cockpitGlassDirtRefusal();
+                        s.contentDirty = true;
+                    } else if (const char* why = nullptr; dittoRowRefused(d, &why)) {
+                        s.lastWrite = why;
                         s.contentDirty = true;
                     } else if (isStationWindowDistanceRow(d) && stationWindowDistanceRowDisabled()) {
                         s.lastWrite = stationWindowDistanceRefusal();

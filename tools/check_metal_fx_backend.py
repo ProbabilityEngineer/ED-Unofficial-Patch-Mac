@@ -561,8 +561,10 @@ def checks(root):
     if check(modes is not None, "%s declares temporalModeEnabled" % TEMPORAL_MODE_H):
         check("mfx" in modes,
               "the shared temporal-mode gate recognises mfx: %s" % sorted(modes))
-        check(modes == {"fsr", "mfx"},
-              "the gate recognises exactly fsr and mfx (ed-metalfx dropped on, dlaa, dlss, xess): %s" % sorted(modes))
+        # dittosr (DittoSR, the experimental branch) may be there too; nothing else may.
+        check({"fsr", "mfx"} <= modes <= {"fsr", "mfx", "dittosr"},
+              "the gate recognises fsr and mfx, and otherwise only dittosr (ed-metalfx dropped on, dlaa, dlss, xess): %s"
+              % sorted(modes))
     engine = gate_modes(gate, "temporalEngineFor", "TemporalEngine")
     if check(engine is not None, "%s declares temporalEngineFor" % TEMPORAL_MODE_H):
         check("mfx" not in engine,

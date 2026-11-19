@@ -17,6 +17,7 @@
 #include "flat_hdr_crumbs.h"
 #include "flat_context_state.h"
 #include "flat_mono_resolve.h"
+#include "dittosr_engine.h"    // dittoReleaseFeatures, dittoShutdown: DittoSR's histories
 #include "metal_fx_engine.h"   // dxmtFixesPartialWriteMaskDiscard: MetalFX above 1.0 on stock DXMT runs as FSR
 #include "flat_celestial.h"    // planet patch motion: the rows' tangents for the records the resolve binds (fetchCelestialRecords)
 #include "celestial_motion.h"
@@ -4521,15 +4522,17 @@ void flatRuntimePresent(IDXGISwapChain* swap, uint64_t frame, HRESULT hr, UINT f
     }
     g_mfxAsFsrShown.store(!s.mfxAsFsr ? 0 : flatMfxStoodDown() ? 2 : 1, std::memory_order_release);
     if (mode != s.mode) {
+        if (s.engine == FlatMonoResolveMode::Ditto) dittoReleaseFeatures();   // the outgoing engine's histories
         s.haveResolvePlan=false;s.resolvePreflight={};s.resolvePreflightRetryMs=0;
         s.mode = mode; reset();
         // A new mode is a new question for the stand-down: everything restarts.
         endStandDown(s, frame, "the anti-aliasing mode changed");
         engineVelocityConfigure(enabled);
         s.phase.resetHistory();
-        // fsr and mfx are the only modes (temporalModeEnabled); Taa stays the "no backend" value of a mode that is off.
+        // fsr, mfx and dittosr are the modes (temporalModeEnabled); Taa stays the "no backend" value of a mode that is off.
         s.engine = _stricmp(mode.c_str(), "fsr") == 0 ? FlatMonoResolveMode::Fsr :
-            _stricmp(mode.c_str(), "mfx") == 0 ? FlatMonoResolveMode::Mfx : FlatMonoResolveMode::Taa;
+            _stricmp(mode.c_str(), "mfx") == 0 ? FlatMonoResolveMode::Mfx :
+            _stricmp(mode.c_str(), "dittosr") == 0 ? FlatMonoResolveMode::Ditto : FlatMonoResolveMode::Taa;
         if (s.engine == FlatMonoResolveMode::Mfx && s.mfxAsFsr) s.engine = FlatMonoResolveMode::Fsr;   // mfx as FSR (above)
         if(s.engine==FlatMonoResolveMode::Taa) {
             s.foregroundRoute.clear();for(auto& candidate:s.foregroundCandidates)retireDomainCandidate(s,candidate);
@@ -4589,6 +4592,8 @@ void flatRuntimePresent(IDXGISwapChain* swap, uint64_t frame, HRESULT hr, UINT f
     Ptr<ID3D11Device> actualDevice; swap->GetDevice(IID_PPV_ARGS(&actualDevice));
     if (s.device && actualDevice.Get() != s.device.Get()) {
         flatRuntimeResize();
+        // DittoSR's shaders and histories belong to the old device. Its shutdown does not wait on the GPU.
+        dittoShutdown();
         s.thread = GetCurrentThreadId();
     }
     if (!s.device) { swap->GetDevice(IID_PPV_ARGS(&s.device)); if (s.device) s.device->GetImmediateContext(&s.context); }

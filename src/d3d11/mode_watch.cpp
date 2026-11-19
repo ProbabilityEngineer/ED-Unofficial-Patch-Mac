@@ -6,6 +6,7 @@
 #include "device_hook.h"        // flatSwitchAvailable, deviceHookRequestConfigRefresh: the switch's gate and its forced configure sweep
 #include "engine_velocity.h"    // engineVelocityFlatAbandon: the flat teardown's velocity state
 #include "flat_runtime.h"       // flatRuntimeResize: the flat teardown, run before a commit leaves flat
+#include "dittosr_engine.h"     // dittoReleaseFeatures: DittoSR's histories, released at every switch
 #include "fsr3_engine.h"        // fsr3ReleaseFeatures: FSR's features, released at every switch
 #include "menu.h"               // menuProfileSwitch: the menu closes and forgets the outgoing profile's first-time block
 #include "mode_watch_logic.h"
@@ -440,6 +441,7 @@ void commitPosted(uint64_t packed) {
             uiLayerProfileSwitch();
         }
         fsr3ReleaseFeatures();
+        dittoReleaseFeatures();
         menuProfileSwitch();
         g_teardowns.fetch_add(1, std::memory_order_relaxed);
     }

@@ -27,7 +27,8 @@ namespace edvr {
 // engines (dlaa, dlss, xess) were removed; those values now read as off, like any other unknown value.
 inline bool temporalModeEnabled(const std::string& mode) {
     return _stricmp(mode.c_str(), "fsr") == 0 ||
-           _stricmp(mode.c_str(), "mfx") == 0;
+           _stricmp(mode.c_str(), "mfx") == 0 ||
+           _stricmp(mode.c_str(), "dittosr") == 0;   // DittoSR 0.5.0 (experimental branch, from upstream PR 237)
 }
 
 // Every profile arms the producers for every mode: XeSS is offered in flat and in VR (the VR eye pass's Intel engine).

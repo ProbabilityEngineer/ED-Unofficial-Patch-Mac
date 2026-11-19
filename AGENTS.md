@@ -117,7 +117,9 @@ A release is two zips on the GitHub release `macos-vX.Y.Z`:
 
 1. `d3d11.dll`, `release/mac/edvr-flat.ini` (the defaults), the licence
    notices (`LICENSE`, `FIDELITYFX-SDK-DX11-LICENSE.txt`,
-   `DXBC-HASH-LICENSE.txt`, `MINIZ-LICENSE.txt`);
+   `DXBC-HASH-LICENSE.txt`, `MINIZ-LICENSE.txt`, and with DittoSR
+   `DITTOSR-LICENSE.txt` from `third_party/dittosr/LICENSE` and
+   `DITTOSR-GSR-LICENSE.txt` from its `licenses/LICENSE-snapdragon-gsr.txt`);
 2. `dxmt-<version>.zip`: the DXMT build's `aarch64-*` and `x86_64-*` folders,
    with DXMT's licence and the source commit.
 

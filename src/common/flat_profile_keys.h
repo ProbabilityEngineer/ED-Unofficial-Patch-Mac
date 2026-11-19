@@ -25,6 +25,11 @@ inline bool flatProfileReadsKey(const char* key) {
         // on the Debug tab. Unlisted, getBool answers false here whatever the file says, and the timing could never be turned on from the panel.
         std::strcmp(key, "advanced.flat_cpu_timing") == 0 ||
         std::strcmp(key, "hotkey.menu") == 0 ||
+        // DittoSR's picture controls (dittosr_engine.cpp). Performance-page rows, dimmed until Anti-aliasing is DittoSR.
+        std::strcmp(key, "fix.dittosr_sharpness") == 0 ||
+        std::strcmp(key, "fix.dittosr_frame_weight") == 0 ||
+        std::strcmp(key, "fix.dittosr_anti_shimmer") == 0 ||
+        std::strcmp(key, "fix.dittosr_sharpen") == 0 ||
         // Whether the menu's notices show (menu.cpp menuShowNotice): VR's toasts and flat's screen card alike. Unlisted, getBool answers false here whatever
         // the file says, and no flat notice (a restart waiting, an AA comparison) could be shown.
         std::strcmp(key, "menu.toasts") == 0 ||
