@@ -3344,8 +3344,11 @@ void buildToastContent(MenuContent& c, const std::string& text, float widthDeg, 
     }
     // A notice wider than the card wraps at spaces onto up to three lines, measured with the raster's own ruler, instead of being
     // ellipsised ("AA off (comparison), press F7 to res...", flown 2026-11-19). The card is then sized again for its lines.
+    // Measured in the font the notice is drawn in: the row face (menu_panel.cpp, Font::Row), not the cap size the footer measures with --
+    // the first cut used the cap size, so a notice the row face ellipsised measured as fitting and never wrapped (flown 2026-11-19).
+    const int rowPx = c.rowFontPx > 0 ? c.rowFontPx : c.capPx * 10 / 7;
     const int roomPx = c.cardPx - 2 * (c.capPx * 8 / 10);
-    if (roomPx > 0 && menuPanelMeasureLine(text.c_str(), c.capPx) > roomPx) {
+    if (roomPx > 0 && menuPanelMeasureLine(text.c_str(), rowPx) > roomPx) {
         constexpr int kMaxNoticeLines = 3;
         std::string lines[kMaxNoticeLines];
         int n = 0;
@@ -3358,7 +3361,7 @@ void buildToastContent(MenuContent& c, const std::string& text, float widthDeg, 
                 size_t next = text.find(' ', end + 1);
                 if (next == std::string::npos) next = text.size();
                 const std::string trial = text.substr(at, next - at);
-                if (!line.empty() && menuPanelMeasureLine(trial.c_str(), c.capPx) > roomPx) break;
+                if (!line.empty() && menuPanelMeasureLine(trial.c_str(), rowPx) > roomPx) break;
                 line = trial;
                 end = next;
             }
