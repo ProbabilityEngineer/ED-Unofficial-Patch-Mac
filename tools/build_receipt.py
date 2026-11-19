@@ -132,7 +132,7 @@ def command_output(root, *args):
 def git_state(root):
     return {
         "commit": command_output(root, "rev-parse", "HEAD") or "unknown",
-        "describe": command_output(root, "describe", "--tags", "--always", "--dirty") or "unknown",
+        "describe": command_output(root, "describe", "--tags", "--exclude", "feature/*", "--always", "--dirty") or "unknown",
     }
 
 

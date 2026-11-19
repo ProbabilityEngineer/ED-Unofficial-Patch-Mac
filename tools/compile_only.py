@@ -71,7 +71,7 @@ def source_fingerprint(root):
 
 
 def describe(root):
-    return _git(root, "describe", "--tags", "--always", "--dirty") or "unknown"
+    return _git(root, "describe", "--tags", "--exclude", "feature/*", "--always", "--dirty") or "unknown"
 
 
 def payload(bdir):

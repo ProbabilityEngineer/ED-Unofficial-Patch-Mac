@@ -501,7 +501,7 @@ def describe_cmd(ref, root):
     run looks exactly like one that works. So --dirty is asked for only
     where it means something, which is HEAD.
     """
-    cmd = ["git", "-C", root, "describe", "--tags", "--always"]
+    cmd = ["git", "-C", root, "describe", "--tags", "--exclude", "feature/*", "--always"]
     if ref in ("HEAD", "", None):
         cmd.append("--dirty")
     else:
