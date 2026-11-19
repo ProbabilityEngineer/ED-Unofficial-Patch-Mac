@@ -98,7 +98,8 @@ inline std::string modeLabel(const std::string& mode) {
     if (_stricmp(mode.c_str(), "on") == 0) return "TAA";
     if (_stricmp(mode.c_str(), "dlaa") == 0) return "DLAA";
     if (_stricmp(mode.c_str(), "dlss") == 0) return "DLSS";
-    if (_stricmp(mode.c_str(), "fsr") == 0) return "FSR";
+    if (_stricmp(mode.c_str(), "fsr") == 0) return "FSR3";
+    if (_stricmp(mode.c_str(), "mfx") == 0) return "MetalFX";
     if (_stricmp(mode.c_str(), "xess") == 0) return "XeSS";
     if (mode.empty() || _stricmp(mode.c_str(), "off") == 0) return "off";
     return mode;
@@ -107,7 +108,7 @@ inline std::string modeLabel(const std::string& mode) {
 // The short notice for a press. `key` is the binding as the ini spells it ("F7"); `configured` is the mode a restore returns to.
 inline std::string noticeText(Press p, const std::string& configured, const std::string& key) {
     switch (p) {
-        case Press::WentOff: return "AA off (comparison), press " + key + " to restore";
+        case Press::WentOff: return "AA off, press " + key + " to restore";
         case Press::Restored: return "AA restored: " + modeLabel(configured);
         case Press::NothingToCompare: return "AA is off in your settings, nothing to compare";
     }

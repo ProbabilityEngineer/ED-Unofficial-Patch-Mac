@@ -16,8 +16,6 @@ inline bool flatProfileReadsKey(const char* key) {
         std::strcmp(key, "advanced.input_gate") == 0 ||
         std::strcmp(key, "advanced.flat_camera_producer_probe") == 0 ||
         std::strcmp(key, "diag.flat_origin_capture") == 0 ||
-        // TEMPORARY (flat_star_light_diag.h): the star-light colour samples.
-        std::strcmp(key, "diag.star_light_log") == 0 ||
         // The sun's light in the star's colour far from the star too (flat_star_light.h). A Visual tab row.
         std::strcmp(key, "visual.star_light_colour") == 0 ||
         // The refusal view (flat_runtime.cpp): paints the prep's per-pixel class over the resolved image. A flat panel row on the Debug tab.
@@ -58,10 +56,6 @@ inline bool flatProfileReadsKey(const char* key) {
         // Which lights reach that dirt (visual.cockpit_glass_lights, cockpit_glass_core.h lightsLevelOf): off | station, read live with the look, in both profiles. The row under that.
         // Unlisted, getString answers "off" here whatever the file says, and the row could never turn them on.
         std::strcmp(key, "visual.cockpit_glass_lights") == 0 ||
-        // The smoke and steam plumes, and the other camera-facing billboards (particle_fix.cpp, docs\particle-billboards.md): steady | stock, in both
-        // profiles, the Visual tab's Billboards row. Unlisted, getString answers "off" here, which the reader takes for "not stock or steady;
-        // running stock", so the row could never turn the fix on.
-        std::strcmp(key, "fix.particle_billboard") == 0 ||
         // Character motion (2026-11-14): the second skin in the flat profile (engine_velocity.cpp engineVelocitySetFlatSkin).
         std::strcmp(key, "fix.character_motion") == 0 ||
         // The AA comparison key (aa_compare.cpp): turns EDVR's temporal AA off for a side-by-side look and back, runtime only. Unlisted, a hotkey

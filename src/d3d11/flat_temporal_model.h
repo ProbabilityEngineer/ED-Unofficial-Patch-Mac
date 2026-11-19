@@ -102,7 +102,10 @@ inline bool flatUniformScale(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
     if (!w || !h || !ow || !oh) return false;
     const uint64_t lhs = uint64_t(w) * oh, rhs = uint64_t(h) * ow;
     const uint64_t diff = lhs > rhs ? lhs - rhs : rhs - lhs;
-    return diff <= uint64_t(ow) + uint64_t(oh);
+    // Up to about two pixels of rounding in either axis (ow + oh is about one). One was too tight for a windowed size: 3780x2362
+    // on a 3024x1891 window at Supersampling 1.25 (1891 x 1.25 = 2363.75, Elite made 2362) was refused as another shape,
+    // 2026-11-19.
+    return diff <= 2 * (uint64_t(ow) + uint64_t(oh));
 }
 inline FlatContractKind flatContractKind(bool knownPoolFamily,
                                          const void* color, const void* depth,

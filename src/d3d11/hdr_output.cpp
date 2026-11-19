@@ -1369,26 +1369,48 @@ void noteToneDraw(ID3D11DeviceContext* ctx) {
     D3D11_TEXTURE2D_DESC desc = {};
     texture->GetDesc(&desc);
     texture->Release();
-    const bool wide = desc.Format == DXGI_FORMAT_R16G16B16A16_TYPELESS ||
-                      desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+    // 16-bit float or wider reaches the output as HDR. Until 2026-11-19 only R16G16B16A16 counted, so an R32G32B32A32_FLOAT target
+    // (the tone shader drew alternately into one and an fp16 target at 2867x1862, session 20261119_043447) read as "8-BIT", re-armed
+    // the learning below on every alternation and logged it each time (~4,900 lines).
+    const bool wide = desc.Format == DXGI_FORMAT_R16G16B16A16_TYPELESS || desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+                      desc.Format == DXGI_FORMAT_R32G32B32A32_TYPELESS || desc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT ||
+                      desc.Format == DXGI_FORMAT_R32G32B32_TYPELESS || desc.Format == DXGI_FORMAT_R32G32B32_FLOAT;
     const hdrrules::TextureShape shape = shapeOf(desc);
-    bool learned = false, saved = false, wasLearning = false;
+    bool learned = false, saved = false, wasLearning = false, learningEnded = false, firstSight = false;
     {
         std::lock_guard<std::mutex> lock(g_wideMutex);
         wasLearning = g_toneLearning;
         if (g.widenMode == rules::WidenMode::Auto) {
             learned = hdrrules::rememberShape(g_toneShapes, &g_toneShapeCount, shape);
             if (learned) saved = saveToneShapes();
-            // A miss means the shape changed (a resolution or render-scale change):
-            // widen everything again for the rest of the session, so the game's
-            // next re-create is wide, and the next launch narrows to the new shape.
+            // A miss means the shape changed (a resolution or render-scale change): widen every candidate, so the game's next
+            // re-create is wide, and the next launch narrows to the new shape. That re-create is the end of it: once the tone shader
+            // draws into a wide target again, its shape is learned (above) and the learning stops. Until 2026-11-19 it lasted the
+            // rest of the session, widening every 8-bit texture the game made: ~2,700 in five minutes on foot (18.8 GB made, about
+            // 1 GB alive), GPU memory climbing about 1 GB a minute and ED-UP's CPU per frame from ~2 ms to ~20 ms.
             if (!wide) g_toneLearning = true;
+            else if (g_toneLearning && g_toneShapeCount > 0) { g_toneLearning = false; learningEnded = wasLearning; }
+        }
+        // One line per target (size, format) the tone shader is seen drawing into, not one per change between two of them.
+        static uint32_t seen[16][3] = {};
+        static unsigned seenCount = 0;
+        firstSight = true;
+        for (unsigned i = 0; i < seenCount; ++i)
+            if (seen[i][0] == desc.Width && seen[i][1] == desc.Height && seen[i][2] == unsigned(desc.Format)) { firstSight = false; break; }
+        if (firstSight) {
+            const unsigned at = seenCount < 16 ? seenCount++ : (desc.Width + desc.Height) % 16;
+            seen[at][0] = desc.Width; seen[at][1] = desc.Height; seen[at][2] = unsigned(desc.Format);
         }
     }
+    if (learningEnded)
+        Log::get().note("hdr: the tone shader draws into a wide %ux%u target again: its shape is learned, so only textures of learned "
+                        "shapes are widened from here (the widening of every candidate that the new shape started is over).",
+                        desc.Width, desc.Height);
+    if (!firstSight && !learned && !(learningEnded)) return;
     Log::get().note("hdr: the tone shader draws into a %ux%u target (bind 0x%X, %u mips, format %u), "
                     "which is %s.%s%s",
                     desc.Width, desc.Height, desc.BindFlags, desc.MipLevels, unsigned(desc.Format),
-                    wide ? "16-bit float: HDR reaches the output"
+                    wide ? "16-bit float or wider: HDR reaches the output"
                          : "8-BIT: HDR is clipped to SDR for this target",
                     learned ? (saved ? " Its shape is learned and saved; the next launch widens only "
                                        "textures of a learned shape."
@@ -1396,7 +1418,7 @@ void noteToneDraw(ID3D11DeviceContext* ctx) {
                                        "learns again.")
                             : "",
                     (!wide && g.widenMode == rules::WidenMode::Auto)
-                        ? (wasLearning ? "" : " Every candidate widens again for the rest of this session.")
+                        ? (wasLearning ? "" : " Every candidate widens until the tone shader draws into a wide target again.")
                         : "");
 }
 

@@ -10,6 +10,7 @@
 #include "../common/timing.h"
 #include "elite_binds.h"
 #include "menu.h"
+#include "flat_runtime.h"   // flatRuntimeMfxAsFsr: a restore to MetalFX that runs as FSR says so
 
 namespace edvr {
 namespace {
@@ -117,7 +118,15 @@ void onPress(Config& cfg) {
                             "changed.", g_keyText.c_str(), configured.empty() ? "(unset)" : configured.c_str());
             break;
     }
-    menuShowNotice(aacmp::noticeText(p, configured, g_keyText).c_str());
+    std::string notice = aacmp::noticeText(p, configured, g_keyText);
+    // MetalFX chosen but FSR runs (flat_runtime.cpp: Supersampling above 1.0 on stock DXMT, or the output-size guard): the restore names
+    // FSR3, the engine that actually comes back, and why in a few words.
+    if (p == aacmp::Press::Restored && _stricmp(configured.c_str(), "mfx") == 0) {
+        const int asFsr = flatRuntimeMfxAsFsr();
+        if (asFsr == 1) notice = "AA restored: FSR3 (MetalFX runs at SS 1.0 or below)";
+        else if (asFsr == 2) notice = "AA restored: FSR3 (MetalFX off until Elite restarts)";
+    }
+    menuShowNotice(notice.c_str());
 }
 
 }  // namespace

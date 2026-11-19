@@ -313,7 +313,7 @@ bool Log::open(const std::wstring& dir, const wchar_t* tag) {
     m_impl->headPath = path;
     m_impl->headLeaf = leafName(path);
     m_open = true;
-    note("ED-UP log -- unofficial VR and flat fixes for Elite Dangerous: Odyssey");
+    note("ED-UP for Mac log -- unofficial flat fixes for Elite Dangerous: Odyssey on macOS (CrossOver, DXMT)");
     // The version names the git tag the DLL was built from, straight from
     // `git describe` at build time (see build.bat). It exists because the link
     // stamp alone cannot answer "which release is this" without correlating

@@ -59,6 +59,9 @@ enum MenuBadge : uint8_t {
     kBadgePending = 2,   // "restart required", the value beside it is the pending one (ed-metalfx; upstream says "at next launch")
     kBadgeUnknown = 3,   // "?" -- when it applies is not documented
     kBadgeClash = 4,     // "also in Elite" -- a hotkey that Elite's own bindings use too (the game sees the press)
+    kBadgeAaFsrAbove = 6,     // "FSR3 above SS 1.0" -- the flat Anti-aliasing row: MetalFX chosen, FSR running (Supersampling above 1.0 on stock DXMT)
+    kBadgeAaFsrRestart = 7,   // "FSR3 until restart" -- the same, after the MetalFX output-size guard
+    kBadgeAaPaused = 8,       // "paused" -- the flat anti-aliasing stood down (the status page says why)
     kBadgeStopped = 5,   // "stopped" -- the setting is on but what it drives stopped; a restart alone will not fix it (menu_restart.h)
 };
 

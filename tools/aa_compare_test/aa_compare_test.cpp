@@ -139,11 +139,12 @@ static void machineCells() {
 }
 
 static void wordsCells() {
-    check(noticeText(Press::WentOff, "dlss", "F7") == "AA off (comparison), press F7 to restore", "the off notice, word for word");
-    check(noticeText(Press::WentOff, "dlss", "CTRL+F7") == "AA off (comparison), press CTRL+F7 to restore", "the off notice names the key as bound");
+    check(noticeText(Press::WentOff, "dlss", "F7") == "AA off, press F7 to restore", "the off notice, word for word");
+    check(noticeText(Press::WentOff, "dlss", "CTRL+F7") == "AA off, press CTRL+F7 to restore", "the off notice names the key as bound");
     check(noticeText(Press::Restored, "dlss", "F7") == "AA restored: DLSS", "the restore notice names the mode");
     check(noticeText(Press::Restored, "on", "F7") == "AA restored: TAA" && noticeText(Press::Restored, "dlaa", "F7") == "AA restored: DLAA" &&
-          noticeText(Press::Restored, "fsr", "F7") == "AA restored: FSR" && noticeText(Press::Restored, "xess", "F7") == "AA restored: XeSS",
+          noticeText(Press::Restored, "fsr", "F7") == "AA restored: FSR3" && noticeText(Press::Restored, "xess", "F7") == "AA restored: XeSS" &&
+          noticeText(Press::Restored, "mfx", "F7") == "AA restored: MetalFX",
           "every mode has its name");
     check(!noticeText(Press::NothingToCompare, "off", "F7").empty(), "the nothing-to-compare notice exists");
     check(modeLabel("") == "off" && modeLabel("mystery") == "mystery", "an unknown mode is shown as written");
@@ -265,7 +266,7 @@ static void flatNoticeCells() {
               "ticks with the menu open do not start the notice");
         check(q.due(), "...and do not discard it");
         const std::string* got = q.take(false);
-        check(got && *got == "AA off (comparison), press F7 to restore", "the menu closes: the off notice starts, word for word");
+        check(got && *got == "AA off, press F7 to restore", "the menu closes: the off notice starts, word for word");
         check(!q.due() && q.take(false) == nullptr, "...once");
     }
     // Restoring AA with the menu open: same.
@@ -301,7 +302,7 @@ static void flatNoticeCells() {
     // Menu closed when the notice is raised: it starts on the next tick, as before.
     {
         FlatNoticeQueue q;
-        q.show("AA off (comparison), press F7 to restore");
+        q.show("AA off, press F7 to restore");
         check(q.take(false) != nullptr && !q.due(), "with the menu closed the notice starts at once");
         q.show("");
         q.show(nullptr);

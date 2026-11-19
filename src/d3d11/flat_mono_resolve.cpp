@@ -5,9 +5,11 @@
 #include "map_easu.h"
 #include "map_smaa.h"
 #include "metal_fx_engine.h"
+#include "menu.h"   // menuShowNotice: the MetalFX output-size guard's notice
 #include "temporal_shader_bytecode.h"
 #include <d3d11_1.h>
 #include <wrl/client.h>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -50,6 +52,18 @@ struct SpanGuard {
 // route's name. A plain bool: the resolver runs on the owner thread. g_hdrCall is the same scope without the crumbs' gate:
 // the call is the HDR route's, which is what its step counts (FlatMonoResolveStats::hdrCaptured and the rest) ask.
 bool g_crumbOn = false, g_hdrCall = false;
+// The MetalFX input size last logged (resources(): "MFX: inputs at a fixed ..."), so the line is written once per size, not per reallocation.
+uint32_t g_mfxNotedWidth = 0, g_mfxNotedHeight = 0;
+// The MetalFX output-size guard (mfxOutputSizeAdmitted). DXMT caches one MetalFX scaler per input and output size, and stock DXMT
+// never frees one. The inputs are at a fixed size per output (mfxDepth's declaration), but MetalFX has no output content size, so each
+// new output size (a resolution change, or a game window resized) is a new scaler kept for the session. On a DXMT that does not report
+// ED Unofficial Patch for Mac's fixes (stock DXMT), a session may use kMfxStockOutputSizes output sizes; the next new one turns MetalFX
+// off for the session and FSR takes over (flat_runtime.cpp maps mfx to fsr while flatMfxStoodDown()). The fix report is the write-mask
+// one: the DXMT fork that reports it (elite-mac) also frees idle scalers, so it needs no guard.
+constexpr unsigned kMfxStockOutputSizes = 3;
+uint32_t g_mfxOutputSizes[kMfxStockOutputSizes][2] = {};
+unsigned g_mfxOutputSizeCount = 0;
+bool g_mfxStoodDown = false;
 struct CrumbScope {
     const bool previous, previousCall;
     explicit CrumbScope(bool hdr) : previous(g_crumbOn), previousCall(g_hdrCall) { g_hdrCall = hdr; g_crumbOn = hdr && hdrCrumbLive(); }
@@ -362,6 +376,14 @@ struct State {
     // on every other backend, and not part of any other mode's identity. `color` above is NOT replaced by it: the
     // finish kernels still sample the original format for rejected pixels.
     Image mfxColor;
+    // MetalFX's depth and motion: copies of depth[] and motion (which FSR and TAA share at the render size) into
+    // textures of the same fixed size as mfxColor. All three are made at mfxWidth x mfxHeight, the larger of the
+    // render and evaluation sizes, and the render-size content is named in the descriptor (InputContentWidth/Height).
+    // Why (2026-11-19): DXMT keeps one MetalFX scaler per INPUT TEXTURE size and stock DXMT never frees one, so
+    // every Supersampling change used to leave a scaler behind (gigabytes over a few changes). With a fixed input
+    // texture size there is one scaler per output size, whatever the render size.
+    Image mfxDepth, mfxMotion;
+    uint32_t mfxWidth=0, mfxHeight=0;
     uint32_t width=0, height=0, outWidth=0, outHeight=0, evalWidth=0, evalHeight=0, current=0;
     // The spatial recovery's own images (spatialImages), for a frame the temporal set above does not fit: the input copy by format ([0] the
     // copy route's RGBA8 or FP16, [1] the HDR route's R11G11B10F) at the render size, and the copy route's output at the evaluation size. Each is made
@@ -694,14 +716,14 @@ bool resources(const FlatMonoResolveFrame& f,const char** reason) {
     ++stats.allocations;
     g.color={};g.rawOverlay={};g.depth[0]={};g.depth[1]={};g.motion={};g.rejection={};g.expected={};g.output[0]={};g.output[1]={};
     g.outputDomain[0]={};g.outputDomain[1]={};g.untrustedCoverageLast=false;
-    g.mfxColor={};
+    g.mfxColor={};g.mfxDepth={};g.mfxMotion={};g.mfxWidth=g.mfxHeight=0;
     g.klass={};g.classWidth=g.classHeight=0;   // the refusal census's class texture is the render size: made again by a frame that asks
     g.width=g.height=g.outWidth=g.outHeight=0;g.evalWidth=g.evalHeight=0;g.current=0;g.depthLast=0;g.history=false;g.hdr=false;
     const bool taa=f.mode==FlatMonoResolveMode::Taa;
     // The images' names for the HDR route's crumbs: which of the private textures each creation is.
     const auto role=[&](const Image& i)->const char* {
         return &i==&g.color?"color":&i==&g.rawOverlay?"overlay-raw":&i==&g.depth[0]?"depth0":&i==&g.depth[1]?"depth1":&i==&g.motion?"motion":
-               &i==&g.rejection?"rejection":&i==&g.expected?"expected":&i==&g.mfxColor?"mfx-color":&i==&g.output[0]?"output0":"output1";
+               &i==&g.rejection?"rejection":&i==&g.expected?"expected":&i==&g.mfxColor?"mfx-color":&i==&g.mfxDepth?"mfx-depth":&i==&g.mfxMotion?"mfx-motion":&i==&g.output[0]?"output0":"output1";
     };
     auto make=[&](Image& out,DXGI_FORMAT format,bool output=false,bool writable=true) {
         return image(g.device.Get(),output?evalW:f.renderWidth,output?evalH:f.renderHeight,format,out,writable,role(out));
@@ -755,7 +777,21 @@ bool resources(const FlatMonoResolveFrame& f,const char** reason) {
     }
     // MetalFX's colour, and only MetalFX's. Made after the branch above because it is the one image that is
     // neither the route's colour nor an output, and because making it here keeps the two branches untouched.
-    if(mfx) made=made && make(g.mfxColor,DXGI_FORMAT_R16G16B16A16_FLOAT);
+    // Its three inputs are at one fixed size, mfxWidth x mfxHeight (the declaration of mfxDepth says why): the larger
+    // of the render and evaluation sizes, so a render size at or below the output keeps the same textures' size and
+    // DXMT's cached scaler, and one above it (which MetalFX's 1x-3x content scale does not take anyway) still fits.
+    if(mfx) {
+        const uint32_t mw=(std::max)(f.renderWidth,evalW),mh=(std::max)(f.renderHeight,evalH);
+        made=made && image(g.device.Get(),mw,mh,DXGI_FORMAT_R16G16B16A16_FLOAT,g.mfxColor,true,role(g.mfxColor)) &&
+            image(g.device.Get(),mw,mh,DXGI_FORMAT_R32_FLOAT,g.mfxDepth,false,role(g.mfxDepth)) &&
+            image(g.device.Get(),mw,mh,DXGI_FORMAT_R16G16_FLOAT,g.mfxMotion,false,role(g.mfxMotion));
+        if(made) {
+            if(mw!=g_mfxNotedWidth || mh!=g_mfxNotedHeight)
+                Log::get().note("MFX: inputs at a fixed %ux%u (render %ux%u named as the content), so DXMT keeps one scaler for this output "
+                                "size whatever the Supersampling", mw, mh, f.renderWidth, f.renderHeight);
+            g_mfxNotedWidth=mw;g_mfxNotedHeight=mh;g.mfxWidth=mw;g.mfxHeight=mh;
+        }
+    }
     if(!made)return fail(reason,"flat-resolve-texture-create-failed");
     g.width=f.renderWidth;g.height=f.renderHeight;g.outWidth=f.outputWidth;g.outHeight=f.outputHeight;g.mode=f.mode;
     g.evalWidth=evalW;g.evalHeight=evalH;g.hdr=f.hdr;g.fp16=f.fp16;
@@ -1101,6 +1137,28 @@ void flatMonoResolveSetSpanHooks(FlatMonoResolveSpanFn begin, FlatMonoResolveSpa
     g_spanEnd = begin && end ? end : nullptr;
 }
 
+// The MetalFX output-size guard (g_mfxOutputSizes' declaration says why). True when this output size may have a MetalFX scaler: one
+// already used this session, any size on a DXMT that frees idle scalers, or a new one while fewer than kMfxStockOutputSizes are used.
+static bool mfxOutputSizeAdmitted(ID3D11DeviceContext* context,uint32_t outW,uint32_t outH) {
+    if(g_mfxStoodDown)return false;
+    for(unsigned i=0;i<g_mfxOutputSizeCount;++i)
+        if(g_mfxOutputSizes[i][0]==outW && g_mfxOutputSizes[i][1]==outH)return true;
+    if(dxmtFixesPartialWriteMaskDiscard(context))return true;
+    if(g_mfxOutputSizeCount<kMfxStockOutputSizes) {
+        g_mfxOutputSizes[g_mfxOutputSizeCount][0]=outW;g_mfxOutputSizes[g_mfxOutputSizeCount][1]=outH;++g_mfxOutputSizeCount;
+        return true;
+    }
+    g_mfxStoodDown=true;
+    Log::get().note("MFX: output size guard: %ux%u would be MetalFX's output size number %u this session; this DXMT does not report "
+                    "ED Unofficial Patch for Mac's fixes (stock DXMT keeps every MetalFX scaler it makes), so MetalFX is off for the rest "
+                    "of the session and FSR takes over. Restart Elite to use MetalFX again.",
+                    outW,outH,kMfxStockOutputSizes+1);
+    menuShowNotice("MetalFX off until Elite restarts (FSR3 runs): too many screen sizes on stock DXMT");
+    return false;
+}
+
+bool flatMfxStoodDown() { return g_mfxStoodDown; }
+
 bool flatMonoResolve(ID3D11Device* device,ID3D11DeviceContext* context,const FlatMonoResolveFrame& f,
                      ID3D11ShaderResourceView** output,const char** reason) {
     CrumbScope crumbs(f.hdr);   // the HDR route's breadcrumbs (flat_hdr_crumbs.h) for every step below
@@ -1235,6 +1293,9 @@ bool flatMonoResolve(ID3D11Device* device,ID3D11DeviceContext* context,const Fla
            !(desc.BindFlags&D3D11_BIND_SHADER_RESOURCE) || owner.Get()!=g.device.Get())
             return fail(reason,"flat-resolve-foreground-view-mismatch");
     }
+    // MetalFX's output is E (evalW x evalH, above): the guard counts it (mfxOutputSizeAdmitted).
+    if(f.mode==FlatMonoResolveMode::Mfx && !mfxOutputSizeAdmitted(context,evalW,evalH))
+        return fail(reason,"flat-mfx-output-size-guard");
     if(!resources(f,reason))return false;
     if(untrusted && f.mode==FlatMonoResolveMode::Taa && !ensureOutputDomains(f.outputWidth,f.outputHeight))
         return fail(reason,"flat-resolve-output-domain-create-failed");
@@ -1494,7 +1555,12 @@ bool flatMonoResolve(ID3D11Device* device,ID3D11DeviceContext* context,const Fla
         // No reactive mask: DXMT's descriptor has no field for one and DXMT is read-only here, and the finish
         // kernel already applies the rejection mask itself. No history resource: MetalFX owns it inside the scaler
         // DXMT caches, so `reset` is the only history control that crosses.
-        ok=mfxEvaluate(context,g.mfxColor.texture.Get(),g.depth[depthIndex].texture.Get(),g.motion.texture.Get(),
+        // Depth and motion go to MetalFX through its own fixed-size copies (mfxDepth's declaration): the render-size
+        // corner of each, the region the descriptor names as the content.
+        const D3D11_BOX content{0,0,0,f.renderWidth,f.renderHeight,1};
+        context->CopySubresourceRegion(g.mfxDepth.texture.Get(),0,0,0,0,g.depth[depthIndex].texture.Get(),0,&content);
+        context->CopySubresourceRegion(g.mfxMotion.texture.Get(),0,0,0,0,g.motion.texture.Get(),0,&content);
+        ok=mfxEvaluate(context,g.mfxColor.texture.Get(),g.mfxDepth.texture.Get(),g.mfxMotion.texture.Get(),
             g.output[0].texture.Get(),f.renderWidth,f.renderHeight,evalW,evalH,f.jitterX,f.jitterY,reset,reason,hdrColor);
     } else {
         ok=false;   // DLAA, DLSS and XeSS were removed in ed-metalfx (stage 2b); backendAvailable refuses them first

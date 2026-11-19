@@ -328,7 +328,7 @@ REM from a build that was never a release SAYS so instead of impersonating one.
 REM No git or no repo (a source-zip build) falls back to "unknown" and the
 REM build carries on -- versioning must never be the reason a build fails.
 set "EDVR_VER=unknown"
-for /f "delims=" %%v in ('git -C "%ROOT%" describe --tags --always --dirty 2^>nul') do set "EDVR_VER=%%v"
+for /f "delims=" %%v in ('git -C "%ROOT%" describe --tags --exclude "feature/*" --always --dirty 2^>nul') do set "EDVR_VER=%%v"
 REM Wine has no git: tools\linux_toolchain.py passes the host's describe of
 REM the same tree, and only a compile-only build reads it.
 if defined EDVR_COMPILE_ONLY if defined EDVR_GIT_DESCRIBE set "EDVR_VER=%EDVR_GIT_DESCRIBE%"
@@ -659,7 +659,7 @@ python tools\compile_cache.py --prune --keep thunks.obj cl.exe %CFLAGS% %NGXFLAG
     "src\d3d11\fsr3_engine.cpp" ^
     "src\d3d11\metal_fx_engine.cpp" ^
     "src\d3d11\sharpen_pass.cpp" ^
-    "src\d3d11\flat_sharpen.cpp" "src\d3d11\flat_ui_layer.cpp" "src\d3d11\flat_star_glow.cpp" "src\d3d11\flat_star_light_diag.cpp" "src\d3d11\flat_star_light.cpp" "src\d3d11\flat_dof_blur.cpp" ^
+    "src\d3d11\flat_sharpen.cpp" "src\d3d11\flat_ui_layer.cpp" "src\d3d11\flat_star_glow.cpp" "src\d3d11\flat_star_light.cpp" "src\d3d11\flat_dof_blur.cpp" ^
     "src\d3d11\hdr_output.cpp" ^
     "src\d3d11\hdr_fullscreen_mode.cpp" ^
     "src\d3d11\loader_panel.cpp" ^

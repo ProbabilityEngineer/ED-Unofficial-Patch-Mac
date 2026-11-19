@@ -501,7 +501,7 @@ def describe_cmd(ref, root):
     run looks exactly like one that works. So --dirty is asked for only
     where it means something, which is HEAD.
     """
-    cmd = ["git", "-C", root, "describe", "--tags", "--always"]
+    cmd = ["git", "-C", root, "describe", "--tags", "--exclude", "feature/*", "--always"]
     if ref in ("HEAD", "", None):
         cmd.append("--dirty")
     else:
@@ -6824,6 +6824,9 @@ def self_test_route_curve():
         try:
             body = read_text(os.path.join(root, *rel))
         except OSError:
+            if flat_port_removed(rel):
+                print("self-test: skipped the pins on %s (removed in the flat-only port)" % "\\".join(rel))
+                continue
             fail("%s is not where the self-test looks for it" % "\\".join(rel))
             continue
         for needle in needles:
@@ -8798,6 +8801,9 @@ def self_test_freezes():
         try:
             body = read_text(os.path.join(root, *rel))
         except OSError:
+            if flat_port_removed(rel):
+                print("self-test: skipped the pins on %s (removed in the flat-only port)" % "\\".join(rel))
+                continue
             fail("%s is not where the self-test looks for it" % "\\".join(rel))
             continue
         for needle in needles:
@@ -9503,6 +9509,9 @@ def self_test_slow_regime():
         try:
             body = read_text(os.path.join(root, *rel))
         except OSError:
+            if flat_port_removed(rel):
+                print("self-test: skipped the pins on %s (removed in the flat-only port)" % "\\".join(rel))
+                continue
             fail("%s is not where the self-test looks for it" % "\\".join(rel))
             continue
         for needle in needles:
@@ -19745,6 +19754,21 @@ def health_render(fmt, vals):
     return re.sub(r"%%|%([-+ #0]*\d*(?:\.\d+)?)(?:ll|l|z|h)?([diuxXsfFeEgGc])", one, fmt)
 
 
+# ED Unofficial Patch for Mac is flat only: strip stages 1-2c (2026-11-13/14, 66d141a1..db37c8f5) removed the OpenXR runtime (src\openxr) and
+# the VR-only d3d11 sources below. A self-test pin on a source in this list is skipped, and says so, instead of failing on a file that is gone
+# on purpose; a pin on any other missing source still fails.
+FLAT_PORT_REMOVED_SOURCES = ("src/openxr/", "src/d3d11/vr_world_route_math.h", "src/d3d11/vr_ssaa_hold.cpp", "src/d3d11/native_on_foot")
+
+
+def flat_port_removed(path):
+    """True when path (absolute, or a relative tuple/str) is a source the flat-only port removed and the file is indeed absent."""
+    rel = "/".join(path) if isinstance(path, tuple) else str(path)
+    rel = rel.replace("\\", "/")
+    if os.path.exists(rel) or os.path.exists(os.path.join(repo_root(), rel)):
+        return False
+    return any(p in rel for p in FLAT_PORT_REMOVED_SOURCES)
+
+
 def self_test_health():
     """--health on synthetic logs whose lines are rendered from the C format strings in src\\d3d11\\native_on_foot.cpp (so a format that drifts from its rule fails
     here, in the build, and not in the half hour after a flight): every rule's OK, PARTIAL, NEVER APPLIED, IDLE and UNPARSED cases and its cross-checks, the tag census,
@@ -19759,6 +19783,11 @@ def self_test_health():
     version = "0.21.0-1-g0123456"
     header = "[10:00:00.000] version %s (build 01234567)\n" % version
     src_path = os.path.join(repo_root(), "src", "d3d11", "native_on_foot.cpp")
+    if not os.path.exists(src_path):
+        # ED Unofficial Patch for Mac is flat only: the native on-foot VR system these --health rules read was removed (strip stage 2a,
+        # 2026-11-13), so there is no format to render and nothing to check. Said, not silently passed.
+        print("health self-test: skipped -- this tree has no src\\d3d11\\native_on_foot.cpp (flat-only port, native on-foot VR removed)")
+        return True
     swap_path = os.path.join(repo_root(), "src", "d3d11", "shader_swap.cpp")
     f90_path = os.path.join(repo_root(), "src", "d3d11", "native_on_foot_f90.h")
     f91_path = os.path.join(repo_root(), "src", "d3d11", "native_on_foot_f91.h")
@@ -27242,10 +27271,8 @@ def self_test_perf_windows():
     for name, frags in (("draw_mask_line.h", ("draw mask: 1800-frame window ending %u; %u draws through the full path; calls skipped by the vertex shader's may-want byte: ",)),
                         ("gpu_query_count.h", ("gpu timing queries: 1800-frame window ending %u; %.3f EDVR timing-query Ends a frame over %u frames (%llu in all); by owner a frame: ",
                                              '"ui_depth", "ui_content", "ui_route"};')),
-                        ("draw_gate_holders.h", ("draw gate holders: %u of %u terms hold the gate open: ",)),
-                        ("native_on_foot.cpp", ("Unmap copy %llu copies, requested %llu bytes; eye-%d first/last ring %s; over %u s",
-                                                "marker fix (F87c) Unmap copy: %llu Unmaps, requested %llu bytes, copied %llu bytes in %llu ranges (%llu windows joined), "
-                                                "whole stream %llu bytes, faults %llu, %.3f ms; over %u s"))):
+                        # native_on_foot.cpp's Unmap copy lines left with the native on-foot VR system (flat-only port, strip stage 2a).
+                        ("draw_gate_holders.h", ("draw gate holders: %u of %u terms hold the gate open: ",))):
         path = os.path.join(srcdir, name)
         if not os.path.isfile(path):
             fail("the formatter %s is missing" % name)
@@ -27714,12 +27741,17 @@ def self_test_flat_upscale():
     # ---- the Supersampling hold's lines (src/d3d11/vr_ssaa_hold.cpp, menu.cpp), the formats the DLL writes ----
     hold_src = os.path.join(os.path.dirname(here), "src", "d3d11", "vr_ssaa_hold.cpp")
     menu_src = os.path.join(os.path.dirname(here), "src", "d3d11", "menu.cpp")
+    hold_pins_removed = flat_port_removed(hold_src)
+    if hold_pins_removed:
+        print("self-test: skipped the Supersampling hold's pins (vr_ssaa_hold.cpp removed in the flat-only port)")
     for path, needles in ((hold_src, ("vr ssaa gate: holding Supersampling at 1.0 (requested %.4f, 3D mode %d, at startup",
                                        "vr ssaa gate: holding Supersampling at 1.0 (requested %.4f, VR live 1, at menu)",
                                        "vr ssaa gate: hold installed at DLL load",
                                        "vr ssaa gate: hold refused, nothing written",
                                        "vr ssaa gate: startup not held (")),
                           (menu_src, ("vr ssaa gate: notice queued as a toast",))):
+        if hold_pins_removed:
+            break
         if not os.path.isfile(path):
             fail("%s is not where the self-test looks for it" % path)
             continue

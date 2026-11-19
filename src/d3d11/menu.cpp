@@ -35,6 +35,7 @@
 #include "../common/vr_supersample_notice.h"
 #include "../common/vscreen_fit.h"
 #include "aa_compare.h"     // aaCompareNoteMenuEdit(): an F8 pick of the AA mode ends an AA comparison
+#include "../common/aa_compare.h"   // aacmp::noticeText: notice cards are at least as wide as F7's off notice
 #include "cockpit_glass_core.h"   // parseLook, dirtRowDim: the Legacy glass dirt row dims unless visual.cockpit_glass is legacy
 #include "device_hook.h"
 #include "elite_binds.h"
@@ -259,6 +260,7 @@ struct State {
     uint32_t    dimRowsGen = 0;
     bool        dimRowsGenSeen = false;
     unsigned    dimRows = 0;
+    int         mfxAsFsrShown = 0;   // flatRuntimeMfxAsFsr as the page was last drawn (mfxAsFsrTick)
     // Elite's Supersampling below 1.0 in VR (vr_supersample_notice.h, design section 83): the headset toast is said once a
     // session, the Status line and the settings pages' note whenever vScreen has measured it. Never in a flat session.
     bool        vrSupersamplingToasted = false;
@@ -1396,6 +1398,18 @@ void starGlowBloomTick() {
 // The rows that dim on another setting (Sharpening and HUD Anti-Aliasing on the anti-aliasing, the DLSS preset row, the glass dirt and station rows) read
 // the config, which a menu step moves only once the worker's write and the reload behind it are done: the page redrawn at the step showed the OLD state
 // (stepping MetalFX -> off -> FSR left Sharpening dimmed under FSR until the next key). Looked at when the generation moves; a changed state redraws.
+// What the flat Anti-aliasing row's badge reads (MetalFX standing in as FSR, flatRuntimeMfxAsFsr; the anti-aliasing paused,
+// flatRuntimeStructuralRefusal) changes with Supersampling and the resolution, not with the config, so it is looked at every tick:
+// a change redraws the page.
+void mfxAsFsrTick() {
+    State& s = g_s;
+    const int now = runtimeFlatProfile() ? (flatRuntimeMfxAsFsr() | (flatRuntimeStructuralRefusal(nullptr, nullptr) ? 4 : 0)) : 0;
+    if (now != s.mfxAsFsrShown) {
+        s.mfxAsFsrShown = now;
+        s.contentDirty = true;
+    }
+}
+
 void dimRowsTick() {
     State& s = g_s;
     const uint32_t generation = Config::get().generation();
@@ -2915,6 +2929,20 @@ void buildContent(MenuContent& c) {
             } else if (d.applies == 0) {
                 l.badge = kBadgeUnknown;
             }
+            // The flat Anti-aliasing row keeps its badge line (no rows move when one appears), and the badge says what actually runs when
+            // that is not the setting: MetalFX chosen and FSR running (flatRuntimeMfxAsFsr; the value column has no room for the words,
+            // flown 2026-11-19), or the anti-aliasing stood down (flatRuntimeStructuralRefusal; e.g. a resolution whose shape is not the
+            // screen's). The status page says why it paused.
+            if (runtimeFlatProfile() && strcmp(d.section, "fix") == 0 && strcmp(d.key, "temporal_aa") == 0 && !editingThis && !waiting) {
+                l.reserveBadge = true;
+                if (l.badge == kBadgeNone && _stricmp(r.value.c_str(), "off") != 0) {
+                    const char* why = nullptr; bool standing = false;
+                    const int asFsr = _stricmp(r.value.c_str(), "mfx") == 0 ? flatRuntimeMfxAsFsr() : 0;
+                    if (flatRuntimeStructuralRefusal(&why, &standing)) l.badge = kBadgeAaPaused;   // the status page's own "paused" test
+                    else if (asFsr == 1) l.badge = kBadgeAaFsrAbove;
+                    else if (asFsr == 2) l.badge = kBadgeAaFsrRestart;
+                }
+            }
             if (hotkeyRow) {
                 // A hotkey row speaks for itself: waiting for the input, then (for a few
                 // seconds) what became of it; and while it stands, a badge when Elite's own
@@ -3084,6 +3112,17 @@ void buildContent(MenuContent& c) {
                         body += "\nNot checked against your Elite bindings (hotkey.read_game_bindings is off).";
                     }
                 }
+                // The Anti-aliasing row's badge (above) explained: what runs instead of MetalFX, why, and what brings it back.
+                if (l.badge == kBadgeAaFsrAbove)
+                    body += "\nFSR3 is running: above Supersampling 1.0, stock DXMT would keep a new MetalFX upscaler in memory for every "
+                            "Supersampling value. MetalFX comes back at 1.0 or below. The DXMT fixes download removes this limit.";
+                else if (l.badge == kBadgeAaFsrRestart)
+                    body += "\nFSR3 is running until Elite restarts: stock DXMT keeps a MetalFX upscaler in memory for every screen size and never "
+                            "frees one, so after three sizes this session (resolution changes or window resizes) MetalFX was switched off to stop "
+                            "memory climbing. Restart Elite to use MetalFX again. The DXMT fixes download removes this limit.";
+                else if (l.badge == kBadgeAaPaused)
+                    body += "\nPaused: the anti-aliasing cannot run on this frame shape (for example a resolution whose shape is not the screen's). "
+                            "The status page says why.";
                 body += std::string("\n\n") + (d.detail[0] ? d.detail : d.hint);
                 strncpy(c.popup, body.c_str(), sizeof(c.popup) - 1);
             }
@@ -3199,23 +3238,33 @@ void buildContent(MenuContent& c) {
         else if (!s.lastWrite.empty()) write = FooterWrite::Saved;
         // The installed version, on every page, drawn at the right end of this same
         // footer line (menu_panel.cpp). Flat only: VR's footer does not carry it.
-        snprintf(c.footerTag, sizeof(c.footerTag), "ED-UP %s", EDVR_VERSION_STRING);
-        // The second line is "<key> close | <count waiting for a restart> | saved" and the tag shares it at the right end: the long wording is
-        // measured against the raster's own ruler with the tag and a gap, and the short one (the VR footer's) is used if it would touch the tag.
+        // The second line is "<key> close | <count waiting for a restart> | saved" and the tag shares it at the right end, measured against the
+        // raster's own ruler with a gap. The tag shortens first (the product name goes, then the commit hash: "ED-UP for Mac" is on the status
+        // page anyway), then the wording takes the VR footer's short form; the first pair that fits is drawn. A long development build name
+        // (v0.22.3-mfx-25-g9e3f4d7c) ran into the words on the 2026-11-19 flight.
+        char tags[3][sizeof(c.footerTag)];
+        snprintf(tags[0], sizeof(tags[0]), "ED-UP for Mac %s", EDVR_VERSION_STRING);
+        snprintf(tags[1], sizeof(tags[1]), "%s", EDVR_VERSION_STRING);
+        snprintf(tags[2], sizeof(tags[2]), "%s", EDVR_VERSION_STRING);
+        if (char* hash = strstr(tags[2], "-g")) *hash = '\0';
         const int linePx = c.cardPx - 2 * (c.capPx * 8 / 10);
-        const int tagPx = menuPanelMeasureLine(c.footerTag, c.capPx) + c.capPx * 2;
         char status[160], line2[200];
-        for (int shortForm = 0; shortForm < 2; ++shortForm) {
+        int tagUsed = 2;
+        bool fits = false;
+        for (int shortForm = 0; shortForm < 2 && !fits; ++shortForm) {
             // The flat panel keeps the keyboard private on every page, so "ready" is the same on a status page as on any other.
             menuFlatFooterStatus(write, s.flatKeysReadyShown, pendingN, shortForm != 0, status, sizeof(status));
             if (s.padReady) snprintf(line2, sizeof(line2), "LB/RB pages  %s close%s", s.summonName.c_str(), status);
             else snprintf(line2, sizeof(line2), "%s/Esc close%s", s.summonName.c_str(), status);
-            if (shortForm || menuPanelMeasureLine(line2, c.capPx) + tagPx <= linePx) break;
-            if (!s.flatFooterShortNoted) {
+            const int wordsPx = menuPanelMeasureLine(line2, c.capPx);
+            for (int t = 0; t < 3 && !fits; ++t)
+                if (wordsPx + menuPanelMeasureLine(tags[t], c.capPx) + c.capPx * 2 <= linePx) { fits = true; tagUsed = t; }
+            if (!fits && !shortForm && !s.flatFooterShortNoted) {
                 s.flatFooterShortNoted = true;
-                Log::get().note("menu panel: the flat footer's restart count does not fit beside the version in %d px; using the short wording.", linePx);
+                Log::get().note("menu panel: the flat footer's words do not fit beside the version in %d px; using the short wording.", linePx);
             }
         }
+        snprintf(c.footerTag, sizeof(c.footerTag), "%s", tags[tagUsed]);
         // The first line names what the keys do on the highlighted row: a hotkey row is rebound with Enter (or A) and Left/Right do nothing there; while a row
         // waits for its key, the capture's own keys.
         const bool hotkeyRow = !p.status && p.highlight >= 0 && p.highlight < static_cast<int>(p.entries.size()) &&
@@ -3293,6 +3342,60 @@ void buildToastContent(MenuContent& c, const std::string& text, float widthDeg, 
     if (c.widthPx > 1200) {
         c.widthPx = 1200;
         c.cardPx = c.widthPx;
+    }
+    // A notice wider than the card wraps at spaces onto up to three lines, measured with the raster's own ruler, instead of being
+    // ellipsised ("AA off (comparison), press F7 to res...", flown 2026-11-19). The card is then sized again for its lines.
+    // Measured in the font the notice is drawn in: the row face (menu_panel.cpp, Font::Row), not the cap size the footer measures with --
+    // the first cut used the cap size, so a notice the row face ellipsised measured as fitting and never wrapped (flown 2026-11-19).
+    const int rowPx = c.rowFontPx > 0 ? c.rowFontPx : c.capPx * 10 / 7;
+    // The card fits its text instead of a fixed width (the black box ran far past "AA off, press F7 to restore", flown 2026-11-19),
+    // never narrower than F7's off notice, so F7's off and restore notices are one size and do not jump. Never wider than before:
+    // a longer notice wraps (below).
+    {
+        const int padPx = c.capPx * 8 / 10;
+        const std::string sizeLike = aacmp::noticeText(aacmp::Press::WentOff, std::string(), aaCompareKeyText());
+        const int textPx = (std::max)(menuPanelMeasureLine(text.c_str(), rowPx), menuPanelMeasureLine(sizeLike.c_str(), rowPx));
+        const int needPx = textPx + 2 * padPx + padPx / 2;
+        if (needPx > 0 && needPx < c.cardPx) {
+            c.cardPx = needPx;
+            c.widthPx = needPx;
+        }
+    }
+    const int roomPx = c.cardPx - 2 * (c.capPx * 8 / 10);
+    if (roomPx > 0 && menuPanelMeasureLine(text.c_str(), rowPx) > roomPx) {
+        constexpr int kMaxNoticeLines = 3;
+        std::string lines[kMaxNoticeLines];
+        int n = 0;
+        size_t at = 0;
+        while (at < text.size() && n < kMaxNoticeLines) {
+            while (at < text.size() && text[at] == ' ') ++at;
+            std::string line;
+            size_t end = at;
+            while (end < text.size()) {
+                size_t next = text.find(' ', end + 1);
+                if (next == std::string::npos) next = text.size();
+                const std::string trial = text.substr(at, next - at);
+                if (!line.empty() && menuPanelMeasureLine(trial.c_str(), rowPx) > roomPx) break;
+                line = trial;
+                end = next;
+            }
+            if (n == kMaxNoticeLines - 1 && end < text.size()) line = text.substr(at);   // the last line keeps the rest (ellipsised if it must)
+            lines[n++] = line;
+            at = end;
+        }
+        if (n > 1) {
+            memset(c.lines, 0, sizeof(c.lines));
+            c.lineCount = n;
+            for (int i = 0; i < n; ++i) {
+                strncpy(c.lines[i].left, lines[i].c_str(), sizeof(c.lines[i].left) - 1);
+                c.lines[i].style = kMenuInfo;
+            }
+            sizeContent(c, widthDeg, g_s.textDeg * capScale, false, true);
+            if (c.widthPx > 1200) {
+                c.widthPx = 1200;
+                c.cardPx = c.widthPx;
+            }
+        }
     }
 }
 
@@ -5671,6 +5774,7 @@ void menuTick(ID3D11Device* dev) {
         }
         starGlowBloomTick();
         dimRowsTick();
+        mfxAsFsrTick();
         if (pol.closesOnFocusLoss && s.open && !gameHasFocus()) closeMenu("Elite lost focus");
 
         // Refresh the read-only OpenXR sizing snapshot while the menu is

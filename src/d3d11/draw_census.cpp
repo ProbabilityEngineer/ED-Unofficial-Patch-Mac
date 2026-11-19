@@ -717,7 +717,7 @@ void finish() {
         Log::get().note(
             "DC unseen: %u draws this census returned from the verdict chain "
             "before either census call could record them -- %u substituted "
-            "particle billboards (fix.particle_billboard = steady), %u "
+            "particle billboards (the billboard fix), %u "
             "witchspace-star skips (fix.witchspace_stars = off), %u FSS chrome "
             "skips, %u space-dust skips (fix.supercruise_dust / fix.normal_space_dust = off). They are in no "
             "DC line above. Enable the withheld effects for a census of their draws.",

@@ -27,7 +27,7 @@ namespace edvr {
 
 class Config;
 
-// Reads fix.particle_billboard (stock | steady). Live on save.
+// Always steady (the fix.particle_billboard setting was removed 2026-11-19).
 void particleConfigure(Config& cfg);
 
 // Whether the substitution is on -- the draw chain asks before matching.

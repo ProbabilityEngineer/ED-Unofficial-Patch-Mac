@@ -38,6 +38,7 @@
 #include "loaded_module_match.h"
 #include "ui_panel_scale.h"  // uiPanelScaleInstallEarly: the Supersampling setter and getter hooks at DLL load
 #include "mode_watch.h"    // modeWatchStart: the 3D mode watch, started after the profile lines
+#include "flat_isolation_mode.h"   // flatModuleNamesDxmt: the d3d11 exports note under DXMT
 
 #include "../plugins/plugin_manager.h"
 #include "../common/iat_hook.h"
@@ -482,10 +483,21 @@ BOOL CALLBACK initOnceCallback(PINIT_ONCE, PVOID, PVOID*) {
     edvr::gameBuildStartup(&edvr::uiPanelScaleInstallAfterResolve);
 
     if (g_missingExports) {
-        edvr::Log::get().note(
-            "WARNING: %zu of %zu d3d11 exports did not resolve; regenerate the thunks "
-            "against this machine's d3d11.dll with build.bat",
-            g_missingExports, kExportCount);
+        // Under DXMT this is expected: its d3d11.dll exports the device-creation entry points Elite calls and little else, so most of
+        // Windows' d3d11 export list has nothing to forward to. Said as a note there, so a log read for a bug report does not point at it;
+        // a missing D3D11CreateDevice(AndSwapChain), or any other d3d11.dll, keeps the warning.
+        if (edvr::flatModuleNamesDxmt(g_systemModule) && GetProcAddress(g_systemModule, "D3D11CreateDevice") &&
+            GetProcAddress(g_systemModule, "D3D11CreateDeviceAndSwapChain")) {
+            edvr::Log::get().note(
+                "d3d11 exports: DXMT's d3d11.dll provides %zu of the %zu Windows d3d11 exports, including D3D11CreateDevice and "
+                "D3D11CreateDeviceAndSwapChain, which are the ones Elite calls; the rest are not DXMT's to provide (expected, harmless)",
+                kExportCount - g_missingExports, kExportCount);
+        } else {
+            edvr::Log::get().note(
+                "WARNING: %zu of %zu d3d11 exports did not resolve; regenerate the thunks "
+                "against this machine's d3d11.dll with build.bat",
+                g_missingExports, kExportCount);
+        }
     }
     // Install IAT hooks on the game executable for LoadLibrary deadlock bypass
     edvr::iatHookInstall("kernel32.dll", "LoadLibraryA",
