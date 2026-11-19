@@ -16,7 +16,7 @@ checks from game results.
 
 | Repository | Pushes | Never |
 |---|---|---|
-| `ProbabilityEngineer/ED-Unofficial-Patch-Mac` (this one, formerly `ed-metalfx`; local `~/git/ed-metalfx`) | `origin`, when asked | — |
+| `ProbabilityEngineer/ED-Unofficial-Patch-Mac` (this one, formerly `ed-metalfx`; local `~/git/ports/ED-Unofficial-Patch-Mac`) | `origin`, when asked | — |
 | `characterecho-sean/ed-unofficial-patch` (formerly `edvr-unofficial-patch`) | — | push, PR, issue, comment, by any route (URL, alias, API). There is no upstream remote; keep it that way. Read-only refs under `refs/up/` are local. |
 | `ProbabilityEngineer/dxmt` (`~/git/forks/dxmt`) | `origin`, when asked | `3Shain/dxmt`: no push, PR, issue or comment (no-AI policy). Its `upstream` push URL is `/dev/null`. |
 
@@ -88,7 +88,7 @@ silently fixing them; no unrelated refactoring.
   routine work; say when a C++ test could not be run here. Never bypass or
   forge build gates or receipts.
 - DXMT: build in `~/git/forks/dxmt` (`build/<name>-x64` with `toolchains/wine`,
-  `build/<name>-arm64ec` with the wine prefix in `~/git/wine-prefix`).
+  `build/<name>-arm64ec` with the Wine build installed in `~/Library/Developer/Toolchains/wine-prefix`).
 - Run a tool's own `--self-test` when changing it. `edvr_log.py --self-test`
   skips, by name, pins on sources the flat-only port removed.
 - Line endings: `build.bat` is CRLF (edit byte-safely), the repo `edvr.ini` is
@@ -107,7 +107,7 @@ silently fixing them; no unrelated refactoring.
   (add one when a feature lands); `archive/<name>` keeps an unmerged branch
   after the branch is deleted.
 - **The to-do list** is `docs/todo.md` on the local branch `todo`, checked out
-  at `~/git/ed-metalfx-todo`. Keep it current when the backlog changes and
+  at `~/git/ports/ed-metalfx-todo`. Keep it current when the backlog changes and
   commit it there. Never merge it into `main` and never push it: it is private
   working notes.
 
