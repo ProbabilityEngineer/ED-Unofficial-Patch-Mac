@@ -3342,6 +3342,44 @@ void buildToastContent(MenuContent& c, const std::string& text, float widthDeg, 
         c.widthPx = 1200;
         c.cardPx = c.widthPx;
     }
+    // A notice wider than the card wraps at spaces onto up to three lines, measured with the raster's own ruler, instead of being
+    // ellipsised ("AA off (comparison), press F7 to res...", flown 2026-11-19). The card is then sized again for its lines.
+    const int roomPx = c.cardPx - 2 * (c.capPx * 8 / 10);
+    if (roomPx > 0 && menuPanelMeasureLine(text.c_str(), c.capPx) > roomPx) {
+        constexpr int kMaxNoticeLines = 3;
+        std::string lines[kMaxNoticeLines];
+        int n = 0;
+        size_t at = 0;
+        while (at < text.size() && n < kMaxNoticeLines) {
+            while (at < text.size() && text[at] == ' ') ++at;
+            std::string line;
+            size_t end = at;
+            while (end < text.size()) {
+                size_t next = text.find(' ', end + 1);
+                if (next == std::string::npos) next = text.size();
+                const std::string trial = text.substr(at, next - at);
+                if (!line.empty() && menuPanelMeasureLine(trial.c_str(), c.capPx) > roomPx) break;
+                line = trial;
+                end = next;
+            }
+            if (n == kMaxNoticeLines - 1 && end < text.size()) line = text.substr(at);   // the last line keeps the rest (ellipsised if it must)
+            lines[n++] = line;
+            at = end;
+        }
+        if (n > 1) {
+            memset(c.lines, 0, sizeof(c.lines));
+            c.lineCount = n;
+            for (int i = 0; i < n; ++i) {
+                strncpy(c.lines[i].left, lines[i].c_str(), sizeof(c.lines[i].left) - 1);
+                c.lines[i].style = kMenuInfo;
+            }
+            sizeContent(c, widthDeg, g_s.textDeg * capScale, false, true);
+            if (c.widthPx > 1200) {
+                c.widthPx = 1200;
+                c.cardPx = c.widthPx;
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

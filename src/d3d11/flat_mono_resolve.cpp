@@ -1153,7 +1153,7 @@ static bool mfxOutputSizeAdmitted(ID3D11DeviceContext* context,uint32_t outW,uin
                     "ED Unofficial Patch for Mac's fixes (stock DXMT keeps every MetalFX scaler it makes), so MetalFX is off for the rest "
                     "of the session and FSR takes over. Restart Elite to use MetalFX again.",
                     outW,outH,kMfxStockOutputSizes+1);
-    menuShowNotice("MetalFX switched to FSR until Elite restarts: too many screen sizes this session on stock DXMT (memory)");
+    menuShowNotice("MetalFX off until Elite restarts (FSR3 runs): too many screen sizes on stock DXMT");
     return false;
 }
 
