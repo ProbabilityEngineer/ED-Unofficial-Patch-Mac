@@ -79,6 +79,11 @@ silently fixing them; no unrelated refactoring.
   under CrossOver; cold about 2 min, warm about 30 s). Builds are kept in
   `build/graphics-builds/<time>-<branch>-<describe>/`. Redirect the output to
   a file in the scratchpad; never pipe a Wine build through `tail`.
+- One build per change, from a commit: commit first, then build. If the
+  build fails, fix it and amend that (local, unpushed) commit, then build
+  again. The version (`git describe`) is baked in at compile time, so a
+  build from uncommitted code is named `-dirty` and must not be flown; do
+  not build dirty to check compilation and then build again clean.
 - `build.bat` (full build, tests, receipts) needs Windows and is not part of
   routine work; say when a C++ test could not be run here. Never bypass or
   forge build gates or receipts.
