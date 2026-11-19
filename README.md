@@ -28,41 +28,86 @@ Upstream credit remains with characterecho-sean and the ED-UP contributors.
 - **Star-coloured lighting.** Light in a system takes the colour of its star,
   through light buffers, atmospheres and ring dust.
 - **Workarounds for DXMT**, such as station window decorations and logos kept
-  visible on stock DXMT.
+  visible on stock DXMT, plus [DXMT fixes](#dxmt-fixes-separate-download-recommended)
+  as a separate download.
 
 The settings and fixes otherwise follow upstream:
 [docs/fixes.md](docs/fixes.md) describes them, though parts of it are about VR
 and do not apply here.
 
+## Star-coloured lighting
+
+Elite lights every system with near-white light, whatever the colour of its
+star. With star-coloured lighting, ships, stations, planets, atmospheres and
+ring dust are lit in the colour of the system's star: warm under an orange K
+star, cool under a blue-white B star. The tint comes from the colour the game
+itself gives each star, so it matches the star you see. Setting: F8, Visual,
+**Star light colour** (0 to 100%, 0 being the game's own white; default 100).
+
+Two other ways of colouring the light were built and tried, and can come back
+as options if people want them:
+
+- **Hue-based**, with saturation and luminosity relative to the star's.
+- **Physics-based** star colours, from each star's temperature.
+
 ## Requirements
 
-- CrossOver, with the game's bottle set to the **DXMT** graphics backend.
+- CrossOver, with the game's bottle set to the **DXMT** graphics backend
+  (bottle settings, Advanced, Graphics).
 - Elite Dangerous: Odyssey (live build; checked against game build 334925).
 
-### Modified DXMT (recommended)
+## DXMT fixes (separate download, recommended)
 
-Stock DXMT works, with two known problems that a modified DXMT
-([ProbabilityEngineer/dxmt](https://github.com/ProbabilityEngineer/dxmt),
-branch `private/writemask-fix-feature`) fixes:
+Each release has a second zip, `dxmt-<version>.zip`: DXMT, the Direct3D 11 to
+Metal layer CrossOver uses, with fixes for Elite
+([source](https://github.com/ProbabilityEngineer/dxmt)). ED Unofficial Patch
+for Mac works without it, with these differences:
 
-- **Memory grows when you change MetalFX settings.** Stock DXMT keeps every
-  MetalFX scaler it has made and never frees one. Each time you switch MetalFX
-  off and on, or change Supersampling, it makes another, and memory use can
-  climb by gigabytes. On stock DXMT, restart Elite after experimenting.
-- **Some decals with a partial write mask.** ED-UP for Mac works around this
-  on stock DXMT by keeping the game's own shader for those draws, which costs
-  only per-object motion for them.
+- **Memory.** Without it, switching MetalFX on and off can blow up memory
+  usage. Stock DXMT keeps every MetalFX upscaler it makes and never frees one,
+  and each switch, or each Supersampling change, makes another: memory use can
+  climb by gigabytes. Restart Elite after changing those settings.
+- **Decals.** Some decals, such as station window logos, need a DXMT fix
+  (partial write masks). Without it, ED Unofficial Patch for Mac keeps the
+  game's own shader for those draws, so they still show, but they lose their
+  own motion for the anti-aliasing.
 
 ## Install
 
-1. Copy `d3d11.dll` into the game folder, next to `EliteDangerous64.exe`
-   (`Products/elite-dangerous-odyssey-64` inside the bottle).
-2. Optionally copy `edvr-flat.ini` there too; a missing file means the
-   defaults.
-3. Start the game. Press **F8** for the settings menu.
+Installation is manual for now. Quit Elite first.
 
-Frontier's launcher may remove `d3d11.dll` when it verifies the install; copy
-it back if it does.
+### 1. ED Unofficial Patch for Mac (the game folder)
+
+1. In CrossOver, select the Elite bottle and choose **Open C: Drive**.
+2. Go to the game folder: `Program Files (x86)/Frontier/EDLaunch/Products/elite-dangerous-odyssey-64`
+   for the Frontier launcher, or the game's folder under
+   `Program Files (x86)/Steam/steamapps/common/Elite Dangerous/Products/`
+   for Steam. It is the folder with `EliteDangerous64.exe` in it.
+3. Copy `d3d11.dll` and `edvr-flat.ini` from the release zip into it. Keep
+   your own `edvr-flat.ini` if you already have one.
+4. Start the game and press **F8** for the settings menu.
+
+Frontier's launcher may remove `d3d11.dll` when it verifies the game files;
+copy it back if it does.
+
+### 2. DXMT fixes (CrossOver's DXMT folder, optional)
+
+This changes CrossOver itself, so it applies to every bottle that uses DXMT,
+and a CrossOver update puts the stock DXMT back (install it again after
+updating).
+
+1. In Finder, go to Applications, right-click **CrossOver** and choose
+   **Show Package Contents**, then open `Contents/SharedSupport/CrossOver/lib/dxmt`.
+2. **Back up first:** copy the whole `dxmt` folder somewhere safe (or
+   duplicate it next to itself as `dxmt-orig`).
+3. Copy the folders from the DXMT zip (`aarch64-unix`, `aarch64-windows`,
+   `x86_64-unix`, `x86_64-windows`) over the ones in `dxmt`, replacing the
+   files. Copy over the existing files; do not replace the folder, because
+   CrossOver's folder also holds 32-bit files the zip does not include.
+4. Start the game. The log (below) says `discard workaround off` when the
+   fixed DXMT is in use.
+
+To undo it, put the backup back.
 
 ### Checking it worked
 
@@ -72,7 +117,8 @@ The game folder gets an `edvr_logs` folder, and each session writes an
 ## Settings
 
 Settings are in `edvr-flat.ini` next to the game; F8 changes them in the game.
-Each setting is documented in the shipped `edvr.ini`.
+[edvr.ini](edvr.ini) in this repository documents every setting. The settings
+files keep their ED-UP (formerly EDVR) names, so existing ones keep working.
 
 ## Running alongside other mods
 
@@ -106,8 +152,8 @@ upstream's notice. The `fsr` engine is AMD's FidelityFX Super Resolution 3.1
 upscaler through its community Direct3D 11 port (the optiscaler project's
 FidelityFX-SDK-DX11, MIT), compiled into `d3d11.dll`; its notice ships as
 `FIDELITYFX-SDK-DX11-LICENSE.txt`. The DXBC hash and miniz notices ship as
-`DXBC-HASH-LICENSE.txt` and `MINIZ-LICENSE.txt`. DXMT is LGPL; the modified DXMT's source is
-in the fork named above.
+`DXBC-HASH-LICENSE.txt` and `MINIZ-LICENSE.txt`. DXMT is LGPL; the DXMT fixes' source is in
+[ProbabilityEngineer/dxmt](https://github.com/ProbabilityEngineer/dxmt).
 
 Not affiliated with, endorsed by, or supported by Frontier Developments plc,
 Apple Inc., CodeWeavers or the upstream ED Unofficial Patch project. Elite
