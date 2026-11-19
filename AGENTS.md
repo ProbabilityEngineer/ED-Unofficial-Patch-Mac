@@ -122,7 +122,8 @@ A release is two zips on the GitHub release `macos-vX.Y.Z`:
    with DXMT's licence and the source commit. Package the stripped files
    that `meson install` writes (`build/<name>-install-<arch>`, `strip = true`),
    never the unstripped ones in the build folder (v0.23.0 shipped those, about
-   1 MB more per DLL). Leave out `d3d12.dll`.
+   1 MB more per DLL). Leave out `d3d12.dll` and the `*.dll.a` import
+   libraries.
 
 Build both from clean commits (no `-dirty`). Installation is manual (README)
 until an installer exists. The repository is private until the owner decides
