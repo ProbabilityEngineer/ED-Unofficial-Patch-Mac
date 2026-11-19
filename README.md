@@ -58,15 +58,19 @@ as options if people want them:
 
 ## DXMT fixes (separate download, recommended)
 
-Each release has a second zip, `dxmt-<version>.zip`: DXMT, the Direct3D 11 to
-Metal layer CrossOver uses, with fixes for Elite
-([source](https://github.com/ProbabilityEngineer/dxmt)). ED Unofficial Patch
+Each release has a second download: DXMT, the Direct3D 11 to Metal layer
+CrossOver uses, with fixes for Elite, from the `elite-mac` branch of
+[ProbabilityEngineer/dxmt](https://github.com/ProbabilityEngineer/dxmt/tree/elite-mac).
+Its releases are tagged `elite-mac-vX.Y.Z`, matching this project's
+`macos-vX.Y.Z` (for `macos-v0.23.0`, use
+[`elite-mac-v0.23.0`](https://github.com/ProbabilityEngineer/dxmt/releases/tag/elite-mac-v0.23.0)). ED Unofficial Patch
 for Mac works without it, with these differences:
 
-- **Memory.** Without it, switching MetalFX on and off can blow up memory
-  usage. Stock DXMT keeps every MetalFX upscaler it makes and never frees one,
-  and each switch, or each Supersampling change, makes another: memory use can
-  climb by gigabytes. Restart Elite after changing those settings.
+- **Memory.** On stock DXMT, changing the game's screen resolution several
+  times with MetalFX on adds memory each time (stock DXMT never frees a
+  MetalFX upscaler); restart Elite after trying a few. Supersampling changes
+  do not do this: ED Unofficial Patch for Mac keeps MetalFX at one size per
+  screen resolution.
 - **Decals.** Some decals, such as station window logos, need a DXMT fix
   (partial write masks). Without it, ED Unofficial Patch for Mac keeps the
   game's own shader for those draws, so they still show, but they lose their
@@ -100,7 +104,7 @@ updating).
    **Show Package Contents**, then open `Contents/SharedSupport/CrossOver/lib/dxmt`.
 2. **Back up first:** copy the whole `dxmt` folder somewhere safe (or
    duplicate it next to itself as `dxmt-orig`).
-3. Copy the folders from the DXMT zip (`aarch64-unix`, `aarch64-windows`,
+3. Copy the folders from the DXMT zip's `dxmt-elite-mac-vX.Y.Z` folder (`aarch64-unix`, `aarch64-windows`,
    `x86_64-unix`, `x86_64-windows`) over the ones in `dxmt`, replacing the
    files. Copy over the existing files; do not replace the folder, because
    CrossOver's folder also holds 32-bit files the zip does not include.
