@@ -108,7 +108,7 @@ inline std::string modeLabel(const std::string& mode) {
 // The short notice for a press. `key` is the binding as the ini spells it ("F7"); `configured` is the mode a restore returns to.
 inline std::string noticeText(Press p, const std::string& configured, const std::string& key) {
     switch (p) {
-        case Press::WentOff: return "AA off (comparison), press " + key + " to restore";
+        case Press::WentOff: return "AA off, press " + key + " to restore";
         case Press::Restored: return "AA restored: " + modeLabel(configured);
         case Press::NothingToCompare: return "AA is off in your settings, nothing to compare";
     }
