@@ -1397,11 +1397,12 @@ void starGlowBloomTick() {
 // The rows that dim on another setting (Sharpening and HUD Anti-Aliasing on the anti-aliasing, the DLSS preset row, the glass dirt and station rows) read
 // the config, which a menu step moves only once the worker's write and the reload behind it are done: the page redrawn at the step showed the OLD state
 // (stepping MetalFX -> off -> FSR left Sharpening dimmed under FSR until the next key). Looked at when the generation moves; a changed state redraws.
-// MetalFX standing in as FSR (flatRuntimeMfxAsFsr) changes with Supersampling, not with the config, so it is looked at every tick:
-// a change redraws the page, and the Anti-aliasing row says what runs.
+// What the flat Anti-aliasing row's badge reads (MetalFX standing in as FSR, flatRuntimeMfxAsFsr; the anti-aliasing paused,
+// flatRuntimeStructuralRefusal) changes with Supersampling and the resolution, not with the config, so it is looked at every tick:
+// a change redraws the page.
 void mfxAsFsrTick() {
     State& s = g_s;
-    const int now = runtimeFlatProfile() ? flatRuntimeMfxAsFsr() : 0;
+    const int now = runtimeFlatProfile() ? (flatRuntimeMfxAsFsr() | (flatRuntimeStructuralRefusal(nullptr, nullptr) ? 4 : 0)) : 0;
     if (now != s.mfxAsFsrShown) {
         s.mfxAsFsrShown = now;
         s.contentDirty = true;
@@ -2906,13 +2907,6 @@ void buildContent(MenuContent& c) {
             }
             std::string v = openxrScaleRow ? openxrResolutionValue(res)
                                            : displayValue(d, r.value);
-            // MetalFX chosen, FSR running (flatRuntimeMfxAsFsr): the row says what runs, and why in two words.
-            if (runtimeFlatProfile() && strcmp(d.section, "fix") == 0 && strcmp(d.key, "temporal_aa") == 0 &&
-                _stricmp(r.value.c_str(), "mfx") == 0) {
-                const int asFsr = flatRuntimeMfxAsFsr();
-                if (asFsr == 1) v = "FSR3 (above 1.0)";
-                else if (asFsr == 2) v = "FSR3 (until restart)";
-            }
             if (editingThis) {
                 // What has been typed, with a caret. The raster shows a
                 // typed row in the value colour whatever its kind.
@@ -2933,6 +2927,20 @@ void buildContent(MenuContent& c) {
                 l.reserveBadge = true;
             } else if (d.applies == 0) {
                 l.badge = kBadgeUnknown;
+            }
+            // The flat Anti-aliasing row keeps its badge line (no rows move when one appears), and the badge says what actually runs when
+            // that is not the setting: MetalFX chosen and FSR running (flatRuntimeMfxAsFsr; the value column has no room for the words,
+            // flown 2026-11-19), or the anti-aliasing stood down (flatRuntimeStructuralRefusal; e.g. a resolution whose shape is not the
+            // screen's). The status page says why it paused.
+            if (runtimeFlatProfile() && strcmp(d.section, "fix") == 0 && strcmp(d.key, "temporal_aa") == 0 && !editingThis && !waiting) {
+                l.reserveBadge = true;
+                if (l.badge == kBadgeNone && _stricmp(r.value.c_str(), "off") != 0) {
+                    const char* why = nullptr; bool standing = false;
+                    const int asFsr = _stricmp(r.value.c_str(), "mfx") == 0 ? flatRuntimeMfxAsFsr() : 0;
+                    if (flatRuntimeStructuralRefusal(&why, &standing)) l.badge = kBadgeAaPaused;   // the status page's own "paused" test
+                    else if (asFsr == 1) l.badge = kBadgeAaFsrAbove;
+                    else if (asFsr == 2) l.badge = kBadgeAaFsrRestart;
+                }
             }
             if (hotkeyRow) {
                 // A hotkey row speaks for itself: waiting for the input, then (for a few

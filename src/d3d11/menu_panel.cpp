@@ -572,13 +572,17 @@ void layout(const MenuContent& c, std::vector<Op>& ops, std::vector<LineRect>& l
             if (l.toggle) right.rect.right -= switchW + cap / 2;
             ops.push_back(right);
         }
-        if (l.badge == kBadgeRestart || l.badge == kBadgeUnknown || l.badge == kBadgePending || l.badge == kBadgeClash || l.badge == kBadgeStopped) {
+        if (l.badge == kBadgeRestart || l.badge == kBadgeUnknown || l.badge == kBadgePending || l.badge == kBadgeClash || l.badge == kBadgeStopped ||
+            l.badge == kBadgeAaFsrAbove || l.badge == kBadgeAaFsrRestart || l.badge == kBadgeAaPaused) {
             Op b;
             b.text = true;
             b.str = l.badge == kBadgeRestart ? L"restart"
                     : l.badge == kBadgePending ? L"restart required"
                     : l.badge == kBadgeClash   ? L"also in Elite"
                     : l.badge == kBadgeStopped ? L"stopped"
+                    : l.badge == kBadgeAaFsrAbove ? L"FSR3 above 1.0"
+                    : l.badge == kBadgeAaFsrRestart ? L"FSR3 until restart"
+                    : l.badge == kBadgeAaPaused ? L"paused"
                                                : L"?";
             b.rect = {split, y + primaryH, cardW - pad, y + rowH};
             b.align = DT_RIGHT;
