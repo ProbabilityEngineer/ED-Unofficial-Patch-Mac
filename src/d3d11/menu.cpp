@@ -3111,6 +3111,17 @@ void buildContent(MenuContent& c) {
                         body += "\nNot checked against your Elite bindings (hotkey.read_game_bindings is off).";
                     }
                 }
+                // The Anti-aliasing row's badge (above) explained: what runs instead of MetalFX, why, and what brings it back.
+                if (l.badge == kBadgeAaFsrAbove)
+                    body += "\nFSR3 is running: above Supersampling 1.0, stock DXMT would keep a new MetalFX upscaler in memory for every "
+                            "Supersampling value. MetalFX comes back at 1.0 or below. The DXMT fixes download removes this limit.";
+                else if (l.badge == kBadgeAaFsrRestart)
+                    body += "\nFSR3 is running until Elite restarts: stock DXMT keeps a MetalFX upscaler in memory for every screen size and never "
+                            "frees one, so after three sizes this session (resolution changes or window resizes) MetalFX was switched off to stop "
+                            "memory climbing. Restart Elite to use MetalFX again. The DXMT fixes download removes this limit.";
+                else if (l.badge == kBadgeAaPaused)
+                    body += "\nPaused: the anti-aliasing cannot run on this frame shape (for example a resolution whose shape is not the screen's). "
+                            "The status page says why.";
                 body += std::string("\n\n") + (d.detail[0] ? d.detail : d.hint);
                 strncpy(c.popup, body.c_str(), sizeof(c.popup) - 1);
             }

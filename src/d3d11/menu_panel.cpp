@@ -580,7 +580,7 @@ void layout(const MenuContent& c, std::vector<Op>& ops, std::vector<LineRect>& l
                     : l.badge == kBadgePending ? L"restart required"
                     : l.badge == kBadgeClash   ? L"also in Elite"
                     : l.badge == kBadgeStopped ? L"stopped"
-                    : l.badge == kBadgeAaFsrAbove ? L"FSR3 above 1.0"
+                    : l.badge == kBadgeAaFsrAbove ? L"FSR3 above SS 1.0"
                     : l.badge == kBadgeAaFsrRestart ? L"FSR3 until restart"
                     : l.badge == kBadgeAaPaused ? L"paused"
                                                : L"?";

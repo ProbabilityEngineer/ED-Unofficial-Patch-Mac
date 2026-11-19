@@ -4503,7 +4503,10 @@ void flatRuntimePresent(IDXGISwapChain* swap, uint64_t frame, HRESULT hr, UINT f
     // elite-mac fixes, mfx runs as FSR while the scene renders above the output, and MetalFX again at or below it (its scaler for this
     // output size is still cached). The output-size guard (flatMfxStoodDown) makes it FSR for the rest of the session.
     if (s.dxmtFixed < 0 && s.context) s.dxmtFixed = dxmtFixesPartialWriteMaskDiscard(s.context.Get()) ? 1 : 0;
-    if (_stricmp(mode.c_str(), "mfx") == 0) {
+    // The decision is kept whatever the mode, AA off included (F7's comparison): a restore to mfx above 1.0 then starts as FSR at once,
+    // instead of running MetalFX for the frames before the size is known (each such start would leave a scaler on stock DXMT), and F7's
+    // notice can name what the restore runs (aa_compare.cpp, flatRuntimeMfxAsFsr). Only an mfx mode re-maps on a change.
+    {
         bool asFsr = s.mfxAsFsr; const char* why = s.mfxAsFsrWhy;
         uint32_t rw = 0, rh = 0, ow = 0, oh = 0;
         if (flatMfxStoodDown()) { asFsr = true; why = "the MetalFX output-size guard turned MetalFX off for this session"; }
@@ -4511,8 +4514,11 @@ void flatRuntimePresent(IDXGISwapChain* swap, uint64_t frame, HRESULT hr, UINT f
             asFsr = rw > ow || rh > oh;
             why = asFsr ? "Supersampling above 1.0 on stock DXMT (MetalFX would leave a scaler per size)" : nullptr;
         }
-        if (asFsr != s.mfxAsFsr) { s.mfxAsFsr = asFsr; s.mfxAsFsrWhy = why; s.mode.clear(); }
-    } else if (s.mfxAsFsr) { s.mfxAsFsr = false; s.mfxAsFsrWhy = nullptr; }
+        if (asFsr != s.mfxAsFsr) {
+            s.mfxAsFsr = asFsr; s.mfxAsFsrWhy = why;
+            if (_stricmp(mode.c_str(), "mfx") == 0) s.mode.clear();
+        }
+    }
     g_mfxAsFsrShown.store(!s.mfxAsFsr ? 0 : flatMfxStoodDown() ? 2 : 1, std::memory_order_release);
     if (mode != s.mode) {
         s.haveResolvePlan=false;s.resolvePreflight={};s.resolvePreflightRetryMs=0;
