@@ -283,7 +283,7 @@ void statusCases() {
     const char* all = "ED-UP,Profile,Display,Anti-aliasing,Upscaling,Frame generation,Sharpening,HUD quality,Keyboard,Restart pending,Last write";
     FlatStatusInput in = statusBase();
     check(statusCaptions(in) == all, "flat Status, no bridge and nothing waiting: version, profile, display, AA, upscaling, frame generation, sharpening, HUD, keyboard, waiting, last write");
-    check(statusValue(in, "ED-UP") == "v1.2.3 / game build 334925" && statusValue(in, "Profile") == "flat", "the version carries the game build, and the profile is flat");
+    check(statusValue(in, "ED-UP for Mac") == "v1.2.3 / game build 334925" && statusValue(in, "Profile") == "flat", "the version carries the game build, and the profile is flat");
     check(statusValue(in, "Display") == "2560x1440, 144 Hz, windowed/borderless", "the display says size, refresh rate and mode");
     check(statusValue(in, "Anti-aliasing") == "DLSS K, running" && statusValue(in, "Upscaling") == "1706x960 to 2560x1440", "AA names the mode, its model and that it runs; upscaling the sizes");
     check(statusValue(in, "Frame generation") == "off" && statusValue(in, "Restart pending") == "none" && statusValue(in, "Last write") == "none this session",

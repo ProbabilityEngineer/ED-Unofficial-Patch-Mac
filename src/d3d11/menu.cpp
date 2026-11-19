@@ -3199,7 +3199,7 @@ void buildContent(MenuContent& c) {
         else if (!s.lastWrite.empty()) write = FooterWrite::Saved;
         // The installed version, on every page, drawn at the right end of this same
         // footer line (menu_panel.cpp). Flat only: VR's footer does not carry it.
-        snprintf(c.footerTag, sizeof(c.footerTag), "ED-UP %s", EDVR_VERSION_STRING);
+        snprintf(c.footerTag, sizeof(c.footerTag), "ED-UP for Mac %s", EDVR_VERSION_STRING);
         // The second line is "<key> close | <count waiting for a restart> | saved" and the tag shares it at the right end: the long wording is
         // measured against the raster's own ruler with the tag and a gap, and the short one (the VR footer's) is used if it would touch the tag.
         const int linePx = c.cardPx - 2 * (c.capPx * 8 / 10);

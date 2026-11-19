@@ -417,7 +417,7 @@ int wmain(int argc, wchar_t** argv) {
         // at; every caption and value row (menu_flat_status_layout.h, long values wrapped) fits its column, measured in the note face it is drawn in, and the
         // Performance tab's pointer fits one line of the card, so nothing is cut at the right edge.
         {
-            const char* wrapperCaptions[edvr::kFlatStatusMaxLines] = {"ED-UP", "Profile", "Display", "Anti-aliasing", "Upscaling", "Frame generation", "Sharpening",
+            const char* wrapperCaptions[edvr::kFlatStatusMaxLines] = {"ED-UP for Mac", "Profile", "Display", "Anti-aliasing", "Upscaling", "Frame generation", "Sharpening",
                                                                     "HUD quality", "Graphics wrapper", "Keyboard", "Elite settings", "Restart pending", "Last write"};
             edvr::FlatStatusInput in;
             in.version = "v1.2.3-123-gabcdef0";

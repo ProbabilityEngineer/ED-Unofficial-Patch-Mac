@@ -70,7 +70,7 @@ inline int flatStatusLines(const FlatStatusInput& in, FlatStatusLine* out, int m
   char v[160];
   if (in.gameBuild && *in.gameBuild) std::snprintf(v, sizeof(v), "%s / game build %s", in.version, in.gameBuild);
   else std::snprintf(v, sizeof(v), "%s", in.version);
-  flatStatusAdd(out, max, &n, "ED-UP", v);
+  flatStatusAdd(out, max, &n, "ED-UP for Mac", v);
   flatStatusAdd(out, max, &n, "Profile", "flat");
 
   // Display: each part only when it is known.
