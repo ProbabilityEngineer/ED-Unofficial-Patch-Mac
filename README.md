@@ -66,12 +66,14 @@ Its releases are tagged `elite-mac-vX.Y.Z`, matching this project's
 [`elite-mac-v0.23.0`](https://github.com/ProbabilityEngineer/dxmt/releases/tag/elite-mac-v0.23.0)). ED Unofficial Patch
 for Mac works without it, with these differences:
 
-- **Memory.** Stock DXMT never frees a MetalFX upscaler, and each screen
-  size needs its own: changing the game's resolution, or resizing its
-  window, adds one. Supersampling changes do not (ED Unofficial Patch for Mac
-  keeps MetalFX at one size per screen size). On stock DXMT, after three
-  screen sizes in one session, it switches MetalFX to FSR until Elite
-  restarts, with a notice, so memory cannot keep climbing.
+- **Memory.** Stock DXMT never frees a MetalFX upscaler, and each size
+  needs its own. ED Unofficial Patch for Mac keeps that to one per screen
+  size on stock DXMT: Supersampling at or below 1.0 reuses it, and above 1.0
+  (where MetalFX would need one per Supersampling value) anti-aliasing runs
+  through FSR instead, returning to MetalFX at 1.0 or below. Changing the
+  game's resolution or resizing its window still adds one each time; after
+  three screen sizes in a session it switches to FSR until Elite restarts,
+  with a notice. Memory already taken is only given back by restarting Elite.
 - **Decals.** Some decals, such as station window logos, need a DXMT fix
   (partial write masks). Without it, ED Unofficial Patch for Mac keeps the
   game's own shader for those draws, so they still show, but they lose their

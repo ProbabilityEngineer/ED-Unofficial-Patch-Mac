@@ -17,6 +17,7 @@
 #include "flat_hdr_crumbs.h"
 #include "flat_context_state.h"
 #include "flat_mono_resolve.h"
+#include "metal_fx_engine.h"   // dxmtFixesPartialWriteMaskDiscard: MetalFX above 1.0 on stock DXMT runs as FSR
 #include "flat_celestial.h"    // planet patch motion: the rows' tangents for the records the resolve binds (fetchCelestialRecords)
 #include "celestial_motion.h"
 #include "flat_projection_recipes.h"
@@ -493,6 +494,10 @@ struct State {
     uint64_t namingVetoes = 0, namingVetoReleases = 0, namingVetoBounded = 0;
     FlatMonoFrame previous{}; bool havePrevious = false, treated = false;
     std::string mode; FlatMonoResolveMode engine = FlatMonoResolveMode::Taa;
+    // mfx asked for, FSR running (flatRuntimePresent): Supersampling above 1.0 on stock DXMT, or the output-size guard. Latched: updated
+    // only from a frame whose scene size is known, because the mode change it causes clears the published sizes for a frame or two.
+    bool mfxAsFsr = false; const char* mfxAsFsrWhy = nullptr;
+    int dxmtFixed = -1;   // the D3D11 reports the elite-mac fixes (1), does not (0), not asked yet (-1)
     unsigned preset = ~0u;
     uint64_t lastMs = 0, lastReport = 0, accepted = 0, refused = 0;
     uint64_t acceptedResetWindow = 0, acceptedHistoryWindow = 0;
@@ -4489,9 +4494,22 @@ void flatRuntimePresent(IDXGISwapChain* swap, uint64_t frame, HRESULT hr, UINT f
         s.refusalView = refusalViewWanted; s.refusalViewRead = true;
         Log::get().note("flat runtime: refusal view %s (advanced.flat_refusal_view): %s", refusalViewWanted ? "on" : "off", flatMonoViewLegend());
     }
-    // The MetalFX output-size guard turned MetalFX off for the session (flatMfxStoodDown): forget the mode, so the block below maps
-    // mfx to FSR from the next frame, with the usual reset and log line.
-    if (s.engine == FlatMonoResolveMode::Mfx && flatMfxStoodDown()) s.mode.clear();
+    // mfx as FSR. Stock DXMT keeps every MetalFX scaler it makes, one per output size. Above 1.0 Supersampling MetalFX's output is the
+    // render size itself (mfx-native-aa-supersample), so every Supersampling value above 1.0 would leave a scaler behind; FSR runs the
+    // same route (fsr-native-aa-supersample) and destroys its context on each size change. So on a DXMT that does not report the
+    // elite-mac fixes, mfx runs as FSR while the scene renders above the output, and MetalFX again at or below it (its scaler for this
+    // output size is still cached). The output-size guard (flatMfxStoodDown) makes it FSR for the rest of the session.
+    if (s.dxmtFixed < 0 && s.context) s.dxmtFixed = dxmtFixesPartialWriteMaskDiscard(s.context.Get()) ? 1 : 0;
+    if (_stricmp(mode.c_str(), "mfx") == 0) {
+        bool asFsr = s.mfxAsFsr; const char* why = s.mfxAsFsrWhy;
+        uint32_t rw = 0, rh = 0, ow = 0, oh = 0;
+        if (flatMfxStoodDown()) { asFsr = true; why = "the MetalFX output-size guard turned MetalFX off for this session"; }
+        else if (s.dxmtFixed == 0 && flatRuntimeSceneSizes(&rw, &rh, &ow, &oh) && rw && ow) {
+            asFsr = rw > ow || rh > oh;
+            why = asFsr ? "Supersampling above 1.0 on stock DXMT (MetalFX would leave a scaler per size)" : nullptr;
+        }
+        if (asFsr != s.mfxAsFsr) { s.mfxAsFsr = asFsr; s.mfxAsFsrWhy = why; s.mode.clear(); }
+    } else if (s.mfxAsFsr) { s.mfxAsFsr = false; s.mfxAsFsrWhy = nullptr; }
     if (mode != s.mode) {
         s.haveResolvePlan=false;s.resolvePreflight={};s.resolvePreflightRetryMs=0;
         s.mode = mode; reset();
@@ -4502,15 +4520,17 @@ void flatRuntimePresent(IDXGISwapChain* swap, uint64_t frame, HRESULT hr, UINT f
         // fsr and mfx are the only modes (temporalModeEnabled); Taa stays the "no backend" value of a mode that is off.
         s.engine = _stricmp(mode.c_str(), "fsr") == 0 ? FlatMonoResolveMode::Fsr :
             _stricmp(mode.c_str(), "mfx") == 0 ? FlatMonoResolveMode::Mfx : FlatMonoResolveMode::Taa;
-        if (s.engine == FlatMonoResolveMode::Mfx && flatMfxStoodDown()) s.engine = FlatMonoResolveMode::Fsr;   // the output-size guard
+        if (s.engine == FlatMonoResolveMode::Mfx && s.mfxAsFsr) s.engine = FlatMonoResolveMode::Fsr;   // mfx as FSR (above)
         if(s.engine==FlatMonoResolveMode::Taa) {
             s.foregroundRoute.clear();for(auto& candidate:s.foregroundCandidates)retireDomainCandidate(s,candidate);
             s.foregroundSelectedDepth=nullptr;s.foregroundLastH={};
             foregroundDomainActive.store(false,std::memory_order_release);
         }
         Log::get().note("flat runtime: mode=%s experimental mono temporal; game SS controls render size; jitter uses qualified D3D11 projection scopes", mode.c_str());
-        if (_stricmp(mode.c_str(), "mfx") == 0 && s.engine == FlatMonoResolveMode::Fsr)
-            Log::get().note("flat runtime: mfx asked for, FSR running: the MetalFX output-size guard turned MetalFX off for this session");
+        if (_stricmp(mode.c_str(), "mfx") == 0)
+            Log::get().note(s.engine == FlatMonoResolveMode::Fsr ? "flat runtime: mfx asked for, FSR running: %s" :
+                            "flat runtime: mfx asked for, MetalFX running%s", s.engine == FlatMonoResolveMode::Fsr ?
+                            (s.mfxAsFsrWhy ? s.mfxAsFsrWhy : "(no reason recorded)") : "");
     }
     g_flatRuntimeLive.store(false, std::memory_order_release);
     // Engine motion follows the stand-down (s.enginePaused); the mode of the frame that
