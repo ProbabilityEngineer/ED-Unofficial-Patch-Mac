@@ -2174,17 +2174,141 @@ size_t vtableDominantOtherModule(void** vtable, size_t count, void* excludedModu
     return hits[best];
 }
 
-bool VTableHook::writeEntry(void** vtable, size_t slot, void* value,
-                            const char* why) {
-    DWORD oldProtect = 0;
-    if (!VirtualProtect(&vtable[slot], sizeof(void*), PAGE_READWRITE, &oldProtect)) {
+#ifdef EDVR_VTABLE_TEST
+// See vtableSetBeforeCellWriteForTest: the interleaving a single-threaded cell
+// cannot otherwise produce, a foreign store landing between our read of a cell
+// and our write to it.
+static void (*g_beforeCellWrite)(void** cell) = nullptr;
+void vtableSetBeforeCellWriteForTest(void (*hook)(void** cell)) { g_beforeCellWrite = hook; }
+#endif
+
+namespace {
+
+// What one compare-and-swap into a pointer cell saw, for the caller's report.
+struct CellWrite {
+    SlotWrite result = SlotWrite::NotWritable;
+    void*     observed = nullptr;      // what the cell held when the exchange ran
+    void*     afterWrite = nullptr;    // read back while the page was still writable
+    void*     afterRestore = nullptr;  // read back after the protection was put back
+    DWORD     oldProtect = 0;
+    DWORD     restored = 0;
+    DWORD     protectError = 0;
+};
+
+// The protection to put back after writing into a page. Never a copy-on-write
+// one: the write has just made the page private, and putting PAGE_WRITECOPY or
+// PAGE_EXECUTE_WRITECOPY back can drop that private copy and bring back the
+// image's original contents, silently undoing the write.
+//
+// BUT A COPY-ON-WRITE PAGE IS WRITABLE, so its substitute must be too:
+// PAGE_READWRITE and PAGE_EXECUTE_READWRITE, the same access without the copy.
+// An image's .data section reports PAGE_WRITECOPY until it is first written,
+// and anything else living on that page -- the program's own globals -- is
+// written by its owner afterwards. This used to substitute PAGE_READONLY and
+// PAGE_EXECUTE_READ, which turns the owner's next write to a neighbour into an
+// access violation. It never bit here because the tables EDVR patches live in
+// read-only memory, but the EDUP-NHOE rumble mod crashed Elite exactly this way
+// (2026-11-20): its audio slot shares a page with .data globals, and the game's
+// own store 0x68 bytes along faulted 17 seconds in. Modifier bits (PAGE_GUARD,
+// PAGE_NOCACHE, PAGE_WRITECOMBINE) are kept.
+DWORD restorableProtection(DWORD protection) {
+    const DWORD modifiers = protection & ~DWORD{0xFF};
+    switch (protection & 0xFF) {
+        case PAGE_WRITECOPY:         return PAGE_READWRITE | modifiers;
+        case PAGE_EXECUTE_WRITECOPY: return PAGE_EXECUTE_READWRITE | modifiers;
+        default:                     return protection;
+    }
+}
+
+// THE ONE WAY EDVR WRITES A POINTER INTO MEMORY IT DOES NOT OWN: a vtable slot
+// or an object's vptr. Open the page, exchange ONLY IF the cell still holds
+// `expected`, put the protection back, read the cell twice.
+//
+// A plain store here used to replace whatever the cell held, so a pointer that
+// another hooker (a mod, an overlay, the runtime re-initialising) had put there
+// since our last read was silently thrown away -- the same thing done to us
+// that reclaim() exists to repair. The exchange makes "still what we read" and
+// "now ours" one atomic step, so the race between them is gone rather than
+// narrowed. On a mismatch nothing is written and the caller gets the value it
+// found, to name in its report.
+//
+// The protection put back is restorableProtection's: see it for why a
+// copy-on-write page comes back read-WRITE and never read-only.
+CellWrite exchangeCell(void** cell, void* expected, void* value, const char* site) {
+    CellWrite w;
+    if (!VirtualProtect(cell, sizeof(void*), PAGE_READWRITE, &w.oldProtect)) {
+        w.protectError = GetLastError();
+        return w;
+    }
+#ifdef EDVR_VTABLE_TEST
+    if (g_beforeCellWrite) g_beforeCellWrite(cell);
+#endif
+    const bool ran = guarded(site, [&] {
+        w.observed = InterlockedCompareExchangePointer(cell, value, expected);
+    });
+    w.result = !ran ? SlotWrite::Faulted
+             : w.observed == expected ? SlotWrite::Written
+                                      : SlotWrite::Foreign;
+    guarded(site, [&] { w.afterWrite = *static_cast<void* volatile*>(cell); });
+
+    w.restored = restorableProtection(w.oldProtect);
+    DWORD ignored = 0;
+    VirtualProtect(cell, sizeof(void*), w.restored, &ignored);
+
+    guarded(site, [&] { w.afterRestore = *static_cast<void* volatile*>(cell); });
+    return w;
+}
+
+}  // namespace
+
+#ifdef EDVR_VTABLE_TEST
+SlotWrite vtableExchangeCellForTest(void** cell, void* expected, void* value) {
+    return exchangeCell(cell, expected, value, "vtableExchangeCellForTest").result;
+}
+#endif
+
+// Said when a compare-and-swap found somebody else's pointer and wrote nothing.
+// Capped per hook, like the write autopsy: install and uninstall find it at
+// most once per slot, but re-claim runs every frame.
+void VTableHook::noteForeignCell(const char* what, const void* cell, size_t slot,
+                                 void* expected, void* observed) {
+    if (m_foreignCellNotes >= kForeignCellNotes) return;
+    ++m_foreignCellNotes;
+    char where[48];
+    if (slot == kVptrCell) _snprintf_s(where, sizeof(where), _TRUNCATE, "the object's vptr");
+    else                   _snprintf_s(where, sizeof(where), _TRUNCATE, "vtable slot %zu", slot);
+    char foundBuf[MAX_PATH];
+    char expectedBuf[MAX_PATH];
+    Log::get().note(
+        "VTableHook: the %s write to %s at %p was NOT made: it holds %p (%s), "
+        "not the %p (%s) EDVR expected there, so somebody else has put a pointer "
+        "there since and it is left alone. Said at most %u times.",
+        what, where, cell,
+        observed, ownerModuleName(observed, foundBuf, sizeof(foundBuf)),
+        expected, ownerModuleName(expected, expectedBuf, sizeof(expectedBuf)),
+        static_cast<unsigned>(kForeignCellNotes));
+}
+
+SlotWrite VTableHook::writeEntry(void** vtable, size_t slot, void* expected,
+                                 void* value, const char* why, void** observedOut) {
+    const CellWrite w = exchangeCell(&vtable[slot], expected, value,
+                                     "VTableHook::writeEntry");
+    if (w.result == SlotWrite::NotWritable) {
         Log::get().note("VTableHook: could not make vtable slot %zu at %p "
                         "writable (err %lu)", slot, (void*)&vtable[slot],
-                        GetLastError());
-        return false;
+                        w.protectError);
+        return w.result;
     }
-    const bool ok =
-        guarded("VTableHook::writeEntry", [&] { vtable[slot] = value; });
+    if (observedOut) *observedOut = w.observed;
+    if (w.result == SlotWrite::Foreign) {
+        // A caller that asked for the value found decides for itself whether
+        // that is a refusal worth a line (install may chain in front of it).
+        if (!observedOut) {
+            noteForeignCell(why ? why : "?", &vtable[slot], slot, expected, w.observed);
+        }
+        return w.result;
+    }
+    const bool ok = w.result == SlotWrite::Written;
 
     // THE WRITE AUTOPSY. Five years of this function assuming its own writes
     // land, and issue #21 is the rig that made the assumption worth testing:
@@ -2203,28 +2327,16 @@ bool VTableHook::writeEntry(void** vtable, size_t slot, void* value,
     // after the protection is put back. If the value is ours at the first and
     // gone at the second, restoring the protection is what loses it -- a
     // one-line bug in here, not a war with the operating system.
-    void* afterWrite = nullptr;
-    guarded("VTableHook::writeEntry/read-back",
-            [&] { afterWrite = vtable[slot]; });
-
-    // Restore -- but never to a copy-on-write protection. Putting
-    // PAGE_WRITECOPY or PAGE_EXECUTE_WRITECOPY back onto a page that has just
-    // been made private by writing to it is the classic way to have the private
-    // copy dropped and the image's original contents returned, which would look
-    // exactly like the field report above. The non-copy equivalents leave the
-    // page as readable and as executable as it was, and are what every other
-    // hooking library restores. Only reached when a table lives in a mapped
-    // image; the D3D11 context's table is heap-resident on the reporting rig,
-    // where this changes nothing.
-    DWORD restore = oldProtect;
-    if (restore == PAGE_WRITECOPY)                 restore = PAGE_READONLY;
-    else if (restore == PAGE_EXECUTE_WRITECOPY)    restore = PAGE_EXECUTE_READ;
-    DWORD ignored = 0;
-    VirtualProtect(&vtable[slot], sizeof(void*), restore, &ignored);
-
-    void* afterRestore = nullptr;
-    guarded("VTableHook::writeEntry/read-back-2",
-            [&] { afterRestore = vtable[slot]; });
+    //
+    // exchangeCell takes both reads, and restores the protection between them
+    // -- never to a copy-on-write one, which would look exactly like the field
+    // report above. Only reached when a table lives in a mapped image; the
+    // D3D11 context's table is heap-resident on the reporting rig, where that
+    // changes nothing.
+    void* const afterWrite = w.afterWrite;
+    void* const afterRestore = w.afterRestore;
+    const DWORD oldProtect = w.oldProtect;
+    const DWORD restore = w.restored;
 
     if (ok && m_writeAutopsies < kWriteAutopsies &&
         (afterWrite != value || afterRestore != value)) {
@@ -2256,7 +2368,7 @@ bool VTableHook::writeEntry(void** vtable, size_t slot, void* value,
             protectName(oldProtect), protectName(restore),
             static_cast<unsigned>(kWriteAutopsies));
     }
-    return ok;
+    return w.result;
 }
 
 bool VTableHook::attach(void* object, size_t maxEntries) {
@@ -2456,11 +2568,17 @@ bool VTableHook::replace(size_t index, void* replacement, void** origOut) {
 // The store that moves the object onto our table, and the only place it
 // happens.
 //
-// One aligned pointer write, which cannot be partial, so there is no rollback
-// path to write. It was copied out three times once commitLive() joined
-// commit() and commitUnpatched(); three copies of the operation that actually
-// changes somebody else's object is three places for the protection dance to
-// drift, so there is one.
+// One aligned compare-and-swap, which cannot be partial, so there is no
+// rollback path to write. It was copied out three times once commitLive()
+// joined commit() and commitUnpatched(); three copies of the operation that
+// actually changes somebody else's object is three places for the protection
+// dance to drift, so there is one.
+//
+// Exchanged against m_vtable, the vptr attach() read and every entry of our
+// table was copied from. If another tool has moved the object onto its own
+// table since, ours would be built from a table the object no longer uses, and
+// writing it would cut that tool out -- so nothing is written and the commit
+// fails, which every caller already treats as "fix off".
 bool VTableHook::installVptr(const char* why) {
     void** const table = dispatchTable();
     if (!table) return false;
@@ -2468,18 +2586,19 @@ bool VTableHook::installVptr(const char* why) {
     // patch has gone into its table, and one flip covers both halves of it.
     if (!sealLiveBlock()) return false;
     void** target = reinterpret_cast<void**>(m_object);
-    DWORD oldProtect = 0;
-    if (!VirtualProtect(target, sizeof(void*), PAGE_READWRITE, &oldProtect)) {
+    const CellWrite w = exchangeCell(target, static_cast<void*>(m_vtable),
+                                     static_cast<void*>(table), why);
+    if (w.result == SlotWrite::NotWritable) {
         Log::get().note("VTableHook: VirtualProtect failed on object %p (err %lu)",
-                        m_object, GetLastError());
+                        m_object, w.protectError);
         return false;
     }
-    const bool ok = guarded(why, [&] {
-        *target = reinterpret_cast<void*>(table);
-    });
-    DWORD ignored = 0;
-    VirtualProtect(target, sizeof(void*), oldProtect, &ignored);
-    if (!ok) return false;
+    if (w.result == SlotWrite::Foreign) {
+        noteForeignCell("install", target, kVptrCell, static_cast<void*>(m_vtable),
+                        w.observed);
+        return false;
+    }
+    if (w.result != SlotWrite::Written) return false;
     m_committed = true;
     // Now that the object dispatches through it, say so: a hook that later
     // attaches to this same object reads THIS table as "the runtime's", and the
@@ -2523,6 +2642,9 @@ bool VTableHook::commit() {
         // caller already holds it as its forward -- so the patched slot runs our
         // thunk, and our thunk's "original" is the stub that reads the runtime's
         // current entry. Nothing about a thunk body changes between the modes.
+        //
+        // Plain stores, not exchanges: this table is our own allocation and
+        // nothing else can see it until installVptr publishes it.
         void** const table = dispatchTable();
         const size_t count = dispatchCount();
         if (!table || !count) return false;
@@ -2532,17 +2654,70 @@ bool VTableHook::commit() {
         return installVptr("VTableHook::commit/vptr");
     }
 
+    // Each write is exchanged against what that slot held when replace() read
+    // it -- the original the caller now holds as its forward. If the slot has
+    // changed since, somebody else hooked it in between: writing would drop
+    // their pointer, and our forward would skip them. Nothing calls replace()
+    // twice on one slot today, but if something did, the second patch's
+    // expected value is the first one's replacement, which is what the slot
+    // holds by then; `before` keeps what each write found, for the roll-back.
+    //
+    // A SLOT THAT CHANGED HANDS IS CHAINED IN FRONT OF, not given up on. The
+    // pointer found becomes our forward and the exchange is retried against
+    // it, so both tools run -- what reclaim() does for a slot taken after we
+    // installed. Here it needs no vouch: our pointer has never been in this
+    // slot, so whoever is there cannot have captured it as THEIR forward, and
+    // the call loop reclaim guards against cannot be built. What is still
+    // refused: a hook that gave no forward pointer (we cannot chain), a value
+    // that is not executable code, and one of this hook's own replacements.
+    // Bounded, so a slot that changes on every attempt ends the install
+    // (rolled back, the fix off and the log saying why) rather than spinning.
+    std::vector<void*> before(m_patches.size(), nullptr);
     size_t written = 0;
     for (; written < m_patches.size(); ++written) {
-        const Patch& p = m_patches[written];
-        if (!writeEntry(m_vtable, p.slot, p.replacement, "install")) break;
+        Patch& p = m_patches[written];
+        void* expected = p.original;
+        for (size_t i = 0; i < written; ++i) {
+            if (m_patches[i].slot == p.slot) expected = m_patches[i].replacement;
+        }
+        SlotWrite result = SlotWrite::Foreign;
+        void* found = nullptr;
+        for (uint32_t attempt = 0;; ++attempt) {
+            result = writeEntry(m_vtable, p.slot, expected, p.replacement, "install",
+                                &found);
+            if (result != SlotWrite::Foreign) break;
+            bool ownReplacement = false;
+            for (const Patch& q : m_patches) {
+                if (q.replacement == found) ownReplacement = true;
+            }
+            if (attempt >= kInstallAdoptions || !p.origOut || ownReplacement ||
+                !isExecutableAddress(found)) {
+                noteForeignCell("install", &m_vtable[p.slot], p.slot, expected, found);
+                break;
+            }
+            // The forward first, THEN the slot: the slot must never point at
+            // our thunk while the thunk's forward is stale.
+            *p.origOut = found;
+            p.original = found;   // uninstall puts back THEIR entry
+            char modBuf[MAX_PATH];
+            Log::get().note(
+                "VTableHook: slot %zu at %p changed hands between staging and "
+                "install -- it now points into %s -- so EDVR chains in front of "
+                "it and both run.",
+                p.slot, (void*)m_vtable, ownerModuleName(found, modBuf, sizeof(modBuf)));
+            expected = found;
+        }
+        before[written] = expected;
+        if (result != SlotWrite::Written) break;
     }
     if (written < m_patches.size()) {
         // Partial patch is worse than none: a half-installed fix is a fix
-        // whose invariants nobody has reasoned about. Put back what went in.
-        for (size_t i = 0; i < written; ++i) {
+        // whose invariants nobody has reasoned about. Put back what went in,
+        // newest first, each only over our own pointer -- if somebody hooked
+        // one of these slots in the moment since, they keep it.
+        for (size_t i = written; i-- > 0;) {
             const Patch& p = m_patches[i];
-            writeEntry(m_vtable, p.slot, p.original, "roll back");
+            writeEntry(m_vtable, p.slot, p.replacement, before[i], "roll back");
         }
         Log::get().note("VTableHook: %zu of %zu entries could not be patched at "
                         "%p, so all of them were rolled back and the fix is off.",
@@ -2631,19 +2806,15 @@ void VTableHook::uninstall() {
             // free. Leaving their vptr alone keeps their chain (which still
             // runs through our copy) intact and order-independent, instead of
             // correct only because shutdown happens to run upper-first.
+            //
+            // The check and the restore are one compare-and-swap against our
+            // own table, so a tool that swaps the vptr between them cannot be
+            // written over either.
             void** target = reinterpret_cast<void**>(m_object);
-            void*  live = nullptr;
-            guarded("VTableHook::uninstall/vptr-read",
-                    [&] { live = *target; });
-            if (live == static_cast<void*>(dispatchTable())) {
-                DWORD oldProtect = 0;
-                if (VirtualProtect(target, sizeof(void*), PAGE_READWRITE, &oldProtect)) {
-                    guarded("VTableHook::uninstall/vptr", [&] {
-                        *target = reinterpret_cast<void*>(m_vtable);
-                    });
-                    DWORD ignored = 0;
-                    VirtualProtect(target, sizeof(void*), oldProtect, &ignored);
-                }
+            const CellWrite w = exchangeCell(target, static_cast<void*>(dispatchTable()),
+                                             static_cast<void*>(m_vtable),
+                                             "VTableHook::uninstall/vptr");
+            if (w.result == SlotWrite::Written) {
                 // Restored: nothing dispatches through our copy any more, so
                 // it can go. The live mode's BLOCK still cannot -- a thread
                 // dispatched before the store above is still inside a stub and
@@ -2663,12 +2834,31 @@ void VTableHook::uninstall() {
             // on a teardown that only ever runs under FreeLibrary (the game
             // exits by TerminateProcess) is the right trade. m_copy is left
             // intact and this object is abandoned in place.
-            Log::get().note(
-                "VTableHook: a copy-mode object was swapped away from EDVR's "
-                "vtable copy by another tool before uninstall. The vptr is left "
-                "with them and EDVR's copy is intentionally leaked rather than "
-                "freed, because their chain still runs through it -- freeing it "
-                "would dangle. One-time, teardown only.");
+            //
+            // The same leak when the vptr could not be written at all (the
+            // protection refused, or the access faulted): the object may still
+            // dispatch through our copy, so it must not be freed. This used to
+            // fall into the "restored" branch and clear the copy anyway.
+            if (w.result == SlotWrite::Foreign) {
+                char modBuf[MAX_PATH];
+                Log::get().note(
+                    "VTableHook: a copy-mode object was swapped away from EDVR's "
+                    "vtable copy by another tool before uninstall (its vptr is "
+                    "now %p, in %s). The vptr is left with them and EDVR's copy "
+                    "is intentionally leaked rather than freed, because their "
+                    "chain still runs through it -- freeing it would dangle. "
+                    "One-time, teardown only.",
+                    w.observed, ownerModuleName(w.observed, modBuf, sizeof(modBuf)));
+            } else {
+                Log::get().note(
+                    "VTableHook: a copy-mode object's vptr could not be put back "
+                    "at uninstall (%s, err %lu), so the object may still dispatch "
+                    "through EDVR's copy and the copy is leaked rather than freed. "
+                    "One-time, teardown only.",
+                    w.result == SlotWrite::NotWritable ? "the page would not open"
+                                                       : "the access faulted",
+                    w.protectError);
+            }
             m_committed = false;
         }
         // NOT m_copy.clear() on the leak path -- see the note above. Reached
@@ -2697,7 +2887,9 @@ void VTableHook::uninstall() {
                                 p.slot, (void*)m_vtable);
                 continue;
             }
-            writeEntry(m_vtable, p.slot, p.original, "uninstall");
+            // Exchanged against our own pointer, so a hook landing between the
+            // read above and this write is not restored over either.
+            writeEntry(m_vtable, p.slot, p.replacement, p.original, "uninstall");
         }
         m_committed = false;
     }
@@ -3300,8 +3492,35 @@ size_t VTableHook::reclaim(const char* name, const size_t* quietSlots,
         // on issue #21's rig that is 29 of them. Failing repeatably also means
         // the forward has been moved while our thunk is NOT in the slot, which
         // is a state to escape rather than re-enter for the session.
-        const bool wrote = writeEntry(m_vtable, p.slot, p.replacement, "re-claim");
-        if (!ownerRepoint || !wrote) ++p.repatches;
+        //
+        // Exchanged against `now`, the entry this pass just read, classified
+        // and adopted as our forward. That is still the re-arm issue #21 needs
+        // -- the slot keeps reverting to the same original, and we take it back
+        // over that known value every time -- but if a THIRD pointer arrives
+        // between the read and the write, it is one this pass never looked at
+        // (vouched, owner, chainer?), and writing over it would drop a hook
+        // nobody classified. Nothing is written; the next pass reads it and
+        // decides afresh. The forward moved to `now` is harmless meanwhile:
+        // our thunk is not in the slot, and uninstall only touches slots that
+        // hold it.
+        //
+        // A LOST RACE AGAINST THE OWNER IS NOT COUNTED. The cap ends a
+        // tug-of-war with a TOOL, and that is still what a lost race against
+        // one counts toward. But when `now` came from the module that
+        // implements the slot, the exemption above already says its re-points
+        // are taken back for the session; losing the instant between our read
+        // and our write to it is the same re-selection arriving a moment
+        // early, not a rival winning. Counting it would let issue #21's rig
+        // concede by the back door, a few microseconds at a time. The cost of
+        // not counting is one failed exchange per pass, and the line it would
+        // say is capped (kForeignCellNotes). A write that failed for any other
+        // reason -- the page would not open, the access faulted -- still
+        // counts, owner or not, as before.
+        const SlotWrite result = writeEntry(m_vtable, p.slot, now, p.replacement,
+                                            "re-claim");
+        const bool wrote = result == SlotWrite::Written;
+        const bool lostRace = result == SlotWrite::Foreign;
+        if (!ownerRepoint || (!wrote && !lostRace)) ++p.repatches;
 
         if (p.repatches >= kMaxRepatchesPerSlot) {
             p.retired = true;

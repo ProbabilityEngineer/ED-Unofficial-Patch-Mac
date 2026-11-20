@@ -413,6 +413,32 @@ enum class HookMode : uint32_t {
 // any callee may read.
 constexpr size_t kLiveStubBytes = 16;
 
+// What one pointer write into memory EDVR does not own (a vtable slot, an
+// object's vptr) did. Every such write is a compare-and-swap against the value
+// EDVR expects there, so a pointer somebody else installed is never replaced.
+enum class SlotWrite : uint8_t {
+    Written,       // the cell held the expected value and now holds ours
+    Foreign,       // the cell held something else; nothing was written
+    NotWritable,   // the page would not open; nothing was written
+    Faulted,       // the access faulted inside guarded(); nothing was written
+};
+
+// How many times commit() chains in front of a slot that changed hands between
+// staging and install, and retries, before giving up on the install.
+constexpr uint32_t kInstallAdoptions = 2;
+
+#ifdef EDVR_VTABLE_TEST
+// Called with the cell's address after its page is opened and just before the
+// compare-and-swap, so a cell can land a foreign store in exactly the window
+// the exchange closes. Null turns it off. Test executable only.
+void vtableSetBeforeCellWriteForTest(void (*hook)(void** cell));
+
+// The exchange every slot and vptr write goes through, on any cell: open the
+// page, compare-and-swap, put the protection back. For the copy-on-write cell,
+// which needs a never-written image page rather than a vtable.
+SlotWrite vtableExchangeCellForTest(void** cell, void* expected, void* value);
+#endif
+
 class VTableHook {
 public:
     VTableHook() = default;
@@ -752,15 +778,28 @@ private:
     // object. `why` labels the guard site.
     bool installVptr(const char* why);
 
-    // Writes one entry with the page temporarily writable. Returns false and
-    // changes nothing if the protection could not be moved.
+    // Writes one entry with the page temporarily writable, ONLY if the slot
+    // still holds `expected` (one compare-and-swap). Anything other than
+    // Written changed nothing: the protection would not move, the access
+    // faulted, or somebody else's pointer is in the slot (Foreign, which is
+    // logged with the module it belongs to and left alone). With
+    // `observedOut`, the value found is handed back instead and a Foreign
+    // result is not logged: the caller decides what it means.
     //
     // Reads the slot back twice -- once before the protection is restored, once
     // after -- and reports when the write did not survive its own function.
     // `why` labels the write in that report ("install", "re-claim", "undo").
     // See the definition: five years of assuming these writes land, and a rig
     // where the slot is the original again on the next frame, every frame.
-    bool writeEntry(void** vtable, size_t slot, void* value, const char* why);
+    SlotWrite writeEntry(void** vtable, size_t slot, void* expected, void* value,
+                         const char* why, void** observedOut = nullptr);
+
+    // The report for a compare-and-swap that found somebody else's pointer.
+    // `slot` is kVptrCell for the object's vptr. Capped at kForeignCellNotes.
+    void noteForeignCell(const char* what, const void* cell, size_t slot,
+                         void* expected, void* observed);
+    static constexpr size_t   kVptrCell = static_cast<size_t>(-1);
+    static constexpr uint32_t kForeignCellNotes = 8;
 
     // How many non-surviving writes get an autopsy line. Three is enough to
     // show install and re-claim behaving the same way without a line per frame.
@@ -841,6 +880,7 @@ private:
     size_t             m_lastConceded = 0;
     bool               m_lastPassRan = false;
     uint32_t           m_writeAutopsies = 0;   // see kWriteAutopsies
+    uint32_t           m_foreignCellNotes = 0; // see kForeignCellNotes
     // How many reclaim() passes found something to re-patch. Drives the log
     // cadence: the first explains, later ones report at doublings, so a tool
     // that re-hooks every second cannot fill the log while still being visible
