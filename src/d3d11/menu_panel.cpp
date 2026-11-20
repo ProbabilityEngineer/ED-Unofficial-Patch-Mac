@@ -527,10 +527,13 @@ void layout(const MenuContent& c, std::vector<Op>& ops, std::vector<LineRect>& l
             const int right = cardW - pad;
             const RECT box = {right - wsw, y + (textH - h) / 2, right, y + (textH + h) / 2};
             const bool on = l.toggle == 2;
+            // A dimmed row's switch is grey whatever its state: the knob still shows the stored choice, but the
+            // "on" colour would read as running for a row that does nothing (e.g. Legacy glass lights with Odyssey glass).
+            const bool dimmed = l.style == kMenuDim || l.dim;   // l.dim: still grey while highlighted
             Op track;
             track.rect = box;
-            track.rgb = on ? kSwitchOn : kSwitchOff;
-            track.alpha = on ? 0.95f : 0.55f;
+            track.rgb = on && !dimmed ? kSwitchOn : kSwitchOff;
+            track.alpha = dimmed ? 0.35f : on ? 0.95f : 0.55f;
             track.radius = h / 2;
             ops.push_back(track);
             const int knobR = h / 2 - h / 8;
@@ -538,8 +541,8 @@ void layout(const MenuContent& c, std::vector<Op>& ops, std::vector<LineRect>& l
             const int kcy = (box.top + box.bottom) / 2;
             Op knob;
             knob.rect = {kcx - knobR, kcy - knobR, kcx + knobR, kcy + knobR};
-            knob.rgb = on ? kKnobOn : kKnobOff;
-            knob.alpha = 0.95f;
+            knob.rgb = on && !dimmed ? kKnobOn : kKnobOff;
+            knob.alpha = dimmed ? 0.55f : 0.95f;
             knob.radius = knobR;
             ops.push_back(knob);
         }
