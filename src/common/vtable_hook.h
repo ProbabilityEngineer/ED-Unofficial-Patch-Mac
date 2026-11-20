@@ -428,6 +428,11 @@ enum class SlotWrite : uint8_t {
 // compare-and-swap, so a cell can land a foreign store in exactly the window
 // the exchange closes. Null turns it off. Test executable only.
 void vtableSetBeforeCellWriteForTest(void (*hook)(void** cell));
+
+// The exchange every slot and vptr write goes through, on any cell: open the
+// page, compare-and-swap, put the protection back. For the copy-on-write cell,
+// which needs a never-written image page rather than a vtable.
+SlotWrite vtableExchangeCellForTest(void** cell, void* expected, void* value);
 #endif
 
 class VTableHook {

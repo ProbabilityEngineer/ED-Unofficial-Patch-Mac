@@ -2195,6 +2195,31 @@ struct CellWrite {
     DWORD     protectError = 0;
 };
 
+// The protection to put back after writing into a page. Never a copy-on-write
+// one: the write has just made the page private, and putting PAGE_WRITECOPY or
+// PAGE_EXECUTE_WRITECOPY back can drop that private copy and bring back the
+// image's original contents, silently undoing the write.
+//
+// BUT A COPY-ON-WRITE PAGE IS WRITABLE, so its substitute must be too:
+// PAGE_READWRITE and PAGE_EXECUTE_READWRITE, the same access without the copy.
+// An image's .data section reports PAGE_WRITECOPY until it is first written,
+// and anything else living on that page -- the program's own globals -- is
+// written by its owner afterwards. This used to substitute PAGE_READONLY and
+// PAGE_EXECUTE_READ, which turns the owner's next write to a neighbour into an
+// access violation. It never bit here because the tables EDVR patches live in
+// read-only memory, but the EDUP-NHOE rumble mod crashed Elite exactly this way
+// (2026-11-20): its audio slot shares a page with .data globals, and the game's
+// own store 0x68 bytes along faulted 17 seconds in. Modifier bits (PAGE_GUARD,
+// PAGE_NOCACHE, PAGE_WRITECOMBINE) are kept.
+DWORD restorableProtection(DWORD protection) {
+    const DWORD modifiers = protection & ~DWORD{0xFF};
+    switch (protection & 0xFF) {
+        case PAGE_WRITECOPY:         return PAGE_READWRITE | modifiers;
+        case PAGE_EXECUTE_WRITECOPY: return PAGE_EXECUTE_READWRITE | modifiers;
+        default:                     return protection;
+    }
+}
+
 // THE ONE WAY EDVR WRITES A POINTER INTO MEMORY IT DOES NOT OWN: a vtable slot
 // or an object's vptr. Open the page, exchange ONLY IF the cell still holds
 // `expected`, put the protection back, read the cell twice.
@@ -2207,11 +2232,8 @@ struct CellWrite {
 // narrowed. On a mismatch nothing is written and the caller gets the value it
 // found, to name in its report.
 //
-// Never restores a copy-on-write protection: putting PAGE_WRITECOPY or
-// PAGE_EXECUTE_WRITECOPY back onto a page just made private by writing to it
-// is the classic way to have the private copy dropped and the image's original
-// contents returned. The non-copy equivalents leave the page as readable and as
-// executable as it was, and are what every other hooking library restores.
+// The protection put back is restorableProtection's: see it for why a
+// copy-on-write page comes back read-WRITE and never read-only.
 CellWrite exchangeCell(void** cell, void* expected, void* value, const char* site) {
     CellWrite w;
     if (!VirtualProtect(cell, sizeof(void*), PAGE_READWRITE, &w.oldProtect)) {
@@ -2229,9 +2251,7 @@ CellWrite exchangeCell(void** cell, void* expected, void* value, const char* sit
                                       : SlotWrite::Foreign;
     guarded(site, [&] { w.afterWrite = *static_cast<void* volatile*>(cell); });
 
-    w.restored = w.oldProtect;
-    if (w.restored == PAGE_WRITECOPY)              w.restored = PAGE_READONLY;
-    else if (w.restored == PAGE_EXECUTE_WRITECOPY) w.restored = PAGE_EXECUTE_READ;
+    w.restored = restorableProtection(w.oldProtect);
     DWORD ignored = 0;
     VirtualProtect(cell, sizeof(void*), w.restored, &ignored);
 
@@ -2240,6 +2260,12 @@ CellWrite exchangeCell(void** cell, void* expected, void* value, const char* sit
 }
 
 }  // namespace
+
+#ifdef EDVR_VTABLE_TEST
+SlotWrite vtableExchangeCellForTest(void** cell, void* expected, void* value) {
+    return exchangeCell(cell, expected, value, "vtableExchangeCellForTest").result;
+}
+#endif
 
 // Said when a compare-and-swap found somebody else's pointer and wrote nothing.
 // Capped per hook, like the write autopsy: install and uninstall find it at

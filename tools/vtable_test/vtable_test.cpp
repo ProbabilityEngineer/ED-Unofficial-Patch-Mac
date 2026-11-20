@@ -616,6 +616,60 @@ static void writeVptr(WideObject& o, void* value) {
     *reinterpret_cast<void* volatile*>(&o.vptr) = value;
 }
 
+// A WHOLE PAGE OF INITIALISED, NEVER-WRITTEN IMAGE DATA, in a section of its
+// own so nothing else shares (and dirties) the page. An image's .data reports
+// PAGE_WRITECOPY until first written -- the state of the page the EDUP-NHOE
+// rumble mod's audio slot shares with Elite's globals (2026-11-20 crash).
+#pragma section(".edcow", read, write)
+__declspec(allocate(".edcow")) __declspec(align(4096))
+volatile unsigned char g_cowPage[4096] = {1};
+static volatile LONG g_cowFaults = 0;
+
+static LONG CALLBACK cowNeighbourFault(EXCEPTION_POINTERS* ep) {
+    const EXCEPTION_RECORD* r = ep->ExceptionRecord;
+    if (r->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && r->NumberParameters >= 2 &&
+        r->ExceptionInformation[0] == 1 &&
+        r->ExceptionInformation[1] == reinterpret_cast<ULONG_PTR>(&g_cowPage[0x98])) {
+        InterlockedIncrement(&g_cowFaults);
+        // Let the store complete so the cell can report rather than die.
+        DWORD ignored = 0;
+        VirtualProtect(const_cast<unsigned char*>(&g_cowPage[0]), sizeof(g_cowPage),
+                       PAGE_READWRITE, &ignored);
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// THE PAGE STAYS WRITABLE AFTER THE EXCHANGE. Exchange a pointer into a cell on
+// a copy-on-write page, then do what the page's owner does next: write a
+// neighbouring global. Restoring a read-only substitute faults that write --
+// the rumble mod's crash, and what EDVR's own restore did until this cell.
+// The reported protection is NOT asserted: Wine keeps reporting image pages
+// as PAGE_WRITECOPY after a read-write protect. Writability is what matters.
+static void copyOnWriteCell() {
+    unsigned char* page = const_cast<unsigned char*>(&g_cowPage[0]);
+    MEMORY_BASIC_INFORMATION before{};
+    if (VirtualQuery(page, &before, sizeof(before)) != sizeof(before) ||
+        (before.Protect & 0xFF) != PAGE_WRITECOPY) {
+        fail("the copy-on-write cell's page starts copy-on-write, like a game's .data",
+             "the fixture page is not PAGE_WRITECOPY, so this cell would prove nothing");
+        return;
+    }
+    void** cell = reinterpret_cast<void**>(page + 0x30);
+    void* const ours = reinterpret_cast<void*>(&casOurs);
+    check(vtableExchangeCellForTest(cell, nullptr, ours) == SlotWrite::Written &&
+              *reinterpret_cast<void* volatile*>(cell) == ours,
+          "an exchange on a copy-on-write page lands and survives the restore",
+          "the pointer did not survive the protection being put back");
+    void* const veh = AddVectoredExceptionHandler(1, &cowNeighbourFault);
+    g_cowPage[0x98] = 7;
+    RemoveVectoredExceptionHandler(veh);
+    check(g_cowFaults == 0 && g_cowPage[0x98] == 7,
+          "...and the page's owner can still write its other globals there",
+          "the restore made a copy-on-write page read-only, so the owner's next "
+          "write faulted -- the EDUP-NHOE crash");
+}
+
 static void compareAndSwapCells() {
     printf("compare-and-swap writes\n");
     void* const ours   = reinterpret_cast<void*>(&casOurs);
@@ -829,6 +883,7 @@ int main() {
     printf("edvr vtable / wrapper collision\n");
     dominantOtherModuleCells();
     compareAndSwapCells();
+    copyOnWriteCell();
 
     RealThing real;
     WrapThing wrapper(&real);
