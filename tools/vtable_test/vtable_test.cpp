@@ -596,8 +596,22 @@ static int casThird(IThing*) { return 33; }
 static int   g_cellHitAt = 0;
 static int   g_cellWrites = 0;
 static void* g_cellForeign = nullptr;
+// Every write instead of one: the cell gets whichever of these two it does
+// not hold, so every exchange loses its race, forever.
+static void* g_cellFlipA = nullptr;
+static void* g_cellFlipB = nullptr;
 static void cellSeam(void** cell) {
-    if (++g_cellWrites == g_cellHitAt) *reinterpret_cast<void* volatile*>(cell) = g_cellForeign;
+    ++g_cellWrites;
+    void* volatile* c = reinterpret_cast<void* volatile*>(cell);
+    if (g_cellFlipA) *c = (*c == g_cellFlipA) ? g_cellFlipB : g_cellFlipA;
+    else if (g_cellWrites == g_cellHitAt) *c = g_cellForeign;
+}
+static void armCellSeamAlways(void* a, void* b) {
+    g_cellWrites = 0;
+    g_cellHitAt = 0;
+    g_cellFlipA = a;
+    g_cellFlipB = b;
+    vtableSetBeforeCellWriteForTest(&cellSeam);
 }
 static void armCellSeam(int at, void* foreign) {
     g_cellWrites = 0;
@@ -608,6 +622,7 @@ static void armCellSeam(int at, void* foreign) {
 static void disarmCellSeam() {
     vtableSetBeforeCellWriteForTest(nullptr);
     g_cellHitAt = 0;
+    g_cellFlipA = g_cellFlipB = nullptr;
 }
 static void* readVptr(const WideObject& o) {
     return *reinterpret_cast<void* const volatile*>(&o.vptr);
@@ -712,16 +727,75 @@ static void compareAndSwapCells() {
         h.replace(2, ours, &fwd[0]);
         h.replace(3, ours, &fwd[1]);
         writeTableSlot(table, 3, theirs);
-        check(!h.commit(), "commit refuses when a staged slot has changed hands",
-              "commit succeeded over somebody else's pointer");
-        check(readTableSlot(table, 3) == theirs,
-              "...the foreign pointer is left in the slot",
-              "the install wrote over the foreign pointer");
-        check(readTableSlot(table, 2) == orig,
-              "...and the slot already written is rolled back",
-              "a half-installed hook was left behind");
+        check(h.commit() && readTableSlot(table, 2) == ours && readTableSlot(table, 3) == ours,
+              "install chains in front of a slot that changed hands since staging",
+              "the install gave up on (or wrote blindly over) a slot somebody hooked");
+        check(fwd[1] == theirs && fwd[0] == orig,
+              "...and that slot's forward is now THEIR pointer, so both run",
+              "the forward skips the tool that hooked in between");
+        h.uninstall();
+        check(readTableSlot(table, 3) == theirs && readTableSlot(table, 2) == orig,
+              "...and uninstall hands their slot back to them",
+              "uninstall restored the pre-staging original over them");
+        writeTableSlot(table, 3, orig);
+    }
+
+    // WHAT INSTALL STILL WILL NOT CHAIN TO: a value that is not code. The
+    // install fails, the foreign value stays, and slot 2 is rolled back.
+    void* const notCode = reinterpret_cast<void*>(&g_cellWrites);
+    {
+        WideObject o;
+        o.vptr = table;
+        VTableHook h;
+        void* fwd[2] = {};
+        h.attach(&o);
+        h.replace(2, ours, &fwd[0]);
+        h.replace(3, ours, &fwd[1]);
+        writeTableSlot(table, 3, notCode);
+        check(!h.commit() && readTableSlot(table, 3) == notCode &&
+                  readTableSlot(table, 2) == orig,
+              "install does not chain to a value that is not code, and rolls back",
+              "install chained to data, or left a half-installed hook");
         h.uninstall();
         writeTableSlot(table, 3, orig);
+    }
+
+    // ...nor a slot whose hook gave no forward pointer: there is nothing to
+    // chain through.
+    {
+        WideObject o;
+        o.vptr = table;
+        VTableHook h;
+        h.attach(&o);
+        h.replace(2, ours, nullptr);
+        writeTableSlot(table, 2, theirs);
+        check(!h.commit() && readTableSlot(table, 2) == theirs,
+              "install without a forward pointer leaves a changed slot alone",
+              "install wrote over a pointer it could not chain to");
+        h.uninstall();
+        writeTableSlot(table, 2, orig);
+    }
+
+    // ...and it gives up after a bounded number of tries when the slot keeps
+    // changing under it.
+    {
+        WideObject o;
+        o.vptr = table;
+        VTableHook h;
+        void* fwd[1] = {};
+        h.attach(&o);
+        h.replace(2, ours, &fwd[0]);
+        armCellSeamAlways(theirs, third);
+        const bool committed = h.commit();
+        const int tries = g_cellWrites;
+        disarmCellSeam();
+        const void* now = readTableSlot(table, 2);
+        check(!committed && (now == theirs || now == third) &&
+                  tries == 1 + static_cast<int>(kInstallAdoptions),
+              "install gives up after a bounded number of tries on a slot that never settles",
+              "install spun, or wrote over the slot");
+        h.uninstall();
+        writeTableSlot(table, 2, orig);
     }
 
     // THE SAME, ARRIVING IN THE EXCHANGE'S OWN WINDOW: after the page is open,
@@ -736,10 +810,12 @@ static void compareAndSwapCells() {
         armCellSeam(1, theirs);
         const bool committed = h.commit();
         disarmCellSeam();
-        check(!committed && readTableSlot(table, 2) == theirs,
-              "a pointer landing inside the write's own window is not overwritten",
+        check(committed && readTableSlot(table, 2) == ours && fwd[0] == theirs,
+              "a pointer landing inside the write's own window is chained to, not overwritten",
               "the exchange wrote over a pointer installed between read and write");
         h.uninstall();
+        check(readTableSlot(table, 2) == theirs, "...and uninstall gives it back",
+              "uninstall did not restore their pointer");
         writeTableSlot(table, 2, orig);
     }
 
@@ -754,8 +830,8 @@ static void compareAndSwapCells() {
         h.attach(&o);
         h.replace(2, ours, &fwd[0]);
         h.replace(3, ours, &fwd[1]);
-        writeTableSlot(table, 3, theirs);
-        armCellSeam(3, third);   // 1: install 2, 2: install 3 (foreign), 3: roll back 2
+        writeTableSlot(table, 3, notCode);   // refused, so the install rolls back
+        armCellSeam(3, third);   // 1: install 2, 2: install 3 (not code), 3: roll back 2
         const bool committed = h.commit();
         disarmCellSeam();
         check(!committed && readTableSlot(table, 2) == third,
@@ -812,6 +888,49 @@ static void compareAndSwapCells() {
         h.uninstall();
         check(readTableSlot(table, 2) == orig, "...and uninstall leaves the original",
               "uninstall after re-claim did not restore");
+    }
+
+    // RE-CLAIM'S CAP AND LOST RACES. Every pass loses its race, for more passes
+    // than the cap. Against the module that implements the slot (issue #21's
+    // owner re-point, here the test executable itself) that is not a
+    // tug-of-war and must not concede the slot; against a rival tool it still
+    // must.
+    {
+        WideObject o;
+        o.vptr = table;
+        VTableHook h;
+        void* fwd[1] = {};
+        const size_t one[] = {2};
+        commitSlots(h, o, one, 1, ours, fwd);
+        h.setImplementationModule(GetModuleHandleW(nullptr));
+        writeTableSlot(table, 2, theirs);
+        armCellSeamAlways(theirs, third);
+        for (int i = 0; i < 100; ++i) h.reclaim("cas-owner-race", one, 1);
+        disarmCellSeam();
+        check(h.reclaim("cas-owner-race", one, 1) == 1 && readTableSlot(table, 2) == ours,
+              "lost races against the slot's own module do not use up the re-claim cap",
+              "the slot was conceded to its own module a few microseconds at a time");
+        h.uninstall();
+        writeTableSlot(table, 2, orig);
+    }
+    {
+        WideObject o;
+        o.vptr = table;
+        VTableHook h;
+        void* fwd[1] = {};
+        const size_t one[] = {2};
+        commitSlots(h, o, one, 1, ours, fwd);
+        writeTableSlot(table, 2, theirs);
+        armCellSeamAlways(theirs, third);
+        for (int i = 0; i < 100; ++i) h.reclaim("cas-rival-race", one, 1);
+        disarmCellSeam();
+        const void* kept = readTableSlot(table, 2);
+        check(h.reclaim("cas-rival-race", one, 1) == 0 && readTableSlot(table, 2) == kept &&
+                  kept != ours,
+              "...but lost races against a rival tool still end in concession at the cap",
+              "re-claim fought a rival forever");
+        h.uninstall();
+        writeTableSlot(table, 2, orig);
     }
 
     // THE OBJECT'S VPTR, in copy mode.

@@ -2290,7 +2290,7 @@ void VTableHook::noteForeignCell(const char* what, const void* cell, size_t slot
 }
 
 SlotWrite VTableHook::writeEntry(void** vtable, size_t slot, void* expected,
-                                 void* value, const char* why) {
+                                 void* value, const char* why, void** observedOut) {
     const CellWrite w = exchangeCell(&vtable[slot], expected, value,
                                      "VTableHook::writeEntry");
     if (w.result == SlotWrite::NotWritable) {
@@ -2299,8 +2299,13 @@ SlotWrite VTableHook::writeEntry(void** vtable, size_t slot, void* expected,
                         w.protectError);
         return w.result;
     }
+    if (observedOut) *observedOut = w.observed;
     if (w.result == SlotWrite::Foreign) {
-        noteForeignCell(why ? why : "?", &vtable[slot], slot, expected, w.observed);
+        // A caller that asked for the value found decides for itself whether
+        // that is a refusal worth a line (install may chain in front of it).
+        if (!observedOut) {
+            noteForeignCell(why ? why : "?", &vtable[slot], slot, expected, w.observed);
+        }
         return w.result;
     }
     const bool ok = w.result == SlotWrite::Written;
@@ -2656,19 +2661,54 @@ bool VTableHook::commit() {
     // twice on one slot today, but if something did, the second patch's
     // expected value is the first one's replacement, which is what the slot
     // holds by then; `before` keeps what each write found, for the roll-back.
+    //
+    // A SLOT THAT CHANGED HANDS IS CHAINED IN FRONT OF, not given up on. The
+    // pointer found becomes our forward and the exchange is retried against
+    // it, so both tools run -- what reclaim() does for a slot taken after we
+    // installed. Here it needs no vouch: our pointer has never been in this
+    // slot, so whoever is there cannot have captured it as THEIR forward, and
+    // the call loop reclaim guards against cannot be built. What is still
+    // refused: a hook that gave no forward pointer (we cannot chain), a value
+    // that is not executable code, and one of this hook's own replacements.
+    // Bounded, so a slot that changes on every attempt ends the install
+    // (rolled back, the fix off and the log saying why) rather than spinning.
     std::vector<void*> before(m_patches.size(), nullptr);
     size_t written = 0;
     for (; written < m_patches.size(); ++written) {
-        const Patch& p = m_patches[written];
+        Patch& p = m_patches[written];
         void* expected = p.original;
         for (size_t i = 0; i < written; ++i) {
             if (m_patches[i].slot == p.slot) expected = m_patches[i].replacement;
         }
-        before[written] = expected;
-        if (writeEntry(m_vtable, p.slot, expected, p.replacement, "install") !=
-            SlotWrite::Written) {
-            break;
+        SlotWrite result = SlotWrite::Foreign;
+        void* found = nullptr;
+        for (uint32_t attempt = 0;; ++attempt) {
+            result = writeEntry(m_vtable, p.slot, expected, p.replacement, "install",
+                                &found);
+            if (result != SlotWrite::Foreign) break;
+            bool ownReplacement = false;
+            for (const Patch& q : m_patches) {
+                if (q.replacement == found) ownReplacement = true;
+            }
+            if (attempt >= kInstallAdoptions || !p.origOut || ownReplacement ||
+                !isExecutableAddress(found)) {
+                noteForeignCell("install", &m_vtable[p.slot], p.slot, expected, found);
+                break;
+            }
+            // The forward first, THEN the slot: the slot must never point at
+            // our thunk while the thunk's forward is stale.
+            *p.origOut = found;
+            p.original = found;   // uninstall puts back THEIR entry
+            char modBuf[MAX_PATH];
+            Log::get().note(
+                "VTableHook: slot %zu at %p changed hands between staging and "
+                "install -- it now points into %s -- so EDVR chains in front of "
+                "it and both run.",
+                p.slot, (void*)m_vtable, ownerModuleName(found, modBuf, sizeof(modBuf)));
+            expected = found;
         }
+        before[written] = expected;
+        if (result != SlotWrite::Written) break;
     }
     if (written < m_patches.size()) {
         // Partial patch is worse than none: a half-installed fix is a fix
@@ -3460,14 +3500,27 @@ size_t VTableHook::reclaim(const char* name, const size_t* quietSlots,
         // between the read and the write, it is one this pass never looked at
         // (vouched, owner, chainer?), and writing over it would drop a hook
         // nobody classified. Nothing is written; the next pass reads it and
-        // decides afresh. It counts as a failed write toward the cap, like any
-        // other write that did not land, so a slot that races every frame
-        // still ends in concession rather than a line per frame forever. The
-        // forward moved to `now` is harmless meanwhile: our thunk is not in the
-        // slot, and uninstall only touches slots that hold it.
-        const bool wrote = writeEntry(m_vtable, p.slot, now, p.replacement,
-                                      "re-claim") == SlotWrite::Written;
-        if (!ownerRepoint || !wrote) ++p.repatches;
+        // decides afresh. The forward moved to `now` is harmless meanwhile:
+        // our thunk is not in the slot, and uninstall only touches slots that
+        // hold it.
+        //
+        // A LOST RACE AGAINST THE OWNER IS NOT COUNTED. The cap ends a
+        // tug-of-war with a TOOL, and that is still what a lost race against
+        // one counts toward. But when `now` came from the module that
+        // implements the slot, the exemption above already says its re-points
+        // are taken back for the session; losing the instant between our read
+        // and our write to it is the same re-selection arriving a moment
+        // early, not a rival winning. Counting it would let issue #21's rig
+        // concede by the back door, a few microseconds at a time. The cost of
+        // not counting is one failed exchange per pass, and the line it would
+        // say is capped (kForeignCellNotes). A write that failed for any other
+        // reason -- the page would not open, the access faulted -- still
+        // counts, owner or not, as before.
+        const SlotWrite result = writeEntry(m_vtable, p.slot, now, p.replacement,
+                                            "re-claim");
+        const bool wrote = result == SlotWrite::Written;
+        const bool lostRace = result == SlotWrite::Foreign;
+        if (!ownerRepoint || (!wrote && !lostRace)) ++p.repatches;
 
         if (p.repatches >= kMaxRepatchesPerSlot) {
             p.retired = true;

@@ -423,6 +423,10 @@ enum class SlotWrite : uint8_t {
     Faulted,       // the access faulted inside guarded(); nothing was written
 };
 
+// How many times commit() chains in front of a slot that changed hands between
+// staging and install, and retries, before giving up on the install.
+constexpr uint32_t kInstallAdoptions = 2;
+
 #ifdef EDVR_VTABLE_TEST
 // Called with the cell's address after its page is opened and just before the
 // compare-and-swap, so a cell can land a foreign store in exactly the window
@@ -778,7 +782,9 @@ private:
     // still holds `expected` (one compare-and-swap). Anything other than
     // Written changed nothing: the protection would not move, the access
     // faulted, or somebody else's pointer is in the slot (Foreign, which is
-    // logged with the module it belongs to and left alone).
+    // logged with the module it belongs to and left alone). With
+    // `observedOut`, the value found is handed back instead and a Foreign
+    // result is not logged: the caller decides what it means.
     //
     // Reads the slot back twice -- once before the protection is restored, once
     // after -- and reports when the write did not survive its own function.
@@ -786,7 +792,7 @@ private:
     // See the definition: five years of assuming these writes land, and a rig
     // where the slot is the original again on the next frame, every frame.
     SlotWrite writeEntry(void** vtable, size_t slot, void* expected, void* value,
-                         const char* why);
+                         const char* why, void** observedOut = nullptr);
 
     // The report for a compare-and-swap that found somebody else's pointer.
     // `slot` is kVptrCell for the object's vptr. Capped at kForeignCellNotes.
