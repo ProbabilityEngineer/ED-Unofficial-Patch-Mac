@@ -2965,14 +2965,11 @@ void buildContent(MenuContent& c) {
                 if (d.kind == MenuKind::Toggle) {
                     l.toggle = boolOf(r.value, boolOf(d.shipped, false)) ? 2 : 1;
                     l.right[0] = 0;
-                } else if (std::string off; twoChoiceSwitch(d, &on, &off)) {
-                    // Skip closed rooms is part of Optimized stations: while that is off the rule does not run, so the
-                    // dimmed switch shows off. Only the display: the stored choice is kept and comes back with it.
-                    const std::string& shown = (doorsRow && dim) ? off : r.value;
-                    l.toggle = _stricmp(shown.c_str(), on.c_str()) == 0 ? 2 : 1;
+                } else if (twoChoiceSwitch(d, &on, nullptr)) {
+                    l.toggle = _stricmp(r.value.c_str(), on.c_str()) == 0 ? 2 : 1;
                     // The word stays only where it says something the
                     // switch does not.
-                    const std::string word = switchWord(d, shown);
+                    const std::string word = switchWord(d, r.value);
                     strncpy(l.right, word.c_str(), sizeof(l.right) - 1);
                     l.right[sizeof(l.right) - 1] = 0;
                 }
