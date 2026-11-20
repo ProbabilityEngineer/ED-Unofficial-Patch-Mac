@@ -72,6 +72,7 @@
 #include "ui_layer_math.h"  // uiQualityParse: the HUD Anti-Aliasing row dims while fix.ui_quality is off (or the anti-aliasing is), UI quality read as the layer reads it
 #include "vscreen.h"        // vScreenRenderBelowEye: Elite's Supersampling below 1, from the sizes
 #include "concourse_pane.h"     // concoursePaneTakeToast: the concourse window mode's toast (TEMPORARY, docs\concourse-cull-2026-11-05.md)
+#include "hdr_output.h"         // hdrOutputOn: whether HDR is running, for the HDR white rows
 #include "xess_fg.h"            // ed-metalfx stub: frame generation is always off (no XeSS in this fork)
 #include "mode_watch.h"         // modeWatchNoticeDue: the 3D mode watch's toast, once per commit
 #include "vscreen_res.h"
@@ -678,6 +679,37 @@ bool isRoomsBehindDoorsRow(const MenuRowDef& d) { return strcmp(d.section, "fix"
 const char* roomsBehindDoorsRefusal() { return "Skip closed rooms is inactive: turn Optimized stations on above first."; }
 
 const char* stationWindowDistanceRefusal() { return "Window 3D distance is inactive: turn Optimized stations on above first."; }
+
+// advanced.hdr_scene_nits and advanced.hdr_ui_nits (the HDR scene white and HDR UI white rows, directly under HDR output on the flat panel's Visual tab,
+// 2026-11-20). They set HDR output's brightness, so they act only while HDR is RUNNING, and are dimmed and refused otherwise, the way the Legacy glass rows
+// are. Judged by the running state (hdrOutputOn: fix.hdr was on at launch, and HDR did not stand down), not by the setting: fix.hdr takes a restart, so
+// switching it on in the menu leaves these dimmed until the next game start, and HDR that was set on but stood down (an SDR display, shaders that would not
+// build) leaves them dimmed too. The hint says which of the three it is.
+bool isHdrWhiteRow(const MenuRowDef& d) {
+    return strcmp(d.section, "advanced") == 0 && (strcmp(d.key, "hdr_scene_nits") == 0 || strcmp(d.key, "hdr_ui_nits") == 0);
+}
+
+bool hdrWhiteRowDisabled() { return !hdrOutputOn(); }
+
+// fix.hdr as the panel shows it now, and as it was when the game started (its snapshot: a restart row has one, takeSnapshot).
+bool hdrRowOn(bool atLaunch) {
+    for (int i = 0; i < kRowDefCount; ++i)
+        if (strcmp(kMenuRows[i].section, "fix") == 0 && strcmp(kMenuRows[i].key, "hdr") == 0)
+            return boolOf(atLaunch ? g_rows[i].snapshot : g_rows[i].value, false);
+    return false;
+}
+
+const char* hdrWhiteHint() {
+    if (!hdrRowOn(false)) return "Needs HDR output: turn it on above, then restart the game.";
+    if (!hdrRowOn(true)) return "Takes effect when HDR output starts, at the next game start.";
+    return "HDR output could not start (the EDVR log says why), so this has no effect.";
+}
+
+const char* hdrWhiteRefusal() {
+    if (!hdrRowOn(false)) return "HDR white is inactive: turn HDR output on above first.";
+    if (!hdrRowOn(true)) return "HDR white is inactive until the game restarts with HDR on.";
+    return "HDR white is inactive: HDR output could not start (see the log).";
+}
 
 // The on-foot panel's width: "auto", or a width in pixels -- never a list, so
 // this is not a headset row despite living beside one in the ini. The height
@@ -1417,7 +1449,8 @@ void dimRowsTick() {
     s.dimRowsGenSeen = true;
     s.dimRowsGen = generation;
     const unsigned dims = (dlssPresetDisabled() ? 1u : 0u) | (sharpenRowDisabled() ? 2u : 0u) | (hudAntiAliasingRowDisabled() ? 4u : 0u) |
-                          (cockpitGlassDirtRowDisabled() ? 8u : 0u) | (stationWindowDistanceRowDisabled() ? 16u : 0u);
+                          (cockpitGlassDirtRowDisabled() ? 8u : 0u) | (stationWindowDistanceRowDisabled() ? 16u : 0u) |
+                          (hdrWhiteRowDisabled() ? 32u : 0u);
     if (dims != s.dimRows) {
         s.dimRows = dims;
         s.contentDirty = true;
@@ -2882,12 +2915,14 @@ void buildContent(MenuContent& c) {
             const bool glassDirtRow = isCockpitGlassDirtRow(d);
             const bool windowDistanceRow = isStationWindowDistanceRow(d);
             const bool doorsRow = isRoomsBehindDoorsRow(d);
+            const bool hdrWhiteRow = isHdrWhiteRow(d);
             const bool dim = (dlssRow && dlssPresetDisabled()) ||
                              (sharpenRow && sharpenRowDisabled()) ||
                              (hudAaRow && hudAntiAliasingRowDisabled()) ||
                              (glassDirtRow && cockpitGlassDirtRowDisabled()) ||
                              (doorsRow && stationWindowDistanceRowDisabled()) ||
-                             (windowDistanceRow && stationWindowDistanceRowDisabled());
+                             (windowDistanceRow && stationWindowDistanceRowDisabled()) ||
+                             (hdrWhiteRow && hdrWhiteRowDisabled());
             l.dim = dim;
             strncpy(l.left, d.label, sizeof(l.left) - 1);
             if (dlssRow) {
@@ -2984,6 +3019,8 @@ void buildContent(MenuContent& c) {
                 snprintf(c.hint, sizeof(c.hint), "%s", cockpitGlassDirtHint());
             else if (hi && dim && (windowDistanceRow || doorsRow))
                 snprintf(c.hint, sizeof(c.hint), "%s", stationWindowDistanceHint());
+            else if (hi && dim && hdrWhiteRow)
+                snprintf(c.hint, sizeof(c.hint), "%s", hdrWhiteHint());
             else if (hi && dim && runtimeFlatProfile())
                 snprintf(c.hint, sizeof(c.hint), "%s",
                          sharpenRow ? "Turn anti-aliasing on to sharpen."
@@ -3592,6 +3629,11 @@ void stepRow(int defIndex, int dir, int mult) {
         g_s.contentDirty = true;
         return;
     }
+    if (isHdrWhiteRow(d) && hdrWhiteRowDisabled()) {
+        g_s.lastWrite = hdrWhiteRefusal();
+        g_s.contentDirty = true;
+        return;
+    }
     if (isStationWindowDistanceRow(d) && stationWindowDistanceRowDisabled()) {
         g_s.lastWrite = stationWindowDistanceRefusal();
         g_s.contentDirty = true;
@@ -4008,6 +4050,11 @@ void beginEdit(int entryIndex, int defIndex) {
     }
     if (isCockpitGlassDirtRow(kMenuRows[defIndex]) && cockpitGlassDirtRowDisabled()) {
         s.lastWrite = cockpitGlassDirtRefusal();
+        s.contentDirty = true;
+        return;
+    }
+    if (isHdrWhiteRow(kMenuRows[defIndex]) && hdrWhiteRowDisabled()) {
+        s.lastWrite = hdrWhiteRefusal();
         s.contentDirty = true;
         return;
     }
@@ -4482,6 +4529,9 @@ void dispatchNav(MenuNav nav, uint64_t now) {
                         }
                     } else if (isCockpitGlassDirtRow(d) && cockpitGlassDirtRowDisabled()) {
                         s.lastWrite = cockpitGlassDirtRefusal();
+                        s.contentDirty = true;
+                    } else if (isHdrWhiteRow(d) && hdrWhiteRowDisabled()) {
+                        s.lastWrite = hdrWhiteRefusal();
                         s.contentDirty = true;
                     } else if (isStationWindowDistanceRow(d) && stationWindowDistanceRowDisabled()) {
                         s.lastWrite = stationWindowDistanceRefusal();
