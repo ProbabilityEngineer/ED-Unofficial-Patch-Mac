@@ -578,12 +578,257 @@ static bool commitSlots(VTableHook& hook, WideObject& object, const size_t* slot
     return hook.commit();
 }
 
+// THE COMPARE-AND-SWAP CELLS' MOVING PARTS (2026-11-20).
+//
+// Every pointer EDVR writes into somebody else's memory -- a vtable slot, an
+// object's vptr -- is now exchanged against the value EDVR expects there, so a
+// pointer another hooker installed is never thrown away. Three distinct
+// functions stand for "ours", "theirs" and "a third party nobody classified";
+// their bodies differ so the linker cannot fold them into one address.
+static int casOurs(IThing*) { return 11; }
+static int casTheirs(IThing*) { return 22; }
+static int casThird(IThing*) { return 33; }
+
+// A store that lands INSIDE the window the exchange closes: after EDVR has
+// opened the page and before it writes. A single-threaded cell cannot produce
+// that interleaving any other way. `at` counts the cell writes from one, so a
+// cell can pick the roll-back write out of an install.
+static int   g_cellHitAt = 0;
+static int   g_cellWrites = 0;
+static void* g_cellForeign = nullptr;
+static void cellSeam(void** cell) {
+    if (++g_cellWrites == g_cellHitAt) *reinterpret_cast<void* volatile*>(cell) = g_cellForeign;
+}
+static void armCellSeam(int at, void* foreign) {
+    g_cellWrites = 0;
+    g_cellHitAt = at;
+    g_cellForeign = foreign;
+    vtableSetBeforeCellWriteForTest(&cellSeam);
+}
+static void disarmCellSeam() {
+    vtableSetBeforeCellWriteForTest(nullptr);
+    g_cellHitAt = 0;
+}
+static void* readVptr(const WideObject& o) {
+    return *reinterpret_cast<void* const volatile*>(&o.vptr);
+}
+static void writeVptr(WideObject& o, void* value) {
+    *reinterpret_cast<void* volatile*>(&o.vptr) = value;
+}
+
+static void compareAndSwapCells() {
+    printf("compare-and-swap writes\n");
+    void* const ours   = reinterpret_cast<void*>(&casOurs);
+    void* const theirs = reinterpret_cast<void*>(&casTheirs);
+    void* const third  = reinterpret_cast<void*>(&casThird);
+    void** const table = wideTable(16);
+    if (!table) {
+        fail("compare-and-swap: table", "VirtualAlloc refused");
+        return;
+    }
+    void* const orig = table[2];
+    const size_t two[] = {2, 3};
+
+    // EXPECTED MATCHES: the ordinary install and uninstall.
+    {
+        WideObject o;
+        o.vptr = table;
+        VTableHook h;
+        void* fwd[2] = {};
+        check(commitSlots(h, o, two, 2, ours, fwd) &&
+                  readTableSlot(table, 2) == ours && readTableSlot(table, 3) == ours,
+              "install writes a slot that still holds the original it staged",
+              "the exchange refused a slot nobody had touched");
+        check(fwd[0] == orig, "...and the forward is that original",
+              "the forward is not what the slot held");
+        h.uninstall();
+        check(readTableSlot(table, 2) == orig && readTableSlot(table, 3) == orig,
+              "uninstall puts the originals back over our own pointers",
+              "uninstall did not restore");
+    }
+
+    // A FOREIGN POINTER PRESENT AT INSTALL: somebody hooked slot 3 between
+    // replace() reading it and commit() writing it.
+    {
+        WideObject o;
+        o.vptr = table;
+        VTableHook h;
+        void* fwd[2] = {};
+        h.attach(&o);
+        h.replace(2, ours, &fwd[0]);
+        h.replace(3, ours, &fwd[1]);
+        writeTableSlot(table, 3, theirs);
+        check(!h.commit(), "commit refuses when a staged slot has changed hands",
+              "commit succeeded over somebody else's pointer");
+        check(readTableSlot(table, 3) == theirs,
+              "...the foreign pointer is left in the slot",
+              "the install wrote over the foreign pointer");
+        check(readTableSlot(table, 2) == orig,
+              "...and the slot already written is rolled back",
+              "a half-installed hook was left behind");
+        h.uninstall();
+        writeTableSlot(table, 3, orig);
+    }
+
+    // THE SAME, ARRIVING IN THE EXCHANGE'S OWN WINDOW: after the page is open,
+    // before the write. A read-then-store would have overwritten it.
+    {
+        WideObject o;
+        o.vptr = table;
+        VTableHook h;
+        void* fwd[1] = {};
+        h.attach(&o);
+        h.replace(2, ours, &fwd[0]);
+        armCellSeam(1, theirs);
+        const bool committed = h.commit();
+        disarmCellSeam();
+        check(!committed && readTableSlot(table, 2) == theirs,
+              "a pointer landing inside the write's own window is not overwritten",
+              "the exchange wrote over a pointer installed between read and write");
+        h.uninstall();
+        writeTableSlot(table, 2, orig);
+    }
+
+    // ROLL-BACK OVER A LATER HOOKER: slot 2 installs, slot 3 is foreign so the
+    // install fails, and as slot 2 is rolled back somebody hooks it. The
+    // roll-back is exchanged against OUR pointer, so they keep it.
+    {
+        WideObject o;
+        o.vptr = table;
+        VTableHook h;
+        void* fwd[2] = {};
+        h.attach(&o);
+        h.replace(2, ours, &fwd[0]);
+        h.replace(3, ours, &fwd[1]);
+        writeTableSlot(table, 3, theirs);
+        armCellSeam(3, third);   // 1: install 2, 2: install 3 (foreign), 3: roll back 2
+        const bool committed = h.commit();
+        disarmCellSeam();
+        check(!committed && readTableSlot(table, 2) == third,
+              "a roll-back does not restore over somebody who hooked after us",
+              "the roll-back wrote the original over a later hooker");
+        h.uninstall();
+        writeTableSlot(table, 2, orig);
+        writeTableSlot(table, 3, orig);
+    }
+
+    // RESTORE WHEN SOMEBODY HOOKED AFTER US, inside the window: uninstall's
+    // own check reads our pointer, then they hook, then it writes.
+    {
+        WideObject o;
+        o.vptr = table;
+        VTableHook h;
+        void* fwd[1] = {};
+        const size_t one[] = {2};
+        commitSlots(h, o, one, 1, ours, fwd);
+        armCellSeam(1, theirs);
+        h.uninstall();
+        disarmCellSeam();
+        check(readTableSlot(table, 2) == theirs,
+              "uninstall does not restore over a hook landing between its check and its write",
+              "uninstall restored the original over a later hooker");
+        writeTableSlot(table, 2, orig);
+    }
+
+    // RE-CLAIM (issue #21's re-arm): taken back over the value the pass just
+    // read, never over a third pointer that arrived after it.
+    {
+        WideObject o;
+        o.vptr = table;
+        VTableHook h;
+        void* fwd[1] = {};
+        const size_t one[] = {2};
+        commitSlots(h, o, one, 1, ours, fwd);
+        writeTableSlot(table, 2, theirs);
+        armCellSeam(1, third);
+        const size_t taken = h.reclaim("cas-reclaim", one, 1);
+        disarmCellSeam();
+        check(taken == 0 && readTableSlot(table, 2) == third,
+              "re-claim does not write over a pointer that arrived after its read",
+              "re-claim overwrote a third party it never classified");
+        check(h.reclaim("cas-reclaim", one, 1) == 1 && readTableSlot(table, 2) == ours &&
+                  fwd[0] == third,
+              "...and the next pass reads that pointer, adopts it and re-arms as before",
+              "the re-arm stopped working after a lost race");
+        writeTableSlot(table, 2, orig);
+        h.reclaim("cas-reclaim", one, 1);   // the original back as the entry it adopts
+        check(readTableSlot(table, 2) == ours && fwd[0] == orig,
+              "re-arming over the known original still works",
+              "re-claim no longer takes the slot back from the original");
+        h.uninstall();
+        check(readTableSlot(table, 2) == orig, "...and uninstall leaves the original",
+              "uninstall after re-claim did not restore");
+    }
+
+    // THE OBJECT'S VPTR, in copy mode.
+    void** const other = wideTable(16);
+    if (other) {
+        // Another tool moved the object onto its own table between attach and
+        // commit: our copy was built from a table the object no longer uses.
+        {
+            WideObject o;
+            o.vptr = table;
+            VTableHook h;
+            void* fwd = nullptr;
+            h.attach(&o);
+            h.setMode(HookMode::CopyVptr);
+            h.replace(2, ours, &fwd);
+            writeVptr(o, other);
+            check(!h.commit() && readVptr(o) == other,
+                  "a copy-mode commit does not swap a vptr somebody else has moved",
+                  "the vptr was written over another tool's");
+        }
+        // The same, inside the write's window.
+        {
+            WideObject o;
+            o.vptr = table;
+            VTableHook h;
+            void* fwd = nullptr;
+            h.attach(&o);
+            h.setMode(HookMode::CopyVptr);
+            h.replace(2, ours, &fwd);
+            armCellSeam(1, other);
+            const bool committed = h.commit();
+            disarmCellSeam();
+            check(!committed && readVptr(o) == other,
+                  "...nor one moved inside the write's own window",
+                  "the vptr exchange wrote over a pointer installed between read and write");
+        }
+        // Uninstall: the object is ours, then somebody swaps it in the window.
+        {
+            WideObject o;
+            o.vptr = table;
+            VTableHook h;
+            void* fwd = nullptr;
+            h.attach(&o);
+            h.setMode(HookMode::CopyVptr);
+            h.replace(2, ours, &fwd);
+            const bool committed = h.commit();
+            check(committed && readVptr(o) != table,
+                  "a copy-mode commit swaps a vptr that still holds the table it read",
+                  "the copy-mode commit refused an untouched object");
+            armCellSeam(1, other);
+            h.uninstall();
+            disarmCellSeam();
+            check(readVptr(o) == other,
+                  "copy-mode uninstall does not restore over a later vptr swap",
+                  "uninstall put the vptr back over another tool's");
+            // The hook's copy is leaked on purpose (see uninstall); the object
+            // is pointed somewhere live before either goes out of scope.
+            writeVptr(o, table);
+        }
+        VirtualFree(other, 0, MEM_RELEASE);
+    }
+    VirtualFree(table, 0, MEM_RELEASE);
+}
+
 int main() {
     shaderCreateFixture::run();
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     setvbuf(stdout, nullptr, _IONBF, 0);
     printf("edvr vtable / wrapper collision\n");
     dominantOtherModuleCells();
+    compareAndSwapCells();
 
     RealThing real;
     WrapThing wrapper(&real);
