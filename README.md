@@ -129,6 +129,13 @@ Settings are in `edvr-flat.ini` next to the game; F8 changes them in the game.
 [edvr.ini](edvr.ini) in this repository documents every setting. The settings
 files keep their ED-UP (formerly EDVR) names, so existing ones keep working.
 
+Keys (each can be changed or turned off in the `[hotkey]` section):
+
+- **F8**: the settings menu.
+- **F7**: turn anti-aliasing off to compare, then press again to put it back.
+  It never changes your settings; the game starts with them as saved.
+- **F5**: step the frame-rate readout: off, compact, detailed, full.
+
 ## Running alongside other mods
 
 EDHM also installs itself as `d3d11.dll`. Rename EDHM's file and name it in
