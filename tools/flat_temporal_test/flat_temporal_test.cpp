@@ -6,7 +6,6 @@
 #include "../../src/d3d11/flat_mono_frame.h"
 #include "../../src/d3d11/flat_mono_resolve.h"
 #include "../../src/d3d11/flat_runtime_model.h"
-#include "../../src/d3d11/flat_dlss_negotiate.h"
 #include "../../src/d3d11/flat_trace.h"
 #include "../../src/d3d11/engine_velocity_families.h"
 #include "flat_shader_capture_tests.h"
@@ -2374,49 +2373,6 @@ void testHullPairKeying() {
                 files, frames, hullFrames, movedFrames);
 }
 
-void testFlatDlssNegotiate() {
-    using namespace edvr;
-    // Gate 2 step 4: the served-floor negotiation, with ranges scaled like
-    // the flight's 0.5x-floor ladder at a 3840x2160 display.
-    DlssModeRange modes[kDlssModeCount]{};
-    auto range = [](DlssModeRange& m, unsigned ow, unsigned oh, unsigned minW, unsigned minH,
-                    unsigned maxW, unsigned maxH) {
-        m.ok = true; m.optW = ow; m.optH = oh; m.minW = minW; m.minH = minH;
-        m.maxW = maxW; m.maxH = maxH;
-    };
-    range(modes[0], 2560, 1440, 1920, 1080, 3840, 2160);   // quality
-    range(modes[1], 2225, 1252, 1920, 1080, 3840, 2160);   // balanced
-    range(modes[2], 1920, 1080, 1920, 1080, 3840, 2160);   // performance
-    range(modes[3], 1280,  720, 1280,  720, 1280,  720);   // ultra performance (a point)
-    {
-        const auto neg = flatDlssNegotiate(modes, 2496, 1404, 3840, 2160);
-        check(neg.known && neg.served && !neg.cut && neg.evalWidth == 3840 && neg.evalHeight == 2160 &&
-              neg.mode == DlssMode::Quality && neg.fromRange,
-              "a served input evaluates at the door output with the named mode");
-    }
-    {
-        const auto neg = flatDlssNegotiate(modes, 1280, 720, 3840, 2160);
-        check(neg.served && !neg.cut && neg.mode == DlssMode::UltraPerformance,
-              "ultra performance's single point serves exactly itself");
-    }
-    {
-        const auto neg = flatDlssNegotiate(modes, 1500, 1000, 3840, 2160);
-        check(neg.known && neg.served && neg.cut && neg.evalWidth == 3000 && neg.evalHeight == 2000 &&
-              neg.mode == DlssMode::Quality,
-              "an under-floor input cuts the evaluation to the floor it reaches");
-    }
-    {
-        const auto neg = flatDlssNegotiate(modes, 1000, 1000, 3840, 2160);
-        check(neg.known && neg.served && neg.cut && neg.evalWidth == 2000 && neg.evalHeight == 2000,
-              "the cut scales with how far under the floor the input is");
-    }
-    {
-        DlssModeRange none[kDlssModeCount]{};
-        const auto neg = flatDlssNegotiate(none, 2496, 1404, 4074, 4076);
-        check(!neg.known && !neg.served, "an unanswered vendor query is not a negotiation");
-    }
-}
-
 // The menu-scoped stale-slot policy has three links: the classification (flatFrameThroughMenuCopy,
 // held on the real corpus above), the resolver's cbuffer (held by the WARP fixture in
 // flat_mono_resolve_test), and the two lines that join them, which no rig can reach because the
@@ -2958,13 +2914,15 @@ void testFlatCpuWiring() {
     const auto endBody=endAt!=std::string::npos&&dtorAt!=std::string::npos?runtimeCpp.substr(endAt,dtorAt-endAt):std::string{};
     bool drawOutsideCallbacks=true;size_t hookAt=0;
     // The span from beginActualDraw to endActualDraw is a proximity bound, not a ceiling on useful work: since 2026-11-03 the four instanced/indexed/plain
-    // hooks hold a FlatParticleScope block around the game's issue (fix.particle_billboard), the longest span being DrawIndexedInstanced's at 447 characters. Since 2026-11-05 the ConcoursePaneScope line (concourse_pane.h) adds about 80 more to each of the indexed hooks. Since 2026-11-06 each of the four indexed hooks also issues the mirror draw (beginMirror), up to 260 more, so the bound is 850.
+    // hooks hold a FlatParticleScope block around the game's issue (fix.particle_billboard), the longest span being DrawIndexedInstanced's at 447 characters. Since 2026-11-05 the ConcoursePaneScope line (concourse_pane.h) adds about 80 more to each of the indexed hooks. Since 2026-11-06 each of the four indexed hooks also issues the mirror draw (beginMirror), up to 260 more, so the bound was 850.
+    // Since 2026-11-15 the hooks also hold the station sun gate, the star light's haze scope and the HDR nits scope (FlatStationSunGate, StarLightHazeScope,
+    // HdrNitsScope), the longest span being 1358 characters, so the bound is 1500.
     for(unsigned i=0;i<7;++i) {
         const auto before=vscreenCpp.find("if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw",hookAt);
         const auto draw=before==std::string::npos?std::string::npos:vscreenCpp.find("g_state->realDraw",before);
         const auto after=before==std::string::npos?std::string::npos:vscreenCpp.find("if (flatDraw.needsActualDraw()) flatDraw.endActualDraw",before);
         drawOutsideCallbacks=drawOutsideCallbacks&&before!=std::string::npos&&draw!=std::string::npos&&
-            after!=std::string::npos&&before<draw&&draw<after&&after-before<850;
+            after!=std::string::npos&&before<draw&&draw<after&&after-before<1500;
         hookAt=after==std::string::npos?vscreenCpp.size():after+1;
     }
     check(beginBody.find("if(!ctx)return;")<beginBody.find("flatcpu::Scope callbacks(flatcpu::kIssueCallbacks);")&&
@@ -4097,7 +4055,6 @@ int main(int argc, char** argv) {
     testMonoFrameSelection();
     testFlatScreenBand();
     testFlatResolveRoute();
-    testFlatDlssNegotiate();
     testProjectionSlices();
     testDetailBudget();
     failures += flatShaderCaptureTests();

@@ -90,9 +90,11 @@ MUTATIONS = [("key-ignores-" + name, anchor, "", "O1") for name, anchor in KEY_I
     ("memo-lookup-skips-the-key", "return key_.same(now) ? FlatOffscreenNo::None : FlatOffscreenNo::KeyDiffers;", "return FlatOffscreenNo::None;", "O4"),
 ]
 COUNT_MUTATIONS = [
-    ("line-drops-the-rest-count", 'if (n > 3) put(", and %u more", n - 3);', "", "O6"),
+    # The fast path's line only: the slow path's top() (flatOffscreenSlowFormat, 2026-11-12) has the same call one level deeper.
+    ("line-drops-the-rest-count", '\n    if (n > 3) put(", and %u more", n - 3);', "\n", "O6"),
     ("line-shows-reasons-unsorted", "c.declined[order[j]] > c.declined[order[j - 1]]", "false", "O6"),
-    ("line-divides-by-frames-wrongly", "const double f = frames > 0 ? frames : 1.0;", "const double f = 1.0;", "O6"),
+    ("line-divides-by-frames-wrongly", "double frames) noexcept {\n    if (!cap) return;\n    const double f = frames > 0 ? frames : 1.0;",
+     "double frames) noexcept {\n    if (!cap) return;\n    const double f = 1.0;", "O6"),
 ]
 
 

@@ -662,6 +662,8 @@ inline std::vector<Allow> allowList() {
         {"flat_runtime.cpp", "%s", "flatStandDownFormatResumed(", "an event line (resumed), the same formatter family and bound", false},
         {"flat_runtime.cpp", "%s", "flatStandDownFormatStill(", "a reminder while stood down, rate-limited by reportDue(); the same formatter family and bound", false},
         {"flat_runtime.cpp", "%s", "flatCopyFormatWindow(", "flat_copy_structure.h's 5 s window line, built into 1200 bytes; outside the four families the 2026-10-08 log showed truncated (it was whole there) and not measured at 20 digits here", false},
+        {"engine_velocity.cpp", "", "const bool fixed = dxmtFixesPartialWriteMaskDiscard(ctx);", "a choice between two literal sentences (DXMT reports the write-mask fix or not), each under 300 characters; written once a session", false},
+        {"flat_runtime.cpp", "", "if (_stricmp(mode.c_str(), \"mfx\") == 0)", "a choice between two short literal formats (MetalFX running, or FSR in its place with the recorded reason, a short literal); written when the mode is applied", false},
     };
 }
 struct Verdict {

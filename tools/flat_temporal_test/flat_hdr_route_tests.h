@@ -1543,11 +1543,10 @@ inline int flatHdrRouteTests() {
         }
     }
 
-    // ---- the wiring no rig can run: DLSS ---------------------------------------------------------------------
-    // dlaa.cpp needs an NVIDIA GPU to make a feature, so nothing here executes it. fsr3_engine_test pins the FSR half on
-    // WARP against the real port (the flags in desc.flags, a flip remaking the context). What is left for DLSS is that the
-    // feature is created with the flag set hdr_backend_flags.h names, that the route's bit is in the key that decides a
-    // remake, and that the evaluate call hands the route's bit down: read as source, because nothing else can see it.
+    // ---- the wiring no rig can run: the resolver's backend calls ----------------------------------------------
+    // fsr3_engine_test pins the FSR half on WARP against the real port (the flags in desc.flags, a flip remaking the context).
+    // MetalFX needs DXMT, so nothing here executes it. What is left is that the resolver hands the frame's bit to both
+    // backends: read as source, because nothing else can see it. (DLSS and DLAA, dlaa.cpp, went with strip stage 2b.)
     {
         const auto slurpSource = [&](const char* path) {
             std::vector<unsigned char> bytes;
@@ -1560,21 +1559,11 @@ inline int flatHdrRouteTests() {
             while ((at = text.find(s, at)) != std::string::npos) { ++n; at += s.size(); }
             return n;
         };
-        const std::string dlaa = slurpSource("src/d3d11/dlaa.cpp");
-        expect(!dlaa.empty() && count(dlaa, "cp.InFeatureCreateFlags = static_cast<int>(flatDlssCreateFlags(hdr, runtimeFlatProfile()));") == 1 &&
-                   count(dlaa, "flatDlssCreateFlags(hdr") == 1 &&
-                   count(dlaa, "if (flatDlssFixedExposure(hdr, runtimeFlatProfile())) {") == 1 &&
-                   count(dlaa, "ep.pInExposureTexture = g_exposureOne;") == 1,
-               "dlaa.cpp creates the DLSS feature with exactly the flags hdr_backend_flags.h names for the route, in one place");
-        expect(count(dlaa, "f.presetGen != g_presetGen || f.hdr != hdr") == 1 && count(dlaa, "f.hdr = hdr;") == 1,
-               "dlaa.cpp keys the feature on the route's bit and stores it when the feature is made, so a flip remakes it");
-        expect(count(dlaa, "ensureFeature(ctx, eye, w, h, outW, outH, reason, nullptr, hdr)") == 1,
-               "dlaaEvaluate hands the route's bit to the feature it asks for");
         // The resolver hands the frame's bit down to each engine, with no literal in its place.
         const std::string resolve = slurpSource("src/d3d11/flat_mono_resolve.cpp");
-        expect(count(resolve, "f.jitterX,f.jitterY,reset,f.deltaMs,reason,hdrColor);") == 1 &&
+        expect(count(resolve, "f.jitterX,f.jitterY,reset,reason,hdrColor);") == 1 &&
                    count(resolve, "2*std::atan(1/sy),reason,true,hdrColor);") == 1,
-               "the resolver's backend calls pass the HDR-or-FP16 color bit to DLSS/DLAA and FSR (without changing the route)");
+               "the resolver's backend calls pass the HDR-or-FP16 color bit to MetalFX and FSR (without changing the route)");
     }
 
     // ---- the wiring no rig can run: the runtime's default, merge and publication, and the panel's use of them ---------
