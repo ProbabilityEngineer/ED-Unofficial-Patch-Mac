@@ -210,6 +210,9 @@ bool uiLayerMultiplyBegin(ID3D11DeviceContext* ctx);
 // a depth or stencil write, kept in the game's own buffer: the game's depth
 // target and state with NO colour target bound, the game's viewports and
 // scissors (the draw re-issued as it was; closed by uiLayerWriteBackEnd).
+// The decided draw is issued darken-only (uiLayerDimBlend): the caller has issued it into the game's frame already and issues it once
+// more inside uiLayerBegin/End. Set after uiLayerDecide; the next decision clears it. Flat's panel backing (flat_ui_layer.cpp).
+void uiLayerSetDimOnly(bool on);
 bool uiLayerWriteBackBegin(ID3D11DeviceContext* ctx);
 void uiLayerWriteBackEnd(ID3D11DeviceContext* ctx);
 

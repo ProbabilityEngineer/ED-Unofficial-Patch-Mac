@@ -352,6 +352,26 @@ inline UiBlendShape uiLayerBlendShape(const UiBlendRt& b) {
 // the light lands (the layer, tonemapped once more), never how much.
 //
 // False for a refused shape: the draw is not redirected.
+// THE DARKEN-ONLY ISSUE (flat, 2026-11-21: the panels' frosted backing, flat_ui_layer_math.h flatUiPanelBackingPair). The draw stays in
+// the game's frame, where what the game draws after it (the holograms, the radar's picture) lies over it as in stock, and is issued once
+// more into the HUD layer with this blend: the layer's light times (1 - the draw's alpha), its transmittance untouched. What the layer
+// already holds (a nav tag drawn before the backing) is dimmed as the game's own frame dims it; the scene behind is dimmed once, in the
+// game's frame. Only an over shape: anything else is refused and the draw is left as the game drew it.
+inline bool uiLayerDimBlend(const UiBlendRt& in, UiBlendRt* out) {
+    const UiBlendShape s = uiLayerBlendShape(in);
+    if (!out || (s != UiBlendShape::kOver && s != UiBlendShape::kPremulOver)) return false;
+    UiBlendRt o;
+    o.enable = true;
+    o.op = o.opA = uiblend::kOpAdd;
+    o.src = uiblend::kZero;
+    o.dst = uiblend::kInvSrcAlpha;
+    o.srcA = uiblend::kZero;
+    o.dstA = uiblend::kOne;
+    o.mask = static_cast<uint8_t>(in.mask & uiblend::kWriteRgb);   // transmittance untouched
+    *out = o;
+    return true;
+}
+
 inline bool uiLayerConvertBlend(const UiBlendRt& in, UiBlendRt* out) {
     const UiBlendShape s = uiLayerBlendShape(in);
     if (s == UiBlendShape::kRefused || !out) return false;

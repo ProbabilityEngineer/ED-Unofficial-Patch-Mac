@@ -42,9 +42,11 @@ inline bool flatUiPanelGlassPair(uint64_t vs, uint64_t ps) { return vs == kFlatU
 // frame), premultiplied over (ONE, INV_SRC_ALPHA), depth-tested and writing stencil bit 4 like the panels, issued after the target
 // sprite. With the AA off it takes the nav tag under the comms panel from 0.51 to 0.024 (the game's own picture); left in H with the
 // AA on it darkened only the scene, and the tag the layer took stayed bright over it (docs/ui-layer-2026-09-23.md "Limits": the frosted
-// label quads drawn after a taken HUD draw land under it). Taken with the panels (kHolo) it lands in the layer in the game's order.
-// Its pixel shader samples a blurred copy of the scene at SV_Position, so the take goes through ui_holo_remap.h's panel backing remap,
-// and a draw whose remap is refused stays in H as before.
+// label quads drawn after a taken HUD draw land under it). Named with the panels (kHolo), but NOT taken (2026-11-21, second cut): the
+// plates also lie under the holograms and the radar's picture, which the layer does not take and which the game draws after them, so a
+// taken plate covered them (the radar's contacts hidden, the side holograms darkened). The plate stays in H, in the game's order, and is
+// issued once more into the HUD layer darken-only (ui_layer_math.h uiLayerDimBlend): what the layer holds from before it is dimmed as the
+// game dims it. That issue goes through ui_holo_remap.h's panel backing remap like a take; refused, the layer is left undimmed.
 constexpr uint64_t kFlatUiPanelBackingVs = 0x2CECEC3065EF0D4Aull;
 constexpr uint64_t kFlatUiPanelBackingPs = 0xA4D03619D631B186ull;
 inline bool flatUiPanelBackingPair(uint64_t vs, uint64_t ps) { return vs == kFlatUiPanelBackingVs && ps == kFlatUiPanelBackingPs; }

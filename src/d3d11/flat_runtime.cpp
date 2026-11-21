@@ -7380,7 +7380,8 @@ FlatRuntimeDrawScope::FlatRuntimeDrawScope(ID3D11DeviceContext* context, uint32_
                                                            s.plannedResolve.outputWidth, s.plannedResolve.outputHeight).name
                                         : "no-plan";
             };
-            if (ask == FlatUiLayerAsk::kDecided) { uiTake = true; uiVs = k.vs; uiPs = k.ps; uiBars = flatUiLayerDecidedBars(); uiBarsVertices = count; if (trailDraw) flatUiTrailNoteBranch(s.prefix.frame, FlatUiTrailBranch::kHudAsk); }
+            if (ask == FlatUiLayerAsk::kDecided && flatUiLayerDecidedDim()) { uiDim = true; uiVs = k.vs; uiPs = k.ps; if (trailDraw) flatUiTrailNoteBranch(s.prefix.frame, FlatUiTrailBranch::kHudAsk); }
+            else if (ask == FlatUiLayerAsk::kDecided) { uiTake = true; uiVs = k.vs; uiPs = k.ps; uiBars = flatUiLayerDecidedBars(); uiBarsVertices = count; if (trailDraw) flatUiTrailNoteBranch(s.prefix.frame, FlatUiTrailBranch::kHudAsk); }
             else if (ask == FlatUiLayerAsk::kRefused) { if (trailDraw) flatUiTrailNoteBranch(s.prefix.frame, FlatUiTrailBranch::kHudAsk); }   // a HUD draw left in H: never also a tone candidate
             // The game's tone pass by its known pair, whatever its vertex count (the 11:32 flight's HDR route read a copy of
             // H, which the structural rule below never matched): the next frame's proof, and this frame's admission.
@@ -7437,7 +7438,7 @@ FlatRuntimeDrawScope::FlatRuntimeDrawScope(ID3D11DeviceContext* context, uint32_
         // The draw did nothing but what the offscreen fast path does when none of the blocks above planned, started or changed anything of its own.
         const bool plain = !tone && !producer && !projection && !projectionPlan && !deferredPlan && !drawCaptureStarted && !drawPacket &&
             !weaponFootprintStarted && !overlayPlanned && !d.overlayProtected && !d.alternateHdr && !d.firstPersonCohort && !foregroundPlanned &&
-            !untrustedPlanned && !domainPlanned && !uiTake && !uiTone && !uiComposite && !replaced && !hdrTrigger && cameraProbeAttempt == 0 && !starTouched;
+            !untrustedPlanned && !domainPlanned && !uiTake && !uiDim && !uiTone && !uiComposite && !replaced && !hdrTrigger && cameraProbeAttempt == 0 && !starTouched;
         flatOffscreenRecord(s, d, pairFact, offscreenArgs, auditing, plain, offscreenTargetsBefore, offscreenUncertainBefore);
         return;
     }

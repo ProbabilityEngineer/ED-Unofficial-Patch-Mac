@@ -163,6 +163,9 @@ struct FlatRuntimeDrawScope {
     // Begin bound the layer), the game's tonemap admitted for its re-issue (uiTone), the output copy that composites
     // (uiComposite).
     bool uiTake=false,uiTaken=false,uiEnded=false,uiTone=false,uiComposite=false;
+    // The panels' frosted backing (flat_ui_layer.h flatUiLayerDecidedDim): decided, but issued into the game's frame as it is, and once more
+    // into the HUD layer darken-only after that (uiReissue).
+    bool uiDim=false;
     // The game's output copy (pairFact.copyPair into the frame's output): fix.hdr's live nits read the copy's bound pixel shader for
     // this draw (hdr_output.h HdrNitsScope), since the resolve above may leave the binding shadow not naming it.
     bool outputCopy=false;
@@ -216,6 +219,8 @@ struct FlatRuntimeDrawScope {
     template <class Issue> void uiReissue(Issue issue) {
         if (!ctx) return;
         if (uiTaken && flatUiLayerWriteBackBegin(ctx)) { issue(); flatUiLayerWriteBackEnd(ctx); }
+        // The panel backing, darken-only into the HUD layer after the game's own issue into H (uiLayerDimBlend).
+        if (uiDim && flatUiLayerDimBegin(ctx)) { issue(); flatUiLayerEnd(ctx); }
         // visual.star_glow: a star pass the game just issued into H is issued once more into the star layer, with the game's own state (the hook's real call).
         if (starReplay && flatStarGlowReplayBegin(ctx, starRole, starW, starH)) { issue(); flatStarGlowReplayEnd(ctx); }
         // The weapons' light is re-issued through the same draw before the HUD's (the weapons fire: the layer binds each step's source and blend and says when

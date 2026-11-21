@@ -610,6 +610,7 @@ struct Draw {
     bool weapons = false;  // the weapons layer: with hdr, the draw goes to the eye's weapons layer instead of the HUD's
     uint64_t vsHash = 0;   // the decided draw's vertex shader (the weapons-fire pair table's key)
     bool ripple = false;   // the shield ripple: with hdr, the draw goes into the eye's displacement layer D, blend off, t0 swapped for the UV ramp
+    bool dimOnly = false;       // the darken-only issue (uiLayerDimBlend): the draw is also the game's, in its frame; set by uiLayerSetDimOnly after the decision
     bool destAlphaOne = false;  // the scope mark: the target has no alpha channel, so the game's destination-alpha blend factors are read as 1 and 0 (uiLayerBlendDestAlphaOne)
     uint32_t markPath = 0;      // the scope mark: what the layer did with the draw's depth and stencil tests (UiMarkDepth, scope_zoom_s1.h kMarkPath*)
     ID3D11ShaderResourceView* rippleSrv0 = nullptr;  // the game's t0, held while the ramp is bound (put back at restore)
@@ -2709,7 +2710,8 @@ bool beginInner(ID3D11DeviceContext* ctx, int which) {
     ID3D11BlendState* layerBlend = nullptr;
     const UiBlendShape shape = shapeOf(bs, &game, g_draw.destAlphaOne);
     const bool converted = mapIssue || (shape == g_draw.shape &&
-                           (which ? uiLayerMultiplyBlend(game, &conv) : uiLayerConvertBlend(game, &conv)));
+                           (which ? uiLayerMultiplyBlend(game, &conv)
+                                  : g_draw.dimOnly ? uiLayerDimBlend(game, &conv) : uiLayerConvertBlend(game, &conv)));
     if (mapIssue) layerBlend = mapBlend(ctx, which);
     else if (converted && rp) layerBlend = g_rip.blend.Get();   // D takes the game's own value: an overwrite, every channel, whatever the game's blend was
     if (!converted || !(layerBlend || (!mapIssue && (layerBlend = cachedBlend(ctx, conv))))) {
@@ -4908,6 +4910,7 @@ bool uiLayerDecide(ID3D11DeviceContext* ctx, int familyInt, bool verdictForwards
     g_draw.weapons = false;
     g_draw.ripple = false;
     g_draw.destAlphaOne = false;
+    g_draw.dimOnly = false;
     g_draw.markPath = 0;
     g_draw.vsHash = 0;
     g_draw.reissue = false;
@@ -5319,6 +5322,8 @@ bool uiLayerMultiplyBegin(ID3D11DeviceContext* ctx) {
     if (!g_draw.decided || g_draw.shape != UiBlendShape::kMultiply) return false;
     return beginGuarded(ctx, 1);
 }
+
+void uiLayerSetDimOnly(bool on) { if (g_draw.decided) g_draw.dimOnly = on; }
 
 bool uiLayerWriteBackBegin(ID3D11DeviceContext* ctx) {
     if (!g_draw.holoRestoreOk) return false;
