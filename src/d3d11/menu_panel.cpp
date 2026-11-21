@@ -345,8 +345,11 @@ void layout(const MenuContent& c, std::vector<Op>& ops, std::vector<LineRect>& l
     // A locked FPS readout sits above the tabs so it stays visible while
     // the menu is scrolled or a tooltip is up.
     const int overlayH = (c.toast || !c.overlayLine[0]) ? 0 : cap * 16 / 10;
-    const int H = padV + overlayH + tabH + tilesH + rowsH + (c.toast && !c.notice ? cap * 2 / 10 : 0) +
-                  graphH + (hintReserved ? hintH : 0) + footH + padV;
+    const int natural = padV + overlayH + tabH + tilesH + rowsH + (c.toast && !c.notice ? cap * 2 / 10 : 0) +
+                        graphH + (hintReserved ? hintH : 0) + footH + padV;
+    // An information page made as tall as the settings pages: the difference sits above the hint and the footer (minHeightPx).
+    const int fillH = !c.toast && c.minHeightPx > natural ? c.minHeightPx - natural : 0;
+    const int H = natural + fillH;
     *outH = H;
 
     // Background.
@@ -657,6 +660,7 @@ void layout(const MenuContent& c, std::vector<Op>& ops, std::vector<LineRect>& l
         }
         y += graphOneH;
     }
+    y += fillH;
     if (!c.toast) {
         if (c.hint[0]) {
             Op h;
@@ -1968,6 +1972,14 @@ bool menuPanelStats(int* w, int* h, double* lastMs, float* gpuMs) {
     if (lastMs) *lastMs = g_w.lastMs;
     if (gpuMs) *gpuMs = g_gpuMsAvg.load();
     return true;
+}
+
+int menuPanelLayoutHeight(const MenuContent& c) {
+    std::vector<Op> ops;
+    std::vector<LineRect> lines;
+    int height = 0;
+    layout(c, ops, lines, &height, 0, nullptr);
+    return height;
 }
 
 int menuPanelEntryRows(const MenuContent& c, int requested) {

@@ -168,6 +168,9 @@ struct MenuContent {
     // Empty badge lines added below the rows, so every settings page stands as tall as the one whose rows keep the most badge
     // lines (menu.cpp buildPages, badgeLinesMax): the card does not change height from tab to tab. 0 adds nothing.
     int      extraBadgeLines = 0;
+    // The card's least height in pixels: a page shorter than this gets empty space above its hint and footer, so the flat F8 panel's
+    // information pages (status, monitor) stand as tall as its settings pages (menu.cpp fillToSettingsHeight). 0 adds nothing.
+    int      minHeightPx = 0;
     char     footer[160];   // keys, pending-restart count, warnings
     // The flat profile's EDVR version, drawn dim at the right end of the
     // footer's second line on every page. Empty elsewhere (VR draws none).
@@ -331,6 +334,8 @@ int menuPanelTabWidth(const char* utf8, int emPx);
 // status. At large VR text sizes fewer entries fit the raster; the model
 // uses this count with its existing scrolling window.
 int menuPanelEntryRows(const MenuContent& c, int requested);
+// The height in pixels the content would be rastered at (the layout's own sum).
+int menuPanelLayoutHeight(const MenuContent& c);
 
 void menuPanelShutdown();
 
