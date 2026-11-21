@@ -72,6 +72,10 @@ void flatUiLayerNoteIssue(uint64_t vs, uint64_t ps, bool taken);
 // the strip shader inside the layer's bracket and runs only after a true flatUiLayerBegin; its End puts the game's geometry stage, constant slot and
 // rasterizer state back BEFORE flatUiLayerEnd. Each runs inside the flat runtime's internal scope, as flatUiLayerBegin does.
 bool flatUiLayerDecidedBars();
+// The decided draw is the panels' frosted backing, issued darken-only after the game's own issue (flat_runtime.h uiDim, uiLayerDimBlend).
+bool flatUiLayerDecidedDim();
+// The darken-only issue's bracket: the layer bound with the darken-only blend; End is flatUiLayerEnd. Counted as the family's take.
+bool flatUiLayerDimBegin(ID3D11DeviceContext* ctx);
 void flatUiLayerBarsPrepare(ID3D11DeviceContext* ctx);
 bool flatUiLayerBarsBegin(ID3D11DeviceContext* ctx, uint32_t vertices);   // false: the draw goes into the layer as the game's plain lines
 void flatUiLayerBarsEnd(ID3D11DeviceContext* ctx);

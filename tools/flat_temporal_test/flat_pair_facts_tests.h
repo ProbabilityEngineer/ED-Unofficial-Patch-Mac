@@ -87,7 +87,20 @@ inline int flatPairFactsTests() {
         const FlatPairFacts b = flatPairFactsFresh(kFlatUiPanelBackingVs, kFlatUiPanelBackingPs, true);
         expect(b.uiMayAsk && !b.legacyGlassPair && b.toneSlot == ~0u && !b.copyPair, "the panel backing pair is uiMayAsk, and nothing else the memo names");
         expect(!flatPairFactsFresh(kFlatUiPanelBackingVs, 0, true).uiMayAsk, "...by the pair, not by its vertex shader");
-        expect(flatUiFamilyOf(kFlatUiPanelBackingVs, kFlatUiPanelBackingPs) == UiLayerFamily::kHolo, "...taken with the holo panels");
+        expect(flatUiFamilyOf(kFlatUiPanelBackingVs, kFlatUiPanelBackingPs) == UiLayerFamily::kHolo, "...named with the holo panels");
+    }
+    // ---- the backing's darken-only issue (2026-11-21): the layer's light times (1 - alpha), its transmittance untouched; over shapes only ----
+    {
+        UiBlendRt premul;
+        premul.enable = true; premul.src = uiblend::kOne; premul.dst = uiblend::kInvSrcAlpha; premul.mask = uiblend::kWriteRgb;
+        UiBlendRt out;
+        expect(uiLayerDimBlend(premul, &out) && out.enable && out.src == uiblend::kZero && out.dst == uiblend::kInvSrcAlpha &&
+                   out.op == uiblend::kOpAdd && out.mask == uiblend::kWriteRgb,
+               "darken-only: colour ZERO, INV_SRC_ALPHA, written; the transmittance channel not written");
+        UiBlendRt over = premul; over.src = uiblend::kSrcAlpha;
+        expect(uiLayerDimBlend(over, &out) && out.src == uiblend::kZero && out.dst == uiblend::kInvSrcAlpha, "...the classic over too");
+        UiBlendRt add = premul; add.dst = uiblend::kOne;
+        expect(!uiLayerDimBlend(add, &out), "...an additive blend is refused (it covers nothing to darken with)");
     }
 
     // ---- the Full System Scanner's tonemap is the UI layer's table alone ------------------------------------------------------

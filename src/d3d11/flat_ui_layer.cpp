@@ -43,6 +43,7 @@ struct Window {
     uint64_t declined[kDecisions] = {};   // the shared decision's refusals, by UiLayerDecision
     uint64_t jitterPhase = 0, jitterZero = 0;
     uint64_t writeBacks = 0;
+    uint64_t dimIssues = 0;   // the panel backing's darken-only issues (flatUiLayerDimBegin)
     uint64_t toneCandidates = 0, toneProven = 0, toneAdmitted = 0, toneReissued = 0, toneDeclined = 0, toneByShape = 0;
     uint64_t copies = 0, doorsArmed = 0, doorUntreated = 0, doorSize = 0;
     uint64_t composites = 0, compositeNone = 0, bindFailed = 0;
@@ -85,6 +86,7 @@ Window g_w;
 bool g_glowNoted = false;  // the once-only first feed line
 FlatUiLayerAsk g_lastAsk = FlatUiLayerAsk::kNotAsked;
 UiLayerFamily g_decidedFamily = UiLayerFamily::kNone;  // the family of the last kDecided draw (flatUiLayerNoteIssue's)
+bool g_decidedDim = false;   // the last kDecided draw is the panel backing, issued darken-only
 bool g_mapCanvasNoted = false, g_mapSpriteNoted = false;  // the once-only first take of each map family
 bool g_glassNoted = false;                                // the once-only first take of the legacy canopy
 bool g_sceneNoted[kFlatUiSceneSlots] = {};              // the once-only first take of each scene family (flatUiSceneSlotOf)
@@ -259,6 +261,7 @@ const char* flatUiLayerState() {
 
 FlatUiLayerAsk flatUiLayerDecide(ID3D11DeviceContext* ctx, const FlatUiLayerDraw& d) {
     g_lastAsk = FlatUiLayerAsk::kNotAsked;
+    g_decidedDim = false;
     if (!ctx || !flatUiLayerOn()) return g_lastAsk;
     // The map families first (only with a map open, on the HDR target); otherwise the shared family rule, as it always was. The legacy canopy joins it only under the legacy look with
     // EDVR's shader actually bound (a refused replacement leaves the game's own canopy, which the additive layer would get wrong): `odyssey` names nothing here.
@@ -337,6 +340,8 @@ FlatUiLayerAsk flatUiLayerDecide(ID3D11DeviceContext* ctx, const FlatUiLayerDraw
     }
     ++g_w.decided[fi];
     g_decidedFamily = family;  // flatUiLayerNoteIssue counts this draw under it
+    g_decidedDim = flatUiPanelBackingPair(d.vs, d.ps);
+    uiLayerSetDimOnly(g_decidedDim);
     if (g_takenFrame != d.frame) g_takenFrame = d.frame;
     flatUiTrailNoteTake(d.frame);
     g_lastAsk = FlatUiLayerAsk::kDecided;
@@ -354,6 +359,16 @@ void flatUiLayerEnd(ID3D11DeviceContext* ctx) {
 }
 
 bool flatUiLayerDecidedBars() { return g_decidedFamily == UiLayerFamily::kSupercruiseBars; }
+
+bool flatUiLayerDecidedDim() { return g_decidedDim; }
+
+bool flatUiLayerDimBegin(ID3D11DeviceContext* ctx) {
+    FlatComputeInternalScope internal;
+    const bool ok = uiLayerBegin(ctx);
+    flatUiLayerNoteIssue(0, 0, ok);
+    if (ok) ++g_w.dimIssues;
+    return ok;
+}
 
 void flatUiLayerBarsPrepare(ID3D11DeviceContext* ctx) {
     FlatComputeInternalScope internal;
@@ -870,7 +885,7 @@ void flatUiLayerReport(uint64_t windowSeconds) {
         "flat ui layer: window=%llus state=%s copies=%llu door-armed=%llu door-refused-untreated=%llu "
         "door-refused-size=%llu (last copy read %ux%u, display %ux%u) tone-candidates=%llu tone-proven=%llu "
         "tone-admitted=%llu tone-reissued=%llu "
-        "tone-declined=%llu composites=%llu composite-none=%llu bind-failed=%llu write-backs=%llu jitter-phase=%llu "
+        "tone-declined=%llu composites=%llu composite-none=%llu bind-failed=%llu write-backs=%llu darken-only=%llu jitter-phase=%llu "
         "jitter-zero=%llu tone-by-shape=%llu",
         static_cast<unsigned long long>(windowSeconds), flatUiLayerState(), static_cast<unsigned long long>(w.copies),
         static_cast<unsigned long long>(w.doorsArmed), static_cast<unsigned long long>(w.doorUntreated),
@@ -879,7 +894,7 @@ void flatUiLayerReport(uint64_t windowSeconds) {
         static_cast<unsigned long long>(w.toneAdmitted), static_cast<unsigned long long>(w.toneReissued),
         static_cast<unsigned long long>(w.toneDeclined), static_cast<unsigned long long>(w.composites),
         static_cast<unsigned long long>(w.compositeNone), static_cast<unsigned long long>(w.bindFailed),
-        static_cast<unsigned long long>(w.writeBacks), static_cast<unsigned long long>(w.jitterPhase),
+        static_cast<unsigned long long>(w.writeBacks), static_cast<unsigned long long>(w.dimIssues), static_cast<unsigned long long>(w.jitterPhase),
         static_cast<unsigned long long>(w.jitterZero), static_cast<unsigned long long>(w.toneByShape));
     // The HUD layer's edge smoothing (fix.hud_antialiasing), whenever the window composited the layer: the composites that read the SMAA
     // output, those that read the raw layer because the key was off, those that fell back to it because the passes could not be had, the key as the last

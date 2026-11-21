@@ -1466,9 +1466,10 @@ uint64_t nativeGpuAge(const GpuFrameSnapshot& gpu) {
 }
 
 // The once-a-second samplers' four tiles, in the order the VR page lays them out: CPU load, GPU load and temperature, VRAM, RAM. Shared by the VR Monitor
-// (perfMonitorTiles) and the flat one (perfMonitorFlatTiles).
+// (perfMonitorTiles) and the flat one (perfMonitorFlatTiles). `flat`: with no NVIDIA driver (every Mac) the flat GPU tile shows EDVR's own GPU timing,
+// the census's frame span (2026-11-21), instead of "n/a"; the VR page has its own GPU TIME tile for that.
 template <class Tile>
-void appendSlowTiles(Tile&& tile) {
+void appendSlowTiles(Tile&& tile, bool flat) {
     State& s = g_s;
     char v[32], sub[40];
     if (s.cpuSystemPct >= 0.0f) {
@@ -1484,8 +1485,11 @@ void appendSlowTiles(Tile&& tile) {
         if (s.gpuTempC > -1000) snprintf(sub, sizeof(sub), "load, %d C", s.gpuTempC);
         else snprintf(sub, sizeof(sub), "load");
         tile("GPU", v, sub);
+    } else if (double spanMs = 0.0; flat && gpuCensusFrameSpan(&spanMs, nullptr)) {
+        snprintf(v, sizeof(v), "%.1f", spanMs);
+        tile("GPU", v, "ms GPU per frame");
     } else {
-        tile("GPU", "--", s.nvTried ? s.nvWhy : "sampling");
+        tile("GPU", "--", flat ? "timing: no sample yet" : s.nvTried ? s.nvWhy : "sampling");
     }
     {
         char vu[24] = "--", vb[24] = "?";
@@ -1632,7 +1636,7 @@ int perfMonitorTiles(PerfTile* out, int max) {
         tile(native ? "XR PERIOD" : "DISPLAY", v, sub);
     }
     // The slow samplers' tiles: CPU load, GPU load and temperature, VRAM, RAM (the flat Monitor shows the same four: appendSlowTiles).
-    appendSlowTiles(tile);
+    appendSlowTiles(tile, false);
     {
         const double frames = cnt > 0 ? static_cast<double>(cnt) : 1.0;
         if (native) {
@@ -1854,7 +1858,7 @@ int perfMonitorFlatTiles(PerfTile* out, int max) {
     PerfReadout r;
     perfMonitorReadout(&r, 0.0f);   // the whole ring, like the VR page's FRAME RATE tile
     emitRateTiles(r, tile);
-    appendSlowTiles(tile);
+    appendSlowTiles(tile, true);
     return n;
 }
 
