@@ -1189,9 +1189,10 @@ void hdrOutputAttach(ID3D11Device* device) {
     if (g.autoScene || g.autoUi) {
         hdrrules::EdrReading r;
         const bool dxmt = readEdr(&r);
-        Log::get().note("hdr: auto white (advanced.hdr_%s_nits = auto): the white follows macOS's SDR white live, 100 x potential / "
+        Log::get().note("hdr: auto white (%s = auto): the white follows macOS's SDR white live, 100 x potential / "
                         "current EDR headroom in the game's nits (DXMT presents PQ scaled by current/potential). At attach: %s",
-                        g.autoScene && g.autoUi ? "scene and ui" : g.autoScene ? "scene" : "ui",
+                        g.autoScene && g.autoUi ? "advanced.hdr_scene_nits and advanced.hdr_ui_nits"
+                        : g.autoScene ? "advanced.hdr_scene_nits" : "advanced.hdr_ui_nits",
                         !dxmt ? "no DXMT reading (winemetal.dll's WMTGetDisplayDescription); the defaults hold"
                               : "followed from the first frame (a reader thread, every 50 ms)");
         if (dxmt) g.nits = hdrrules::applyAutoWhite(g.baseNits, g.autoScene, g.autoUi, r);

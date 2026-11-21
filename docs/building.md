@@ -61,7 +61,11 @@ window while it runs. The runner holds every test exe to that and fails the
 build if one shows a window or takes the keyboard focus; see
 `docs\build-focus-steal-2026-09-29.md`.
 
-For a native Windows build from Linux, use the **Native Windows build**
+**Removed 2026-11-21 with the Windows installer:** the **Native Windows build**
+workflow (`.github/workflows/release.yml`), `package.bat` and the installer and
+launcher. The rest of this section and "The caches in CI" below describe
+upstream's route as it was; a Windows CI build for this port is planned but
+not written. It was: for a native Windows build from Linux, use the **Native Windows build**
 workflow (`.github/workflows/release.yml`). It also runs by itself on every pull
 request and every push to `main` (a `codex/release-*` pull request is left to
 its branch's push run). It runs on Windows Server 2022 with

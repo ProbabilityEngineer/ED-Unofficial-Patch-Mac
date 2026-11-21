@@ -133,10 +133,12 @@ bool sourceMakesFlatPagesFromTables(const std::string& menuCpp) {
            make.find("case MenuPageSource::FlatDebug: addFlatDebugRows(p); break;") != std::string::npos;
 }
 
-// The Visual tab (2026-10-22): built from kFlatVisualRows, and from no key list of menu.cpp's own.
+// The Visual tab (2026-10-22): built from kFlatVisualRows, and from no key list of menu.cpp's own. Since 2026-11-18 it walks the table in its own
+// order (so the HDR whites sit under HDR output) and matches each entry to its schema row by the entry's key, never by a key spelled in menu.cpp.
 bool sourceBuildsFlatVisualFromTable(const std::string& menuCpp) {
     const std::string region = functionBody(menuCpp, "void addFlatVisualRows(Page& p) {");
-    return sourceMakesFlatPagesFromTables(menuCpp) && region.find("flatVisualHasRow(") != std::string::npos && region.find("strcmp(d.key,") == std::string::npos;
+    return sourceMakesFlatPagesFromTables(menuCpp) && region.find("for (const FlatPageRow& r : kFlatVisualRows)") != std::string::npos &&
+           region.find("strcmp(d.key, r.key) != 0") != std::string::npos && region.find("strcmp(d.key, \"") == std::string::npos;
 }
 
 // The Debug tab (2026-10-16): built from kFlatDebugRows and the `menu debug` page, with its heading, and from no key list of menu.cpp's own.
@@ -294,10 +296,9 @@ bool schemaHasRow(const std::string& schema, const char* section, const char* ke
 
 void panelTable(const std::string& root, const std::string& gen) {
     using namespace edvr;
-    check(kFlatPageRowCount >= 4 && flatPageHasRow("fix", "temporal_aa") &&
-              flatPageHasRow("fix", "temporal_aa_model") && flatPageHasRow("fix", "render_sharpness") &&
-              flatPageHasRow("fix", "ui_quality") && flatPageHasRow("fix", "hud_antialiasing"),
-          "the flat page has the mode, the DLSS preset, the sharpening, the UI quality and the HUD Anti-Aliasing");
+    check(kFlatPageRowCount >= 4 && flatPageHasRow("fix", "temporal_aa") && !flatPageHasRow("fix", "temporal_aa_model") &&
+              flatPageHasRow("fix", "render_sharpness") && flatPageHasRow("fix", "ui_quality") && flatPageHasRow("fix", "hud_antialiasing"),
+          "the flat page has the mode, the sharpening, the UI quality and the HUD Anti-Aliasing (the DLSS preset went with DLSS, strip stage 2b)");
     check(!flatPageHasRow("fix", "black_void") && !flatPageHasRow("fix", "panel_distance"),
           "no unrelated fix is a row of the flat page");
 
@@ -327,12 +328,6 @@ void panelTable(const std::string& root, const std::string& gen) {
     const FlatPageRow* m1 = flatPageFirstRefused(lacksSharpness);
     check(m1 && std::strcmp(m1->key, "render_sharpness") == 0,
           "control: a gate without fix.render_sharpness is caught, by name");
-    const auto lacksModel = [](const char* dotted) {
-        return runtimeProfileAllowsKey(dotted) && std::strcmp(dotted, "fix.temporal_aa_model") != 0;
-    };
-    const FlatPageRow* m2 = flatPageFirstRefused(lacksModel);
-    check(m2 && std::strcmp(m2->key, "temporal_aa_model") == 0,
-          "control: a gate without fix.temporal_aa_model is caught, by name");
     const auto lacksUiQuality = [](const char* dotted) {
         return runtimeProfileAllowsKey(dotted) && std::strcmp(dotted, "fix.ui_quality") != 0;
     };
@@ -508,8 +503,8 @@ void panelTable(const std::string& root, const std::string& gen) {
     check(sourceBuildsFlatVisualFromTable(menuCpp), "menu.cpp builds the Visual tab from kFlatVisualRows");
     {
         std::string listed = menuCpp;
-        const char* gate = "!flatVisualHasRow(d.section, d.key)";
-        const size_t j = listed.find(gate);
+        const char* gate = "strcmp(d.key, r.key) != 0";
+        const size_t j = listed.find(gate, listed.find("void addFlatVisualRows(Page& p) {"));
         if (j != std::string::npos) listed.replace(j, std::strlen(gate), "strcmp(d.key, \"star_glow\") != 0");
         check(j != std::string::npos && !sourceBuildsFlatVisualFromTable(listed), "control: a Visual tab built from a key list in menu.cpp is caught");
         const std::string unmade = mutated("case MenuPageSource::FlatVisual: addFlatVisualRows(p); break;", "");
@@ -540,11 +535,11 @@ void panelTable(const std::string& root, const std::string& gen) {
         const std::string noteInVr = mutated("sgb::tabNote(runtimeFlatProfile(),", "sgb::tabNote(true,");
         const std::string hintEveryRow = mutated("hi && isStarGlowRow(d), s.starGlowBloom.percent()", "hi, s.starGlowBloom.percent()");
         const std::string hintInFlat = mutated("sgb::rowHint(runtimeFlatProfile(),", "sgb::rowHint(false,");
-        const std::string rowDimmed = mutated("(windowDistanceRow && stationWindowDistanceRowDisabled());", "(windowDistanceRow && stationWindowDistanceRowDisabled()) || isStarGlowRow(d);");
+        const std::string rowDimmed = mutated("(hdrWhiteRow && hdrWhiteRowDisabled());", "(hdrWhiteRow && hdrWhiteRowDisabled()) || isStarGlowRow(d);");
         const std::string stepRefused = mutated("    if (isOpenxrRenderScaleRow(d)) {\n        // A width for the worn headset", "    if (isStarGlowRow(d)) return;\n    if (isOpenxrRenderScaleRow(d)) {\n        // A width for the worn headset");
         const std::string everyFrame = mutated("    if (s.starGlowBloomGenSeen && generation == s.starGlowBloomGen) return;\n", "");
         const std::string noOpenRead = mutated("starGlowBloomMenuOpened();   // Elite's Bloom option is read again", "// Elite's Bloom option is read again");
-        const std::string noVrTick = mutated("        starGlowBloomTick();\n        if (pol.closesOnFocusLoss", "        if (pol.closesOnFocusLoss");
+        const std::string noVrTick = mutated("        starGlowBloomTick();\n        dimRowsTick();", "        dimRowsTick();");
         const std::string noVrConfigure = mutated("        starGlowBloomConfigure();\n        initKeys();", "        initKeys();");
         check(!noteEveryTab.empty() && !sourceSaysStarGlowBloom(noteEveryTab), "control: a note on every tab is caught");
         check(!noteInVr.empty() && !sourceSaysStarGlowBloom(noteInVr), "control: a note asked of a profile other than the running one is caught");
@@ -617,11 +612,12 @@ void panelTable(const std::string& root, const std::string& gen) {
                   glow.find("MenuKind::Choice, \"100\", \"\", \"\", 2, \"100=100%|125=125%|150=150%|175=175%|200=200%|250=250%|300=300%|350=350%|400=400%\", false, false, 1,") != std::string::npos &&
                   glow.find("MenuTier::Fix, \"visual\",") != std::string::npos,
               "the generated Star glow row is a Fix-tier choice of 100 to 400 percent, shipped 100, live, on the Visual page VR's menu builds too");
-        // The VR-only rows of VR's Visual page are not rows of the flat tab: the flat gate refuses their keys, so a flat row would show a value that does nothing.
-        check(schemaHasRow(schema, "visual", "world_scale") && !flatVisualHasRow("visual", "world_scale") && !flatVisualHasRow("fix", "intro_backdrop") &&
+        // VR's Visual rows (World scale, Intro background picture, Screen curve) are not rows of the flat tab: the flat gate refuses their keys, so a
+        // flat row would show a value that does nothing. The flat-only port's schema has no row for them at all (strip stage 2b took VR's menu).
+        check(!flatVisualHasRow("visual", "world_scale") && !flatVisualHasRow("fix", "intro_backdrop") &&
                   !flatVisualHasRow("fix", "panel_curvature") && !flatProfileReadsKey("visual.world_scale") && !flatProfileReadsKey("fix.intro_backdrop") &&
                   !flatProfileReadsKey("fix.panel_curvature"),
-              "World scale, Intro background picture and Screen curve are on VR's Visual page and not on the flat tab (the flat gate refuses their keys)");
+              "World scale, Intro background picture and Screen curve are not on the flat tab (the flat gate refuses their keys)");
         const size_t a = schema.find("{\"visual\", \"intro_video\",");
         const size_t b = schema.find("{\"visual\", \"star_glow\",");
         check(a != std::string::npos && b != std::string::npos && a < b &&

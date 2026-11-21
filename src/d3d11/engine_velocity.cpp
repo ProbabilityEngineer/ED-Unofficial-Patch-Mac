@@ -3694,7 +3694,8 @@ bool giveViewsLocked(Eye& e, ID3D11Texture2D* sceneDepth, EngineVelocityViews* o
         out->gameMark->AddRef();
     }
     // F2 on foot: the source's target 7, once a skinned draw wrote it this frame (a skinned pixel then takes its exact motion, or none: a view of nothing would
-    // hand the consumers a texture of zeros they would read as "masked"). Never in the flat profile: it has no target 7, so this stays null.
+    // hand the consumers a texture of zeros they would read as "masked"). In the flat profile only while fix.character_motion is on (the second skin,
+    // g_skinFlatWanted); with it off nothing writes target 7 there and this stays null.
     if (withSkin && e.skinSrv && e.skinWrittenFrame == frame) {
         out->skin = e.skinSrv.Get();
         out->skin->AddRef();

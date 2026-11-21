@@ -52,14 +52,14 @@ using namespace rig;
 
 // What sharpen_pass.cpp and its neighbours reach for, stubbed the way the other rigs do:
 // the crash channel, the census (tools/gpu_census_test covers it), the monitor's event
-// sink, and the two questions about a compositor hook, which VR answers and flat never asks.
+// sink, and the question about a compositor hook, which VR answered and flat never asks. (nativeSharpenActive is
+// inline in native_sharpen.h since strip stage 2b, so it is not stubbed here.)
 namespace edvr {
 void breadcrumb(const char*) {}
 bool gpuCensusBegin(ID3D11DeviceContext*, GpuCensusSection) noexcept { return false; }
 void gpuCensusEnd(ID3D11DeviceContext*, GpuCensusSection) noexcept {}
 void perfMonitorNoteEvent(uint32_t, double) {}
 bool glitchConsumerPresent() { return false; }
-bool nativeSharpenActive() { return false; }
 }  // namespace edvr
 
 namespace {

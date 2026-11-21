@@ -358,11 +358,10 @@ inline int flatHdrCrumbWiringTests() {
 
     const std::string runtime = slurp("src/d3d11/flat_runtime.cpp");
     const std::string resolve = slurp("src/d3d11/flat_mono_resolve.cpp");
-    const std::string dlaa = slurp("src/d3d11/dlaa.cpp");
     const std::string fsr = slurp("src/d3d11/fsr3_engine.cpp");
     const std::string hook = slurp("src/d3d11/device_hook.cpp");
     const std::string vscreen = slurp("src/d3d11/vscreen.cpp");
-    expect(!runtime.empty() && !resolve.empty() && !dlaa.empty() && !fsr.empty() && !hook.empty() && !vscreen.empty(),
+    expect(!runtime.empty() && !resolve.empty() && !fsr.empty() && !hook.empty() && !vscreen.empty(),
            "the runtime, resolver, backend and hook sources are readable from the repo root");
     const std::string omUav = body(vscreen, "void STDMETHODCALLTYPE hookedOMSetRtvAndUav(");
     ordered(omUav, {"flatRuntimeOverlayUavBind(self,uavCount,uavs);", "if (foreignContext(self))",
@@ -428,7 +427,7 @@ inline int flatHdrCrumbWiringTests() {
                     "if(overlay) context->CopyResource(g.rawOverlay.texture.Get(),color.Get());", "copyStep.close();",
                     "HdrCrumbSpan prepStep(", "context->Dispatch((f.renderWidth+7)/8,(f.renderHeight+7)/8,1);", "prepStep.close();",
                     "prepSpan.close();", "HdrCrumbSpan backendStep(", "SpanGuard backendSpan(context, FlatResolveSpan::Backend);",
-                    "ok=fsr3Evaluate(", "ok=dlaaEvaluate(", "backendStep.close();",
+                    "ok=fsr3Evaluate(", "ok=mfxEvaluate(", "backendStep.close();",
                     "SpanGuard finishSpan(context, FlatResolveSpan::Finish);", "drawHdrTarget(context,g.finishHdr.Get(),f.renderWidth,f.renderHeight,views,overlay?17:8);"},
             "the resolve writes capture, copy, prep, backend and finish in the order it runs them, each crumb before its call");
     const std::string spatial = body(resolve, "bool flatMonoResolveSpatialFallback(ID3D11Device* device,ID3D11DeviceContext* context,const FlatMonoResolveFrame& f,");
@@ -534,13 +533,6 @@ inline int flatHdrCrumbWiringTests() {
             "the preflight's own pair brackets the whole of it, the creations it makes among it");
 
     // -- the backends: the crumbs are the route's bit alone, and bracket the SDK's call ---------------------------------------
-    expect(count(dlaa, "HdrCrumbSpan ") == 3 && count(dlaa, "HdrCrumbSpan query(hdr, ") == 1 && count(dlaa, "HdrCrumbSpan create(hdr, ") == 1 &&
-               count(dlaa, "HdrCrumbSpan evaluate(hdr, ") == 1,
-           "dlaa.cpp writes its three steps only for the route's hdr bit (the VR path and the warm-up write none)");
-    ordered(dlaa, {"HdrCrumbSpan query(hdr, \"backend-query\"", "NGX_DLSS_GET_OPTIMAL_SETTINGS(g_caps, w, h, quality", "query.close();",
-                   "HdrCrumbSpan create(hdr, \"backend-create\"", "NGX_D3D11_CREATE_DLSS_EXT(ctx, &f.handle, g_params, &cp);", "create.close();",
-                   "HdrCrumbSpan evaluate(hdr, \"backend-evaluate\"", "NGX_D3D11_EVALUATE_DLSS_EXT(ctx, f.handle, g_params, &ep);", "evaluate.close();"},
-            "the NGX queries, the feature's creation and its evaluation are each crumbed around the SDK call");
     expect(count(fsr, "HdrCrumbSpan ") == 3 && count(fsr, "HdrCrumbSpan create(hdr, ") == 1 && count(fsr, "HdrCrumbSpan evaluate(hdr, ") == 1 &&
                count(fsr, "HdrCrumbSpan span(crumbs, ") == 1 && count(fsr, ", hdr, \"fsr-") == 3,
            "fsr3_engine.cpp writes its steps only for the route's hdr bit, and names its three shared surfaces");

@@ -68,16 +68,17 @@ static void machineCells() {
     // The ordinary run: off, then restored.
     {
         Machine m;
-        check(m.press("dlss") == Press::WentOff && m.off && m.saved == "dlss", "a press with AA on goes off and remembers the mode");
-        check(m.press("dlss") == Press::Restored && !m.off && m.saved.empty(), "the next press restores");
-        check(m.press("dlss") == Press::WentOff, "and the one after goes off again");
+        check(m.press("mfx") == Press::WentOff && m.off && m.saved == "mfx", "a press with AA on goes off and remembers the mode");
+        check(m.press("mfx") == Press::Restored && !m.off && m.saved.empty(), "the next press restores");
+        check(m.press("mfx") == Press::WentOff, "and the one after goes off again");
     }
-    // Every mode EDVR has goes off; off itself has nothing to compare.
-    for (const char* mode : {"on", "dlaa", "dlss", "fsr", "xess", "DLSS", "Xess"}) {
+    // Every mode the Mac port has goes off (FSR and MetalFX since strip stage 2b); off itself has nothing to compare.
+    for (const char* mode : {"fsr", "mfx", "FSR", "Mfx"}) {
         Machine m;
         check(m.press(mode) == Press::WentOff, "every temporal mode can be compared");
     }
-    for (const char* mode : {"off", "", "banana", "0"}) {
+    // ...and neither has a mode the strip removed (TAA, DLAA, DLSS, XeSS): the DLL runs no AA for them.
+    for (const char* mode : {"off", "", "banana", "0", "on", "dlaa", "dlss", "xess"}) {
         Machine m;
         check(m.press(mode) == Press::NothingToCompare && !m.off, "a configured mode that is not a temporal mode has nothing to compare");
         check(m.press(mode) == Press::NothingToCompare, "and it stays that way press after press");
@@ -85,56 +86,56 @@ static void machineCells() {
     // Restoring returns whatever the settings say at that moment, not what was remembered.
     {
         Machine m;
-        m.press("dlss");
+        m.press("mfx");
         check(m.press("fsr") == Press::Restored && !m.off, "a press while off restores, whatever the file says now");
     }
     // The player changes AA while it is off: their choice wins.
     {
         Machine m;
-        m.press("dlss");
-        check(m.observe("dlss", true, 10) == Seen::Nothing && m.off, "nothing changed: the comparison stands");
-        check(m.observe("DLSS", true, 20) == Seen::Nothing && m.off, "the mode compares without case");
+        m.press("mfx");
+        check(m.observe("mfx", true, 10) == Seen::Nothing && m.off, "nothing changed: the comparison stands");
+        check(m.observe("MFX", true, 20) == Seen::Nothing && m.off, "the mode compares without case");
         check(m.observe("fsr", true, 30) == Seen::EndedByChange && !m.off, "the file's AA changed: the comparison ends");
         check(m.observe("fsr", true, 40) == Seen::Nothing, "and ends once");
         check(m.press("fsr") == Press::WentOff && m.saved == "fsr", "the next press is a fresh off from the new mode");
     }
     {
         Machine m;
-        m.press("dlss");
+        m.press("mfx");
         check(m.observe("off", true, 5) == Seen::EndedByChange && !m.off, "a hand edit to off ends it too (AA is off for real)");
         check(m.press("off") == Press::NothingToCompare, "...and then there is nothing to compare");
     }
     // An F8 pick that lands on the remembered mode: ended once the write has had time to land.
     {
         Machine m;
-        m.press("dlss");
+        m.press("mfx");
         m.noteMenuEdit(1000);
-        check(m.observe("dlss", true, 1000 + kMenuEditSettleMs - 1) == Seen::Nothing && m.off, "a pick still being written does not end it early");
-        check(m.observe("dlss", true, 1000 + kMenuEditSettleMs) == Seen::EndedBySameValue && !m.off, "a pick that landed on the same mode ends it");
+        check(m.observe("mfx", true, 1000 + kMenuEditSettleMs - 1) == Seen::Nothing && m.off, "a pick still being written does not end it early");
+        check(m.observe("mfx", true, 1000 + kMenuEditSettleMs) == Seen::EndedBySameValue && !m.off, "a pick that landed on the same mode ends it");
     }
     {
         Machine m;
-        m.press("dlss");
+        m.press("mfx");
         m.noteMenuEdit(1000);
-        check(m.observe("xess", true, 1100) == Seen::EndedByChange, "a pick that changed the file ends it at once, before the settle time");
+        check(m.observe("fsr", true, 1100) == Seen::EndedByChange, "a pick that changed the file ends it at once, before the settle time");
     }
     {
         Machine m;
         m.noteMenuEdit(1);   // a pick with no comparison running is nobody's business
-        check(!m.menuEdit && m.observe("dlss", true, 99999) == Seen::Nothing, "a menu edit with the comparison on ends nothing");
-        m.press("dlss");
-        check(!m.menuEdit && m.observe("dlss", true, 99999) == Seen::Nothing, "and does not leak into the next comparison");
+        check(!m.menuEdit && m.observe("mfx", true, 99999) == Seen::Nothing, "a menu edit with the comparison on ends nothing");
+        m.press("mfx");
+        check(!m.menuEdit && m.observe("mfx", true, 99999) == Seen::Nothing, "and does not leak into the next comparison");
     }
     // The override went away under it (a profile switch): the comparison is over, the machine is clean.
     {
         Machine m;
-        m.press("dlss");
-        check(m.observe("dlss", false, 1) == Seen::EndedByProfile && !m.off && m.saved.empty(), "a lost override ends the comparison");
-        check(m.press("on") == Press::WentOff, "and the key works at once in the new profile");
+        m.press("mfx");
+        check(m.observe("mfx", false, 1) == Seen::EndedByProfile && !m.off && m.saved.empty(), "a lost override ends the comparison");
+        check(m.press("fsr") == Press::WentOff, "and the key works at once in the new profile");
     }
     {
         Machine m;
-        check(m.observe("dlss", false, 1) == Seen::Nothing, "a lost override with no comparison running is nothing");
+        check(m.observe("mfx", false, 1) == Seen::Nothing, "a lost override with no comparison running is nothing");
     }
 }
 
@@ -318,7 +319,6 @@ static void sourcePins(const std::string& root) {
     const std::string ini = slurp(root + "\\edvr.ini");
     const std::string flatKeys = slurp(root + "\\src\\common\\flat_profile_keys.h");
     const std::string gen = slurp(root + "\\tools\\gen_installer_rc.py");
-    const std::string readme = slurp(root + "\\release\\README.txt");
     const std::string mod = slurp(root + "\\src\\d3d11\\aa_compare.cpp");
     if (hook.empty() || menu.empty() || ini.empty()) {
         std::printf("FAIL: the repo root \"%s\" does not hold the sources\n", root.c_str());
@@ -343,7 +343,7 @@ static void sourcePins(const std::string& root) {
     check(has(ini, "# ui: AA comparison key | hotkey | live"), "the F8 Hotkeys page has the row");
     check(has(flatKeys, "\"hotkey.compare_aa\""), "the flat profile reads the key");
     check(has(gen, "compare_aa = F7"), "and the flat ini template carries it");
-    check(has(readme, "F7"), "release\\README.txt lists the key");
+    // release\README.txt, which listed the key, went with the Windows installer (2026-11-21); the Mac README does not list it yet.
     check(has(mod, "setRuntimeOverride(kKey, \"off\")") && !has(mod, "iniedit") && !has(mod, "writeFileAtomic"),
           "the module overrides in memory and includes no ini writer");
 }

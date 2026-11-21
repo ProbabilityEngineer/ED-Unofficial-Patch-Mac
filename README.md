@@ -1,6 +1,6 @@
 # ED Unofficial Patch for Mac
 
-**Based on ED-Unoffical-Patch** so [give them your $$$](https://ko-fi.com/seancharacterecho)
+**Based on ED-Unofficial-Patch** so [give them your $$$](https://ko-fi.com/seancharacterecho)
 
 **ED Unofficial Patch for Mac** is an independent macOS/CrossOver port of
 [ED Unofficial Patch](https://github.com/characterecho-sean/ed-unofficial-patch)
@@ -128,6 +128,13 @@ The game folder gets an `edvr_logs` folder, and each session writes an
 Settings are in `edvr-flat.ini` next to the game; F8 changes them in the game.
 [edvr.ini](edvr.ini) in this repository documents every setting. The settings
 files keep their ED-UP (formerly EDVR) names, so existing ones keep working.
+
+Keys (each can be changed or turned off in the `[hotkey]` section):
+
+- **F8**: the settings menu.
+- **F7**: turn anti-aliasing off to compare, then press again to put it back.
+  It never changes your settings; the game starts with them as saved.
+- **F5**: step the frame-rate readout: off, compact, detailed, full.
 
 ## Running alongside other mods
 

@@ -484,18 +484,19 @@ BOOL CALLBACK initOnceCallback(PINIT_ONCE, PVOID, PVOID*) {
 
     if (g_missingExports) {
         // Under DXMT this is expected: its d3d11.dll exports the device-creation entry points Elite calls and little else, so most of
-        // Windows' d3d11 export list has nothing to forward to. Said as a note there, so a log read for a bug report does not point at it;
-        // a missing D3D11CreateDevice(AndSwapChain), or any other d3d11.dll, keeps the warning.
+        // the proxy's forwarded list (tools\d3d11_exports.txt) has nothing to forward to. Said as a note there, so a log read for a bug
+        // report does not point at it; a missing D3D11CreateDevice(AndSwapChain), or any other d3d11.dll, keeps the warning. The two Elite
+        // calls are wrapped, not forwarded, so they are not among the kExportCount this counts.
         if (edvr::flatModuleNamesDxmt(g_systemModule) && GetProcAddress(g_systemModule, "D3D11CreateDevice") &&
             GetProcAddress(g_systemModule, "D3D11CreateDeviceAndSwapChain")) {
             edvr::Log::get().note(
-                "d3d11 exports: DXMT's d3d11.dll provides %zu of the %zu Windows d3d11 exports, including D3D11CreateDevice and "
-                "D3D11CreateDeviceAndSwapChain, which are the ones Elite calls; the rest are not DXMT's to provide (expected, harmless)",
+                "d3d11 exports: DXMT's d3d11.dll has D3D11CreateDevice and D3D11CreateDeviceAndSwapChain, the two Elite calls (ED-UP "
+                "wraps them), and %zu of the %zu other exports ED-UP forwards; a call to one of the rest returns 0 (expected, harmless)",
                 kExportCount - g_missingExports, kExportCount);
         } else {
             edvr::Log::get().note(
-                "WARNING: %zu of %zu d3d11 exports did not resolve; regenerate the thunks "
-                "against this machine's d3d11.dll with build.bat",
+                "WARNING: %zu of %zu d3d11 exports did not resolve against the d3d11.dll in use "
+                "(the proxy's list is pinned in tools\\d3d11_exports.txt)",
                 g_missingExports, kExportCount);
         }
     }

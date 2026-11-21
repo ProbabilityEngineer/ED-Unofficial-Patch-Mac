@@ -65,7 +65,8 @@ constexpr uint32_t kFlatMonoRefusalEvery = 4;
 constexpr uint32_t kFlatMonoRefusalStripes = 16;     // the counter buffer's stripes (spreads the atomics); the host sums them
 // Each stripe holds kFlatMonoRefusalSlots class counters, then kFlatMonoWeaponReasons counters of the refused first-person pixels by reason.
 // After them one more, the only ACCEPTED pixels the census counts (class kFlatMonoClassSkinned): in the world route the skinned pixels that took their exact
-// motion from target 7, which is how a log shows the route read E; in the flat profile (it has no target 7) the near pixels that rode the vehicle frame (the cockpit rig's root pose).
+// motion from target 7, which is how a log shows the route read E; in the flat profile the near pixels that rode the vehicle frame (the cockpit rig's root pose), and with fix.character_motion on also the
+// skinned pixels that took their motion from target 7 (the second skin).
 constexpr uint32_t kFlatMonoRefusalSkinned = kFlatMonoRefusalSlots + kFlatMonoWeaponReasons;
 constexpr uint32_t kFlatMonoRefusalCounters = kFlatMonoRefusalSlots + kFlatMonoWeaponReasons + 1;
 

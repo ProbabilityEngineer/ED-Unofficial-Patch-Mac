@@ -48,11 +48,12 @@ What differs from CI's Windows build:
     Windows SDK 10.0.26100, the versions of CI's windows-2022 image;
   - shaders compile with the Windows SDK's own d3dcompiler_47.dll, installed
     in the prefix over Wine's (the shader self-test checks its bytes);
-  - the proxy's export list comes from Wine's d3d11.dll, which lacks
-    CreateDirect3D11DeviceFromDXGIDevice, CreateDirect3D11SurfaceFromDXGISurface,
-    D3D11CreateDeviceForD3D12, EnableFeatureLevelUpgrade and D3DPerformance_*
-    and adds two D3DKMT exports.  Elite imports D3D11CreateDevice alone from it
-    (EliteDangerous64.exe, checked 2026-10-24);
+  - the proxy's export list is pinned in tools/d3d11_exports.txt (Wine's
+    d3d11.dll's list, which lacks CreateDirect3D11DeviceFromDXGIDevice,
+    CreateDirect3D11SurfaceFromDXGISurface, D3D11CreateDeviceForD3D12,
+    EnableFeatureLevelUpgrade and D3DPerformance_* and has Wine's D3DKMT
+    exports), not read from the build machine's d3d11.dll.  Elite imports
+    D3D11CreateDevice alone from it (EliteDangerous64.exe, checked 2026-10-24);
   - no Python gates, rigs or installer: that is what makes it compile-only.
 """
 
