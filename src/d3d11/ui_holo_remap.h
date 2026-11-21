@@ -22,28 +22,37 @@
 //  - the cockpit comms panel's glass (2026-11-21, flat): finds its place on the panel's own masks (t1, t2) from
 //    SV_Position * cb1[332].zw mapped into the panel's screen rectangle. flat_ui_layer_math.h takes it into the
 //    layer with the panels so it dims what the layer already holds; unremapped, its mask lookups ran a third past
-//    the panel on a 3024-wide layer over the game's 2268 and most of it was discarded (the 07:42 flight).
+//    the panel on a 3024-wide layer over the game's 2268 and most of it was discarded (the 07:42 flight);
+//  - the cockpit panels' frosted backing (2026-11-21, flat; vs 2CECEC3065EF0D4A): the dark plate behind the comms panel and
+//    the other cockpit panels' labels, which samples a 1/8-size blurred copy of the scene at SV_Position * cb1[332].zw. The
+//    same instruction and the same lookup after it as the frosted base, so the frosted base's recipe, under a kind of its
+//    own so its admission and its count are told apart in the log.
 namespace edvr::ui_holo_remap {
 inline constexpr uint64_t kVs=0x5559BD94B6852E83ull;
-enum class Kind : uint8_t {kHologramDepth,kFrostedBase,kPanelGlass};
+enum class Kind : uint8_t {kHologramDepth,kFrostedBase,kPanelGlass,kPanelBacking};
 struct Program {uint64_t ps;uint32_t bytes;Kind kind;};
 inline constexpr Program kPrograms[]={
     {0xEA02FAC2BD6C643Cull,7092,Kind::kHologramDepth},
     {0xE95634B0F61D218Full,11428,Kind::kHologramDepth},
     {0x0146ABCC53240479ull,2292,Kind::kFrostedBase},
     {0x4981B99A0B30E9E2ull,2604,Kind::kPanelGlass},
+    {0xA4D03619D631B186ull,1428,Kind::kPanelBacking},
 };
 inline constexpr size_t kProgramCount=sizeof(kPrograms)/sizeof(kPrograms[0]);
 inline constexpr uint64_t kFrostedPs=0x0146ABCC53240479ull;
 static_assert(kPrograms[2].ps==kFrostedPs,"frosted base slot");
 inline constexpr uint64_t kPanelGlassPs=0x4981B99A0B30E9E2ull;
 static_assert(kPrograms[3].ps==kPanelGlassPs,"panel glass slot");
+inline constexpr uint64_t kPanelBackingPs=0xA4D03619D631B186ull;
+static_assert(kPrograms[4].ps==kPanelBackingPs,"panel backing slot");
 inline int index(uint64_t ps) {
     for(size_t i=0;i<kProgramCount;++i)if(kPrograms[i].ps==ps)return static_cast<int>(i);
     return -1;
 }
 inline Kind kindOf(int slot) {return kPrograms[static_cast<size_t>(slot)].kind;} // slot from index(), never negative
-inline const char* kindName(Kind k) {return k==Kind::kFrostedBase?"frosted base":k==Kind::kPanelGlass?"panel glass":"hologram depth";}
+inline const char* kindName(Kind k) {
+    return k==Kind::kFrostedBase?"frosted base":k==Kind::kPanelGlass?"panel glass":k==Kind::kPanelBacking?"panel backing":"hologram depth";
+}
 inline bool pair(uint64_t vs,uint64_t ps) {
     const int slot=index(ps);return vs==kVs&&slot>=0&&kindOf(slot)==Kind::kHologramDepth;
 }
@@ -90,7 +99,9 @@ inline constexpr Recipe kRecipes[]={
       0x00004002,0xbf800000,0xbf800000,0,0},15,
      0x00100046,1,"one SV_Position mul","exact NDC mad"},
 };
-static_assert(sizeof(kRecipes)/sizeof(kRecipes[0])==3,"one recipe per kind");
+static_assert(sizeof(kRecipes)/sizeof(kRecipes[0])==3,"one recipe per lookup shape");
+// The panel backing's lookup is the frosted base's, token for token (the ps A4D03619 dump of 2026-11-21: instruction 3, then 4).
+inline const Recipe& recipeOf(Kind kind) {return kRecipes[kind==Kind::kPanelBacking?size_t(1):static_cast<size_t>(kind)];}
 
 // THE RELIEF (issue 140, 2026-11-01: the radar's terrain darker and flat with fix.ui_quality on). Both hologram programs
 // shade the picture they show (t4) from an 8-tap Sobel whose taps sit at UV +- ddx/ddy(UV) * r, with
@@ -119,7 +130,7 @@ inline bool hasRelief(Kind kind) {return kind==Kind::kHologramDepth;}
 // radius. Every other material/UV/derivative instruction, signature and resource stays stock.
 inline std::vector<uint32_t> patchProgram(const std::vector<uint32_t>& t,Kind kind=Kind::kHologramDepth) {
     using namespace dxbc_container;
-    const Recipe& r=kRecipes[static_cast<size_t>(kind)];
+    const Recipe& r=recipeOf(kind);
     const bool relief=hasRelief(kind);
     size_t target=0,tempAt=0,reliefAt=0;uint32_t temp=0;unsigned found=0,reliefFound=0;
     require(t.size()>2&&t[0]==0x50&&t[1]==t.size(),"pixel SM5 program");
@@ -155,7 +166,7 @@ inline bool patch(const void* data,size_t n,uint64_t ps,std::vector<BYTE>& outpu
     try {
         const int slot=index(ps);
         require(slot>=0&&data&&n==kPrograms[slot].bytes&&hash(data,n)==ps,"unknown pixel bytes");
-        const uint32_t reg=kRecipes[static_cast<size_t>(kPrograms[slot].kind)].position;
+        const uint32_t reg=recipeOf(kPrograms[slot].kind).position;
         auto chunks=dxbc_container::parseContainer(data,n,0x50);bool position=false;
         for(const auto& c:chunks)if(c.tag==0x4e475349){
             for(const auto& e:dxbc_container::parseSignature(c.bytes))if(e.systemValue==1){

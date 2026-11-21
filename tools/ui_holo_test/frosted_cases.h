@@ -266,10 +266,27 @@ inline void panelGlass(const std::vector<BYTE>& frostedBytes) {
     std::vector<BYTE> outBytes;std::string why;
     check(!patch(frostedBytes.data(),frostedBytes.size(),kPanelGlassPs,outBytes,why)&&outBytes.empty(),"other bytes under the glass hash are refused");
 }
+// The cockpit panels' frosted backing (ps A4D03619, 2026-11-21): the frosted base's lookup under a kind of its own. No game bytes here;
+// its recipe is shown on the frosted base's own tokens, which carry the identical instruction pair.
+inline void panelBacking(const std::vector<BYTE>& frostedBytes) {
+    check(index(kPanelBackingPs)==4&&kindOf(4)==Kind::kPanelBacking&&kPrograms[4].bytes==1428,"the backing is the table's fifth program, 1428 bytes");
+    check(std::strcmp(kindName(Kind::kPanelBacking),"panel backing")==0,"its own name in the log");
+    const uint64_t other=0x1234567890ABCDEFull;
+    check(needsRemap(other,kPanelBackingPs,false)&&needsRemap(other,kPanelBackingPs,true)&&!pair(kVs,kPanelBackingPs),"the backing asks for the remap wherever it is taken, and is no hologram pair");
+    check(&recipeOf(Kind::kPanelBacking)==&recipeOf(Kind::kFrostedBase)&&!hasRelief(Kind::kPanelBacking),"the frosted base's recipe, no relief");
+    for(const auto& c:edvr::dxbc_container::parseContainer(frostedBytes.data(),frostedBytes.size(),0x50))if(c.tag==0x58454853){
+        std::vector<uint32_t> ft(c.bytes.size()/4);std::memcpy(ft.data(),c.bytes.data(),c.bytes.size());
+        check(patchProgram(ft,Kind::kPanelBacking)==patchProgram(ft,Kind::kFrostedBase),"the backing's edit is the frosted base's, token for token");
+        bool threw=false;try{patchProgram(glassProgram(),Kind::kPanelBacking);}catch(const std::exception&){threw=true;}
+        check(threw,"the backing recipe finds nothing in the glass");
+    }
+    std::vector<BYTE> outBytes;std::string why;
+    check(!patch(frostedBytes.data(),frostedBytes.size(),kPanelBackingPs,outBytes,why)&&outBytes.empty(),"other bytes under the backing hash are refused");
+}
 inline void run(ID3D11Device* d,ID3D11DeviceContext* c) {
     const auto stockBytes=bytes(kFixture),hologramBytes=bytes("tools/ui_holo_test/fixtures/ps_EA02FAC2BD6C643C.dxbc");
     check(stockBytes.size()==2292&&edvrHash(stockBytes)==kFrostedPs,"the saved frosted PS is the game's 2292 bytes");
-    structure(stockBytes,hologramBytes);slots(d,c);wiring();panelGlass(stockBytes);
+    structure(stockBytes,hologramBytes);slots(d,c);wiring();panelGlass(stockBytes);panelBacking(stockBytes);
     const Pipe pipe=makePipe(d,c);
     ComPtr<ID3D11PixelShader> stock;ck(d->CreatePixelShader(stockBytes.data(),stockBytes.size(),nullptr,&stock));
     Cache cache;check(cache.remember(stock.Get(),kFrostedPs,stockBytes.data(),stockBytes.size(),false),"actual bytes captured");

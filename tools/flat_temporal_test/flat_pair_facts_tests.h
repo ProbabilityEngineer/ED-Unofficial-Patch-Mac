@@ -82,6 +82,14 @@ inline int flatPairFactsTests() {
         expect(!flatPairFactsFresh(kFlatUiPanelGlassVs, 0, true).uiMayAsk, "...by the pair, not by its vertex shader");
     }
 
+    // ---- the panels' frosted backing (2026-11-21): the same, by its exact pair ---------------------------------------------------------
+    {
+        const FlatPairFacts b = flatPairFactsFresh(kFlatUiPanelBackingVs, kFlatUiPanelBackingPs, true);
+        expect(b.uiMayAsk && !b.legacyGlassPair && b.toneSlot == ~0u && !b.copyPair, "the panel backing pair is uiMayAsk, and nothing else the memo names");
+        expect(!flatPairFactsFresh(kFlatUiPanelBackingVs, 0, true).uiMayAsk, "...by the pair, not by its vertex shader");
+        expect(flatUiFamilyOf(kFlatUiPanelBackingVs, kFlatUiPanelBackingPs) == UiLayerFamily::kHolo, "...taken with the holo panels");
+    }
+
     // ---- the Full System Scanner's tonemap is the UI layer's table alone ------------------------------------------------------
     // (flatUiMapToneSlotOf: slot 0, like the map's). Not a registry tone, not an E894-layout source tone, not the copy, no UI family, and the
     // same in both profiles: the resolve's tone selection, the target's tone record and the HDR route's trigger do not see a new pass.

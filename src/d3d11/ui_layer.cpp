@@ -3243,6 +3243,14 @@ bool beginInner(ID3D11DeviceContext* ctx, int which) {
                     g_draw.targetW, g_draw.targetH, layerW, layerH,
                     double(holoParams.x), double(holoParams.y), double(holoParams.bx), double(holoParams.by),
                     sampler);
+            } else if (ui_holo_remap::kindOf(slot) == ui_holo_remap::Kind::kPanelBacking) {
+                char sampler[96];
+                describeSampler(ctx, 1, sampler, sizeof(sampler));
+                Log::get().note("crisp holo remap: admitted panel backing PS %016llX eye %d input %ux%u layer %ux%u inverse (%g,%g) bias (%g,%g); its blurred-scene lookup reads the game's pixel position, not the layer's (%s).",
+                    static_cast<unsigned long long>(g_draw.holoPsHash), g_draw.eye,
+                    g_draw.targetW, g_draw.targetH, layerW, layerH,
+                    double(holoParams.x), double(holoParams.y), double(holoParams.bx), double(holoParams.by),
+                    sampler);
             } else if (ui_holo_remap::kindOf(slot) == ui_holo_remap::Kind::kPanelGlass) {
                 Log::get().note("crisp holo remap: admitted panel glass PS %016llX eye %d input %ux%u layer %ux%u inverse (%g,%g) bias (%g,%g); its panel-mask lookups read the game's pixel position, not the layer's.",
                     static_cast<unsigned long long>(g_draw.holoPsHash), g_draw.eye,
@@ -4255,7 +4263,8 @@ void logTotals(double seconds) {
     // remapped program" -- admitted must climb with the panels, refused stay 0.
     const size_t frosted = static_cast<size_t>(ui_holo_remap::index(ui_holo_remap::kFrostedPs));
     const size_t glass = static_cast<size_t>(ui_holo_remap::index(ui_holo_remap::kPanelGlassPs));
-    Log::get().note("crisp holo remap: cumulative capture_calls %llu captured %llu eligible %llu prepared %llu admitted %llu refused %llu; frosted base admitted %llu refused %llu; panel glass admitted %llu refused %llu; four exact PS only, zero admitted means no successful route, no extra scene-depth copy.",
+    const size_t backing = static_cast<size_t>(ui_holo_remap::index(ui_holo_remap::kPanelBackingPs));
+    Log::get().note("crisp holo remap: cumulative capture_calls %llu captured %llu eligible %llu prepared %llu admitted %llu refused %llu; frosted base admitted %llu refused %llu; panel glass admitted %llu refused %llu; panel backing admitted %llu refused %llu; five exact PS only, zero admitted means no successful route, no extra scene-depth copy.",
         static_cast<unsigned long long>(g_holoCaptureCalls.load(std::memory_order_relaxed)),
         static_cast<unsigned long long>(g_holoCaptured.load(std::memory_order_relaxed)),
         static_cast<unsigned long long>(g_holoEligible), static_cast<unsigned long long>(g_holoPrepared),
@@ -4263,7 +4272,9 @@ void logTotals(double seconds) {
         static_cast<unsigned long long>(g_holoTakenBy[frosted]),
         static_cast<unsigned long long>(g_holoRefusedBy[frosted]),
         static_cast<unsigned long long>(g_holoTakenBy[glass]),
-        static_cast<unsigned long long>(g_holoRefusedBy[glass]));
+        static_cast<unsigned long long>(g_holoRefusedBy[glass]),
+        static_cast<unsigned long long>(g_holoTakenBy[backing]),
+        static_cast<unsigned long long>(g_holoRefusedBy[backing]));
     g_seedCensus.report([](const char* line) { Log::get().note("%s", line); });
     g_hdrSeedGpu.report(g_hdrDrawTimingOn, [](const char* line) { Log::get().note("%s", line); });
     const double frames = g_win.frames ? static_cast<double>(g_win.frames) : 1.0;

@@ -37,11 +37,23 @@ constexpr uint64_t kFlatUiPanelGlassVs = 0x4BF5B83CBFE54849ull;
 constexpr uint64_t kFlatUiPanelGlassPs = 0x4981B99A0B30E9E2ull;
 inline bool flatUiPanelGlassPair(uint64_t vs, uint64_t ps) { return vs == kFlatUiPanelGlassVs && ps == kFlatUiPanelGlassPs; }
 
+// THE COCKPIT PANELS' FROSTED BACKING (flat only, 2026-11-21; F6's pixel history of edvr_gfx_20261121_113630, census #1 DCO 0 #1592
+// and census #2 #1476): the dark frosted plate behind the comms panel (and the other cockpit panels' label plates, up to 15 draws a
+// frame), premultiplied over (ONE, INV_SRC_ALPHA), depth-tested and writing stencil bit 4 like the panels, issued after the target
+// sprite. With the AA off it takes the nav tag under the comms panel from 0.51 to 0.024 (the game's own picture); left in H with the
+// AA on it darkened only the scene, and the tag the layer took stayed bright over it (docs/ui-layer-2026-09-23.md "Limits": the frosted
+// label quads drawn after a taken HUD draw land under it). Taken with the panels (kHolo) it lands in the layer in the game's order.
+// Its pixel shader samples a blurred copy of the scene at SV_Position, so the take goes through ui_holo_remap.h's panel backing remap,
+// and a draw whose remap is refused stays in H as before.
+constexpr uint64_t kFlatUiPanelBackingVs = 0x2CECEC3065EF0D4Aull;
+constexpr uint64_t kFlatUiPanelBackingPs = 0xA4D03619D631B186ull;
+inline bool flatUiPanelBackingPair(uint64_t vs, uint64_t ps) { return vs == kFlatUiPanelBackingVs && ps == kFlatUiPanelBackingPs; }
+
 // The shared family rule, asked both ways (an HDR eye target, then the post-tonemap one) with no learned surface:
-// ui_layer_math.h's shader-pair recognitions, not a second hash table. Flat adds one pair of its own ahead of it, the comms panel's glass.
+// ui_layer_math.h's shader-pair recognitions, not a second hash table. Flat adds two pairs of its own ahead of it, the comms panel's glass and the panels' frosted backing.
 // legacyGlass: visual.cockpit_glass is legacy (the caller's one load of cockpitGlassLegacyLive); false names no canopy, so `odyssey` leaves the game's own canopy draw unnamed.
 inline UiLayerFamily flatUiFamilyOf(uint64_t vs, uint64_t ps, bool legacyGlass = false) {
-    if (flatUiPanelGlassPair(vs, ps)) return UiLayerFamily::kHolo;
+    if (flatUiPanelGlassPair(vs, ps) || flatUiPanelBackingPair(vs, ps)) return UiLayerFamily::kHolo;
     UiFamilyFacts f;
     f.vs = vs;
     f.ps = ps;
