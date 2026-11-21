@@ -273,10 +273,7 @@ python tools\run_jobs.py ^
     --gate "tools\fetch_openxr_loader.py --self-test" ^
     --gate "tools\fetch_xess.py --self-test" ^
     --gate "tools\gen_installer_rc.py --self-test" ^
-    --gate "tools\package_native.py --self-test" ^
     --gate "tools\sign_manifest.py --self-test" ^
-    --gate "tools\launcher_fixtures.py --self-test" ^
-    --gate "tools\install_proton.py --self-test" ^
     --gate "tools\build_diff.py --self-test" ^
     --gate "tools\effects_arc.py --self-test" ^
     --gate "tools\build_receipt.py --self-test" ^
@@ -538,8 +535,8 @@ if defined FFX (
     REM The port's MIT notice, exactly as NGX's licence is handled above. It
     REM ships because the port is COMPILED INTO the d3d11.dll we distribute --
     REM it has no DLL of its own -- so MIT's notice requirement applies to the
-    REM release. tools\package_native.py carries it into the zip when it is
-    REM here, and the no-port path below deletes it so a stale one cannot.
+    REM release; the release zip carries it. The no-port path below deletes it
+    REM so a stale one cannot.
     copy /Y "%FFX%\LICENSE.txt" "%BUILD%\FIDELITYFX-SDK-DX11-LICENSE.txt" >nul
 ) else (
     if exist "%BUILD%\FIDELITYFX-SDK-DX11-LICENSE.txt" del /q "%BUILD%\FIDELITYFX-SDK-DX11-LICENSE.txt"
@@ -730,34 +727,6 @@ if not exist "%OBJ%\openxr_module" mkdir "%OBJ%\openxr_module"
 if errorlevel 1 ( echo [edvr] ERROR: native runtime module build failed & exit /b 1 )
 python tools\build_phases.py --mark "%PHASES%" "runtime dll"
 
-REM Shared by the installer and installer_test rigs below.
-set INSTALLER_SRC="src\installer\main.cpp" "src\installer\gui.cpp" ^
-    "src\installer\ui.cpp" "src\installer\settings.cpp" ^
-    "src\installer\settings_view.cpp" "src\installer\logbundle.cpp" ^
-    "src\installer\app.cpp" "src\installer\plan.cpp" ^
-    "src\installer\apply.cpp" "src\installer\detect.cpp" ^
-    "src\installer\probe.cpp" "src\common\iniedit.cpp" ^
-    "src\installer\state.cpp" "src\installer\mirror.cpp" ^
-    "src\installer\payload.cpp"
-set INSTALLER_LIBS=user32.lib gdi32.lib gdiplus.lib dwmapi.lib uxtheme.lib ^
-    shell32.lib ole32.lib comctl32.lib advapi32.lib version.lib bcrypt.lib dxgi.lib kernel32.lib
-REM What the launcher adds to INSTALLER_SRC (its main.cpp, gui.cpp and the rest are the same files, built
-REM with /DEDUP_LAUNCHER): the update core and the launcher_* and selfupdate files. launcher_test links
-REM these too (frontier_api to direct_launch are direct launch: Frontier's API, the machine ID, the Steam ticket,
-REM the sequence; frontier_login is the stored Frontier-store login, and launcher_login_dialog its two windows,
-REM which the rig drives with ui.cpp). winhttp.lib is the one library the installer does not need.
-set LAUNCHER_SRC="src\installer\launcher_core.cpp" "src\installer\launcher_register.cpp" ^
-    "src\installer\launcher_plan.cpp" "src\installer\launch_route.cpp" ^
-    "src\installer\launcher_session.cpp" "src\installer\launcher_main.cpp" ^
-    "src\installer\selfupdate.cpp" "src\installer\updater.cpp" ^
-    "src\installer\update_http.cpp" "src\installer\update_json.cpp" ^
-    "src\installer\update_manifest.cpp" "src\installer\update_zip.cpp" ^
-    "src\installer\update_cache.cpp" "src\installer\update_util.cpp" ^
-    "src\installer\launcher_state.cpp" "src\installer\frontier_api.cpp" ^
-    "src\installer\machine_id.cpp" "src\installer\steam_ticket.cpp" ^
-    "src\installer\direct_launch.cpp" "src\installer\frontier_login.cpp" ^
-    "src\installer\launcher_login_dialog.cpp"
-
 if defined EDVR_DLL_ONLY goto dll_only_finish
 
 echo.
@@ -827,17 +796,6 @@ copy /y "%BUILD%\edvr_openxr_runtime.dll" "%BUILD%\openvr_api.dll" >nul || exit 
 python tools\openxr_pe.py --native "%BUILD%\openvr_api.dll" --forbid-import d3dcompiler_47.dll || exit /b 1
 python tools\openxr_pe.py --graphics "%BUILD%\d3d11.dll" --forbid-import d3dcompiler_47.dll || exit /b 1
 echo.
-REM The one line a release engineer has to see, after thousands of compiler
-REM lines: whether the installer just built carries NVIDIA's runtime.
-if exist "%BUILD%\nvngx_dlss.dll" (
-    echo [edvr] DLSS runtime: CARRIED -- build\edvr-installer.exe places nvngx_dlss.dll
-    echo        beside the game on machines with an NVIDIA card.
-) else (
-    echo [edvr] DLSS runtime: NOT CARRIED -- no DLSS SDK was found ^(the boxed notice
-    echo        above says where it looked^). Not a release build.
-)
-echo.
-python tools\package_native.py --check-installer || exit /b 1
 python tools\build_receipt.py --write "%BUILD%\full_build_receipt.json" ^
     --root "%ROOT%" ^
     --context "cl=%CL%" ^
@@ -860,8 +818,6 @@ echo        python tools\install_edvr.py --target frontier
 echo        --target takes steam, frontier or a path. Settings are preserved
 echo        unless --ini is specified. Windows selects the OpenXR runtime.
 echo.
-echo [edvr] The self-contained build\edvr-installer.exe installs the same pair,
-echo        preserves graphics-mod chaining, and supports repair and uninstall.
 echo [edvr] After the flight:
 echo        python tools\edvr_log.py --target steam^|frontier^|^<game dir^> --expect-build HEAD
 exit /b 0
@@ -877,8 +833,8 @@ python tools\build_phases.py --mark "%PHASES%" "dll-only outputs"
 python tools\build_phases.py --report "%PHASES%"
 if defined EDVR_COMPILE_ONLY goto compile_only_finish
 echo [edvr] DLL-only build passed: production DLLs and loader are ready to install.
-echo [edvr] Test rigs and the self-contained installer were skipped; use a full build
-echo        before distributing an installer or accepting new source changes.
+echo [edvr] Test rigs were skipped; use a full build
+echo        before accepting new source changes.
 exit /b 0
 
 :graphics_compile_only_finish
@@ -886,13 +842,13 @@ python tools\openxr_pe.py --graphics "%BUILD%\d3d11.dll" --imports-only --forbid
 python tools\build_phases.py --report "%PHASES%"
 echo [edvr] GRAPHICS COMPILE-ONLY: %BUILD%\d3d11.dll
 echo [edvr] NOT Windows validated and NOT a release asset. No test rigs,
-echo        other runtime DLL builds, installer or packaging ran.
+echo        other runtime DLL builds or packaging ran.
 exit /b 0
 
 :compile_only_finish
 echo [edvr] COMPILE-ONLY build finished in %BUILD%
 echo [edvr] NOT Windows validated and NOT a release asset: no Python gates, rigs or
-echo        installer ran. tools\linux_toolchain.py writes its receipt next.
+echo        ran. tools\linux_toolchain.py writes its receipt next.
 exit /b 0
 
 REM ===========================================================================
@@ -3188,205 +3144,6 @@ if errorlevel 1 ( echo [edvr] ERROR: native runtime module test build failed & e
 "%BUILD%\openxr_module_test.exe" --self-test-separate || exit /b 1
 "%BUILD%\openxr_module_test.exe" --self-test-bootstrap-separate || exit /b 1
 "%BUILD%\openxr_module_test.exe" --self-test-local || exit /b 1
-exit /b 0
-
-:rig_installer
-echo [edvr] === edvr-installer.exe ===
-REM The complete native pair, Khronos loader, notices and settings are embedded.
-REM /MANIFEST:NO is not optional. link.exe embeds a manifest of its own by
-REM default, and our .rc already puts one at resource 1 -- two RT_MANIFEST
-REM resources in one image, which Windows refuses to start at all: "the
-REM side-by-side configuration is incorrect", before a line of our code runs.
-REM It links and packages perfectly happily.
-if not exist "%OBJ%\installer" mkdir "%OBJ%\installer"
-python "tools\gen_installer_rc.py" --root "%ROOT%" --build "%BUILD%" ^
-    --out "%GEN%" --version "%EDVR_VER%"
-if errorlevel 1 ( echo [edvr] ERROR: installer resource generation failed & exit /b 1 )
-
-REM The settings window's contents were generated above, before the d3d11
-REM compile, since the in-headset menu shares the schema.
-
-rc.exe /nologo /fo "%OBJ%\installer\payload.res" "%GEN%\payload.rc"
-if errorlevel 1 ( echo [edvr] ERROR: rc.exe failed on the installer resources & exit /b 1 )
-
-
-%CC% /nologo /O2 /MT /std:c++17 /EHsc /W4 /GR- /DWIN32_LEAN_AND_MEAN /DNOMINMAX ^
-    /D_CRT_SECURE_NO_WARNINGS /DUNICODE /D_UNICODE /I"%GEN%" ^
-    /DEDVR_VERSION_STRING=\"%EDVR_VER%\" ^
-    /Fo"%OBJ%\installer"\ /Fe"%BUILD%\edvr-installer.exe" ^
-    %INSTALLER_SRC% "%OBJ%\installer\payload.res" ^
-    /link /INCREMENTAL:NO /SUBSYSTEM:WINDOWS /MANIFEST:NO %INSTALLER_LIBS%
-if errorlevel 1 ( echo [edvr] ERROR: installer build failed & exit /b 1 )
-echo [edvr] built %BUILD%\edvr-installer.exe
-
-REM Does it START? Not a formality: a manifest Windows cannot parse, a missing
-REM import, the wrong subsystem -- each of these produces an executable that
-REM links without a murmur and dies before main(), with a dialog the build never
-REM sees. --help reads nothing and writes nothing.
-"%BUILD%\edvr-installer.exe" --help >nul || (
-    echo [edvr] ERROR: the installer will not run. If Windows called it a
-    echo        side-by-side configuration problem, the manifest is the suspect.
-    exit /b 1
-)
-exit /b 0
-
-:rig_launcher
-echo [edvr] === ed-up-launcher.exe ===
-REM The launcher: the installer's window and engine with the update core, built with
-REM /DEDUP_LAUNCHER, carrying NO payload (package_native.py refuses an exe that does) and with its
-REM VERSIONINFO taken from src\installer\launcher_version.h, not from `git describe`.
-REM
-REM It is built twice, under two different EDVR_VER values and into two folders, and the two exes
-REM must be the same bytes. A release that did not change the launcher then ships the same exe, and
-REM the digest the updater compares stays put. Nothing the build knows about the commit may reach it:
-REM /Brepro on the compile and the link fixes the timestamps, and there is no PDB to name a path.
-REM Both compiles are real ones: a compile cache hit on the second would hand it the first's objects.
-set "EDVR_NO_COMPILE_CACHE=1"
-set "LAUNCHER_VER_FIRST=%EDVR_VER%"
-call :launcher_compile "%BUILD%" "%OBJ%\launcher" "%GEN%\launcher" || exit /b 1
-set "EDVR_VER=determinism-check-with-another-version"
-call :launcher_compile "%BUILD%\launcher_det" "%OBJ%\launcher_det" "%GEN%\launcher_det" || exit /b 1
-set "EDVR_VER=%LAUNCHER_VER_FIRST%"
-fc /b "%BUILD%\ed-up-launcher.exe" "%BUILD%\launcher_det\ed-up-launcher.exe" >nul
-if errorlevel 1 (
-    echo [edvr] ERROR: two builds of the launcher under different EDVR_VER values differ: it is not deterministic
-    exit /b 1
-)
-echo [edvr] launcher determinism: two builds under different EDVR_VER values are identical
-certutil -hashfile "%BUILD%\ed-up-launcher.exe" SHA256 | findstr /v "hash CertUtil"
-echo [edvr] built %BUILD%\ed-up-launcher.exe
-
-REM Does it START? --help reads nothing and writes nothing, and does not copy, register or contact anything.
-"%BUILD%\ed-up-launcher.exe" --help >nul || (
-    echo [edvr] ERROR: the launcher will not run. If Windows called it a side-by-side
-    echo        configuration problem, the manifest is the suspect.
-    exit /b 1
-)
-REM --licenses prints the licence it carries as RCDATA 120, byte for byte. Contacts nothing.
-"%BUILD%\ed-up-launcher.exe" --licenses > "%BUILD%\launcher_licenses.txt" || (
-    echo [edvr] ERROR: the launcher would not print its licence
-    exit /b 1
-)
-fc /b "%BUILD%\launcher_licenses.txt" "third_party\min_ed_launcher\LICENSE" >nul
-if errorlevel 1 (
-    echo [edvr] ERROR: the licence the launcher prints is not third_party\min_ed_launcher\LICENSE
-    exit /b 1
-)
-echo [edvr] launcher --licenses prints third_party\min_ed_launcher\LICENSE
-exit /b 0
-
-REM One compile of the launcher into %~1 (the exe's folder). %~2 is its obj folder, %~3 the folder
-REM its resource script goes in. Reads EDVR_VER only to hand it to gen_installer_rc.py, which must
-REM ignore it (--launcher-rc takes the version from launcher_version.h).
-:launcher_compile
-if not exist "%~1" mkdir "%~1"
-if not exist "%~2" mkdir "%~2"
-if not exist "%~3" mkdir "%~3"
-python "tools\gen_installer_rc.py" --launcher-rc --root "%ROOT%" --out "%~3" --version "%EDVR_VER%"
-if errorlevel 1 ( echo [edvr] ERROR: launcher resource generation failed & exit /b 1 )
-rc.exe /nologo /fo "%~2\launcher.res" "%~3\launcher.rc"
-if errorlevel 1 ( echo [edvr] ERROR: rc.exe failed on the launcher resources & exit /b 1 )
-%CC% /nologo /O2 /MT /std:c++17 /EHsc /W4 /GR- /Brepro /DWIN32_LEAN_AND_MEAN /DNOMINMAX ^
-    /D_CRT_SECURE_NO_WARNINGS /DUNICODE /D_UNICODE /I"%GEN%" ^
-    /DEDUP_LAUNCHER /DEDVR_VERSION_STRING=\"none\" ^
-    /Fo"%~2"\ /Fe"%~1\ed-up-launcher.exe" ^
-    %INSTALLER_SRC% %LAUNCHER_SRC% "%~2\launcher.res" ^
-    /link /INCREMENTAL:NO /Brepro /SUBSYSTEM:WINDOWS /MANIFEST:NO %INSTALLER_LIBS% winhttp.lib
-if errorlevel 1 ( echo [edvr] ERROR: launcher build failed & exit /b 1 )
-exit /b 0
-
-:rig_installer_test
-echo [edvr] === installer_test.exe ===
-REM The planner over folders that are hard to arrange on a real machine: EDHM
-REM already in the d3d11.dll slot, another mod's installer having overwritten
-REM ours, a game update that put the stock openvr_api.dll back, an original
-REM runtime lost to a double rename -- and the edvr.ini merge, which is the one
-REM piece whose failure silently discards settings somebody tuned in a headset.
-if not exist "%OBJ%\insttest" mkdir "%OBJ%\insttest"
-%CC% /nologo /O2 /MT /std:c++17 /EHsc /W4 /GR- /DWIN32_LEAN_AND_MEAN /DNOMINMAX ^
-    /D_CRT_SECURE_NO_WARNINGS /DUNICODE /D_UNICODE /I"%GEN%" ^
-    /Fo"%OBJ%\insttest"\ /Fe"%BUILD%\installer_test.exe" ^
-    "tools\installer_test\installer_test.cpp" ^
-    "src\installer\plan.cpp" "src\installer\apply.cpp" ^
-    "src\installer\detect.cpp" "src\installer\probe.cpp" ^
-    "src\common\iniedit.cpp" "src\installer\state.cpp" ^
-    "src\installer\mirror.cpp" ^
-    "src\installer\settings.cpp" "src\installer\logbundle.cpp" ^
-    "src\installer\app.cpp" "src\installer\payload.cpp" ^
-    /link /INCREMENTAL:NO %INSTALLER_LIBS%
-if errorlevel 1 ( echo [edvr] ERROR: installer_test build failed & exit /b 1 )
-"%BUILD%\installer_test.exe" "%ROOT%" "%BUILD%\insttest_scratch" || (
-    echo [edvr] ERROR: the installer failed its own tests
-    exit /b 1
-)
-exit /b 0
-
-:rig_launcher_test
-echo [edvr] === launcher_test.exe ===
-REM The launcher's update core, with no window: the strict JSON parser, manifest
-REM signatures checked through BCrypt against ones Python signed, the schema rules
-REM held to sign_manifest.py's, our own inflate and zip reader, the payload cache,
-REM the updater scripted against a pretend GitHub, WinHttpClient against a
-REM listener on 127.0.0.1 in the rig's own process, and usePayloadFiles. It
-REM touches only its two folders under build\ (fixtures written by
-REM tools\launcher_fixtures.py, and scratch), never the real EDVR folder in
-REM LOCALAPPDATA and never a host but the loopback address.
-REM The launcher's exe around that core is covered here too, since the same fixtures serve it: the
-REM roots and --payload folders, the Start menu shortcut and the registry entry (one HKCU subkey the
-REM rig makes and removes), the self-update swap on a running exe and its rollback, the plan and
-REM result files with this rig standing in for the elevated copy, the store addresses (recorded,
-REM never opened), the game watcher against two fake programs, the session the window drives, and
-REM the command line. The fake programs have no window the desktop could see: fake_proc.cpp.
-REM launcher_test.exe is linked long-path aware (tools\launcher_test\launcher_test.manifest, the one setting of
-REM installer.manifest that matters here), as the shipped launcher is. Without it the rig is a MAX_PATH process:
-REM the manifest store's temporary file sits about 140 characters under its scratch folder, so a worktree whose root
-REM is past about 100 characters (.claude\worktrees\<name>) failed the adoption checks in testCore, with
-REM nothing in the launcher at fault. It still needs long paths enabled in Windows (LongPathsEnabled).
-if not exist "%OBJ%\launchertest" mkdir "%OBJ%\launchertest"
-if not exist "%OBJ%\launchertest\fakeg" mkdir "%OBJ%\launchertest\fakeg"
-if not exist "%OBJ%\launchertest\fakee" mkdir "%OBJ%\launchertest\fakee"
-REM The fakes' folder is named for this rig: run_jobs removes the "<label>_" folders of a rig that passes, and a
-REM folder called launcher_fakes was the "launcher" rig's, deleted under this one whenever that job finished first.
-if not exist "%BUILD%\launcher_test_fakes" mkdir "%BUILD%\launcher_test_fakes"
-python tools\launcher_fixtures.py --out "%BUILD%\launcher_test_fixtures"
-if errorlevel 1 ( echo [edvr] ERROR: launcher fixtures failed & exit /b 1 )
-%CC% /nologo /O2 /MT /std:c++17 /EHsc /W4 /GR- /DWIN32_LEAN_AND_MEAN /DNOMINMAX ^
-    /D_CRT_SECURE_NO_WARNINGS /DUNICODE /D_UNICODE /DFAKE_EDLAUNCH ^
-    /Fo"%OBJ%\launchertest\fakee"\ /Fe"%BUILD%\launcher_test_fakes\ed_up_fake_edlaunch.exe" ^
-    "tools\launcher_test\fake_proc.cpp" ^
-    /link /INCREMENTAL:NO /SUBSYSTEM:WINDOWS user32.lib shell32.lib
-if errorlevel 1 ( echo [edvr] ERROR: the fake EDLaunch build failed & exit /b 1 )
-%CC% /nologo /O2 /MT /std:c++17 /EHsc /W4 /GR- /DWIN32_LEAN_AND_MEAN /DNOMINMAX ^
-    /D_CRT_SECURE_NO_WARNINGS /DUNICODE /D_UNICODE ^
-    /Fo"%OBJ%\launchertest\fakeg"\ /Fe"%BUILD%\launcher_test_fakes\ed_up_fake_game.exe" ^
-    "tools\launcher_test\fake_proc.cpp" ^
-    /link /INCREMENTAL:NO /SUBSYSTEM:WINDOWS user32.lib shell32.lib
-if errorlevel 1 ( echo [edvr] ERROR: the fake game build failed & exit /b 1 )
-REM A stand-in for Steam's library, with the exports the launcher binds and a canned ticket, so the real
-REM loader and export binding run in the rig and the real Steam is never touched. It is the one DLL here.
-if not exist "%OBJ%\launchertest\fakesteam" mkdir "%OBJ%\launchertest\fakesteam"
-%CC% /nologo /O2 /MT /std:c++17 /EHsc /W4 /GR- /DWIN32_LEAN_AND_MEAN /DNOMINMAX ^
-    /D_CRT_SECURE_NO_WARNINGS /LD ^
-    /Fo"%OBJ%\launchertest\fakesteam"\ /Fe"%BUILD%\launcher_test_fakes\steam_api64.dll" ^
-    "tools\launcher_test\fake_steam_api.cpp" ^
-    /link /INCREMENTAL:NO kernel32.lib
-if errorlevel 1 ( echo [edvr] ERROR: the fake steam_api64.dll build failed & exit /b 1 )
-%CC% /nologo /O2 /MT /std:c++17 /EHsc /W4 /GR- /DWIN32_LEAN_AND_MEAN /DNOMINMAX ^
-    /D_CRT_SECURE_NO_WARNINGS /DUNICODE /D_UNICODE /DEDUP_LAUNCHER /I"%GEN%" ^
-    /Fo"%OBJ%\launchertest"\ /Fe"%BUILD%\launcher_test.exe" ^
-    "tools\launcher_test\launcher_test.cpp" ^
-    "src\installer\plan.cpp" "src\installer\apply.cpp" "src\installer\detect.cpp" ^
-    "src\installer\probe.cpp" "src\common\iniedit.cpp" "src\installer\state.cpp" ^
-    "src\installer\mirror.cpp" "src\installer\settings.cpp" ^
-    "src\installer\logbundle.cpp" "src\installer\app.cpp" "src\installer\payload.cpp" ^
-    "src\installer\ui.cpp" %LAUNCHER_SRC% ^
-    /link /INCREMENTAL:NO %INSTALLER_LIBS% winhttp.lib ws2_32.lib ^
-    /MANIFEST:EMBED /MANIFESTINPUT:"%ROOT%\tools\launcher_test\launcher_test.manifest"
-if errorlevel 1 ( echo [edvr] ERROR: launcher_test build failed & exit /b 1 )
-"%BUILD%\launcher_test.exe" "%ROOT%" "%BUILD%\launcher_test_fixtures" "%BUILD%\launcher_test_scratch" "%BUILD%\launcher_test_fakes" || (
-    echo [edvr] ERROR: the launcher update core failed its own tests
-    exit /b 1
-)
 exit /b 0
 
 :rig_native_render_settings_test

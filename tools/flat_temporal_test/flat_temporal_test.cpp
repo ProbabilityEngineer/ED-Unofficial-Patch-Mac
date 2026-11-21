@@ -2697,7 +2697,7 @@ void testStandDownWiring() {
 
 // The F8 panel's settings warning in the panel and the runtime: shown only while the runtime says
 // the work is stood down for the shape of a post chain whose output copy it found, Elite's files
-// read when the panel opens, and the installer's log bundler sharing the folder's spelling. A
+// read when the panel opens. (The installer's log bundler, which shared the folder's spelling, went with the installer.) A
 // source scan, the way the stand-down pins are, with the same removal controls.
 void testFlatWarningWiring() {
     auto slurp = [](const char* path) {
@@ -2706,11 +2706,10 @@ void testFlatWarningWiring() {
     };
     const std::string menuCpp = slurp("src/d3d11/menu.cpp");
     const std::string runtimeCpp = slurp("src/d3d11/flat_runtime.cpp");
-    const std::string bundleCpp = slurp("src/installer/logbundle.cpp");
     const std::string standdownH = slurp("src/d3d11/flat_standdown.h");
     const std::string settingsH = slurp("src/d3d11/flat_elite_settings.h");
-    check(!menuCpp.empty() && !runtimeCpp.empty() && !bundleCpp.empty() && !standdownH.empty() && !settingsH.empty(),
-          "the menu, runtime, stand-down policy, settings header and log bundler sources are readable from the repo root");
+    check(!menuCpp.empty() && !runtimeCpp.empty() && !standdownH.empty() && !settingsH.empty(),
+          "the menu, runtime, stand-down policy and settings header sources are readable from the repo root");
     auto count = [](const std::string& text, const std::string& needle) {
         unsigned n = 0;
         for (size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + 1)) ++n;
@@ -2754,7 +2753,6 @@ void testFlatWarningWiring() {
          "the accessor the panel reads"},
         {&runtimeCpp, "if (warn && s.standDown.warningActive())", 1,
          "the runtime publishes the warning from the stand-down's own gate"},
-        {&bundleCpp, "return edvr::eliteGraphicsFolderUnder(base);", 1, "the log bundler composes the folder through the shared header"},
         // The gate itself: the stand-down, for a reason that found an output copy, and no clock.
         {&standdownH, "bool warningActive() const { return standing && flatMonoReasonWarrantsWarning(standReason); }", 1,
          "the warning is on while stood down for a reason that found an output copy"},
@@ -2804,8 +2802,6 @@ void testFlatWarningWiring() {
         if (tail != std::string::npos) falls.erase(tail, std::strlen("\n        return;"));
         check(falls != menuCpp && !holdOrderOk(falls), "(control) the order check fails with the held branch falling through to the switch");
     }
-    check(count(bundleCpp, "Frontier Developments") == 1,
-          "the log bundler no longer spells the folder itself (its comment names it once)");
     // NO TIMER. The first version warned after a 2 s run of refusals and flickered across a
     // transition; the gate is the stand-down now, so the constant is gone and the publisher reads no clock.
     check(count(standdownH, "kFlatStandDownWarnMs") == 0 && count(runtimeCpp, "kFlatStandDownWarnMs") == 0 &&

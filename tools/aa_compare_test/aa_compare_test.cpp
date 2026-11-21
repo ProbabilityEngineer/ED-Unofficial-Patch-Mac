@@ -318,7 +318,6 @@ static void sourcePins(const std::string& root) {
     const std::string ini = slurp(root + "\\edvr.ini");
     const std::string flatKeys = slurp(root + "\\src\\common\\flat_profile_keys.h");
     const std::string gen = slurp(root + "\\tools\\gen_installer_rc.py");
-    const std::string readme = slurp(root + "\\release\\README.txt");
     const std::string mod = slurp(root + "\\src\\d3d11\\aa_compare.cpp");
     if (hook.empty() || menu.empty() || ini.empty()) {
         std::printf("FAIL: the repo root \"%s\" does not hold the sources\n", root.c_str());
@@ -343,7 +342,7 @@ static void sourcePins(const std::string& root) {
     check(has(ini, "# ui: AA comparison key | hotkey | live"), "the F8 Hotkeys page has the row");
     check(has(flatKeys, "\"hotkey.compare_aa\""), "the flat profile reads the key");
     check(has(gen, "compare_aa = F7"), "and the flat ini template carries it");
-    check(has(readme, "F7"), "release\\README.txt lists the key");
+    // release\README.txt, which listed the key, went with the Windows installer (2026-11-21); the Mac README does not list it yet.
     check(has(mod, "setRuntimeOverride(kKey, \"off\")") && !has(mod, "iniedit") && !has(mod, "writeFileAtomic"),
           "the module overrides in memory and includes no ini writer");
 }
