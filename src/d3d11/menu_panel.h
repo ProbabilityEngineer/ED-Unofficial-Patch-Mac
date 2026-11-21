@@ -165,6 +165,9 @@ struct MenuContent {
     // bitmap's height, would push the page toward the raster's 2048-px bound and make it stop
     // updating. The Status page, which does show a hint, needs no reservation.
     bool     reserveHint = false;
+    // Empty badge lines added below the rows, so every settings page stands as tall as the one whose rows keep the most badge
+    // lines (menu.cpp buildPages, badgeLinesMax): the card does not change height from tab to tab. 0 adds nothing.
+    int      extraBadgeLines = 0;
     char     footer[160];   // keys, pending-restart count, warnings
     // The flat profile's EDVR version, drawn dim at the right end of the
     // footer's second line on every page. Empty elsewhere (VR draws none).
@@ -180,6 +183,7 @@ struct MenuContent {
     int      popupLine = -1;
     int      popupScroll = 0;   // lines of the body scrolled past
     bool     toast = false; // a one-line panel instead of the menu
+    bool     notice = false; // a notice (menu.cpp buildToastContent): a toast whose card hugs its text; the readouts keep the menu's padding
     bool     compact = false;   // info pages: a tighter row pitch
     // Sizing, decided by the model from the channel: the bitmap's width in
     // pixels, the MENU CARD's width within it, and the cap height of row
