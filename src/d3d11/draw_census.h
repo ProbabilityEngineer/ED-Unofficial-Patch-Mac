@@ -353,4 +353,9 @@ void drawCensusFrameBoundary(uint32_t frameNo);
 // view, as at a draw; the ledger interns the RTV it just read off the context.
 int drawCensusIntern(void* view);
 
+// The running census's frame (0-based) and its offscreen line index for the NEXT draw (the DCO line of the draw just recorded is this - 1):
+// what lets an instrument name a draw the way the census lines do (flat_pixel_history.h). Meaningful only while a census runs.
+uint32_t drawCensusFrameOrdinal();
+uint32_t drawCensusOffIndex();
+
 }  // namespace edvr

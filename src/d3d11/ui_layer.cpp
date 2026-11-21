@@ -669,8 +669,9 @@ Draw g_draw;
 // The SV_Position remap (ui_holo_remap.h): the two hologram sphere programs and, since 2026-09-30, the frosted
 // base. The "holo" names are the machinery's history; every counter below is per program slot or a total.
 // The census key's layer dump (ui_layer_dump.h): the left eye's HDR HUD layer at the tonemap re-issue and its 8-bit layer after the
-// coverage pass, once per census; written at the next frame boundary.
-ui_layer_dump::Slot g_dumpHdr, g_dumpPost;
+// coverage pass, once per census; written at the next frame boundary. Since 2026-11-21 also the game's scene target H as the tonemap
+// reads it (the scene, and whatever of the cockpit the layer did not take).
+ui_layer_dump::Slot g_dumpHdr, g_dumpPost, g_dumpScene;
 bool g_dumpTaken = false, g_dumpWrite = false;
 ui_holo_remap::Cache g_holoCache;
 ui_holo_remap::Binding g_holoBinding;
@@ -6925,6 +6926,13 @@ bool uiLayerCrispToneBegin(ID3D11DeviceContext* ctx) {
             const char* why = "";
             if (!ui_layer_dump::capture(ctx, e.hdrTex.Get(), "hdr", g_dumpHdr, &why))
                 Log::get().note("ui layer dump: the HDR HUD layer was not copied (%s).", why);
+            Ptr<ID3D11Resource> sceneRes;
+            Ptr<ID3D11Texture2D> sceneTex;
+            if (gameHdr) gameHdr->GetResource(&sceneRes);
+            if (sceneRes) sceneRes.As(&sceneTex);
+            why = "";
+            if (!ui_layer_dump::capture(ctx, sceneTex.Get(), "scene", g_dumpScene, &why))
+                Log::get().note("ui layer dump: the game's scene target was not copied (%s).", why);
         }
         crispBindStep(ctx, plan.steps[0]);
         if (p.ps == kUiPsMapTone && !runtimeFlatProfile()) {
@@ -7953,12 +7961,13 @@ void uiLayerFrameBoundary(ID3D11DeviceContext* ctx) {
         GetLocalTime(&t);
         char stamp[16];
         std::snprintf(stamp, sizeof(stamp), "%02u%02u%02u", t.wHour, t.wMinute, t.wSecond);
-        for (ui_layer_dump::Slot* s : {&g_dumpHdr, &g_dumpPost}) {
+        for (ui_layer_dump::Slot* s : {&g_dumpHdr, &g_dumpPost, &g_dumpScene}) {
             if (!s->staging) continue;
             std::string name;
             const char* why = "";
-            const char* what = s == &g_dumpHdr ? "the HDR HUD layer as the tonemap re-issue reads it (premultiplied radiance, transmittance in alpha)"
-                                               : "the 8-bit layer after the re-issue and the coverage pass (what the door composites)";
+            const char* what = s == &g_dumpHdr    ? "the HDR HUD layer as the tonemap re-issue reads it (premultiplied radiance, transmittance in alpha)"
+                               : s == &g_dumpPost ? "the 8-bit layer after the re-issue and the coverage pass (what the door composites)"
+                                                  : "the game's scene target H as its tonemap reads it (the scene and what the layer did not take)";
             if (ui_layer_dump::write(ctx, *s, Log::get().dir(), stamp, name, &why))
                 Log::get().note("ui layer dump: %s, left eye, written to %s.", what, name.c_str());
             else
