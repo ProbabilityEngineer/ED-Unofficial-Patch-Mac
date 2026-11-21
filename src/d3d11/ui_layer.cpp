@@ -7115,7 +7115,10 @@ void uiLayerCrispToneEnd(ID3D11DeviceContext* ctx) {
     //    frosted label quads vs 2CECEC30..., the canopy, other families), was
     //    over that HUD draw in stock and is under it now -- the HUD layer is
     //    composited over the whole frame. There is no HDR-phase counterpart of
-    //    the after-the-UI take; tools/ui_quality_test pins the inversion.
+    //    the after-the-UI take; tools/ui_quality_test pins the inversion. Flat
+    //    takes the frosted label quads' exact pair since 2026-11-21
+    //    (flat_ui_layer_math.h flatUiPanelBackingPair: the nav tag over the
+    //    comms panel).
     e.seq = seq;
     e.draws = 1;
     e.target = rtvRes;  // the RGBA8 eye the game's tonemap wrote: the FIRST link of the identity
