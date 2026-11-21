@@ -494,8 +494,8 @@ BOOL CALLBACK initOnceCallback(PINIT_ONCE, PVOID, PVOID*) {
                 kExportCount - g_missingExports, kExportCount);
         } else {
             edvr::Log::get().note(
-                "WARNING: %zu of %zu d3d11 exports did not resolve; regenerate the thunks "
-                "against this machine's d3d11.dll with build.bat",
+                "WARNING: %zu of %zu d3d11 exports did not resolve against the d3d11.dll in use "
+                "(the proxy's list is pinned in tools\\d3d11_exports.txt)",
                 g_missingExports, kExportCount);
         }
     }

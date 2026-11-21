@@ -464,7 +464,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-python "tools\gen_exports.py" --source "%SystemRoot%\System32\d3d11.dll" ^
+REM The export names are pinned (tools\d3d11_exports.txt), not read from this machine's d3d11.dll.
+python "tools\gen_exports.py" --names "tools\d3d11_exports.txt" ^
     --tag d3d11 --out "%GEN%" ^
     --wrap D3D11CreateDevice --wrap D3D11CreateDeviceAndSwapChain ^
     --extra-export edvr_selftest_hooks ^
