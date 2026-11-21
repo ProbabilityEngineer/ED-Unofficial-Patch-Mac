@@ -132,8 +132,10 @@ bool sunglareIsGlareTrain(char kind, uint32_t count, uint32_t instances) {
 
 void sunglareConfigure(Config& cfg) {
     const Mode was = g_mode;
-    const std::string v = runtimeVrProfile() ?
-        cfg.getString("fix.sun_glare", "vivid") : "stock";
+    // fix.sun_glare (stock | realistic | vivid) was read in the VR profile only, the flat profile always ran stock; the key left
+    // edvr.ini on 2026-11-19 and the flat-only port reads it no more. The modes below stay for the code that draws them.
+    (void)cfg;
+    const std::string v = "stock";
     bool legacy = false;
     if (v == "stock") {
         g_mode = Mode::kStock;
