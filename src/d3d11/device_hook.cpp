@@ -28,6 +28,7 @@ extern "C" IMAGE_DOS_HEADER __ImageBase;
 #include <vector>
 
 #include "../common/config.h"
+#include "vram_budget_probe.h"   // diagnostic: what the game is told about graphics memory
 #include "../common/d3d11_device_slots.h"   // kDevSlotCheckFormatSupport / kDevSlotCheckFeatureSupport
 #include "../common/format_query_log.h"     // formatHooksInstalledLine: the one line that says the hooks went on
 #include "../common/temporal_mode.h"
@@ -1733,6 +1734,7 @@ void presentFrameBoundary() {
     tkExposureBoundary.run([] { exposureFixFrameBoundary(); });
     // vScreenFrameBoundary marks its own ticks; this is what is left of it.
     tkVscreenRest.run([] { vScreenFrameBoundary(); });
+    vram_budget_probe::tick();   // diagnostic: a summary line every 60 s (vram_budget_probe.h)
 
     // THE FAST PATROL on the two context hooks, every frame.
     //
@@ -3300,6 +3302,7 @@ void hookFactoryForDevice(ID3D11Device* device) {
     }
     if (SUCCEEDED(dxgiDevice->GetAdapter(&adapter)) && adapter) {
         adapter->GetParent(__uuidof(IDXGIFactory), reinterpret_cast<void**>(&factory));
+        vram_budget_probe::install(adapter);   // diagnostic: what the game is told about graphics memory (vram_budget_probe.h)
     }
     if (adapter) adapter->Release();
     dxgiDevice->Release();
