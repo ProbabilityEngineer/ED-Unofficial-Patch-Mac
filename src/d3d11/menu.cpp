@@ -1513,10 +1513,13 @@ std::wstring lowerW(std::wstring s) {
     return s;
 }
 
-// The installer's mirror folder for this install (src/installer/mirror.h:
-// %LOCALAPPDATA%\EDVR\<leaf>-<store>), found rather than invented where it
-// can be: the store slug the installer would derive from the path, else the
-// one folder that already carries this leaf, else made fresh.
+// The settings mirror for this install, %LOCALAPPDATA%\EDVR\<leaf>-<store>: a
+// safety copy of the ini outside the game folder, so a launcher's file check
+// or a reinstall that wipes the folder cannot lose the settings. The Windows
+// installer (removed 2026-11-21) made and restored it; a Mac installer is to
+// restore from it. Found rather than invented where it can be: the store slug
+// derived from the path (the same rule as tools/install_edvr.py), else the one
+// folder that already carries this leaf, else made fresh.
 std::wstring mirrorDir() {
     wchar_t env[MAX_PATH] = {};
     if (!GetEnvironmentVariableW(L"LOCALAPPDATA", env, MAX_PATH)) return std::wstring();
@@ -1528,13 +1531,14 @@ std::wstring mirrorDir() {
     std::wstring slug;
     if (low.find(L"\\steamapps\\") != std::wstring::npos) slug = L"steam";
     else if (low.find(L"\\epic games\\") != std::wstring::npos) slug = L"epic";
-    else if (low.find(L"frontier_developments\\products") != std::wstring::npos)
+    else if (low.find(L"frontier_developments\\products") != std::wstring::npos ||
+             low.find(L"\\frontier\\edlaunch\\") != std::wstring::npos)   // the Frontier launcher's own folder, CrossOver's included
         slug = L"frontier-launcher";
     if (!slug.empty()) {
         const std::wstring exact = root + L"\\" + leaf + L"-" + slug;
         if (dirExistsW(exact)) return exact;
     }
-    // One folder carrying this leaf already: the installer made it.
+    // One folder carrying this leaf already: an earlier run (or the Windows installer) made it.
     WIN32_FIND_DATAW fd{};
     HANDLE h = FindFirstFileW((root + L"\\" + leaf + L"-*").c_str(), &fd);
     std::wstring found;
@@ -1600,7 +1604,7 @@ bool menuIniWritePairs(const std::vector<std::pair<std::string, std::string>>& p
     // The mirror of last resort, refreshed so an update that wipes the
     // folder cannot lose an evening's tuning. A change made just now, not a
     // checkpoint: it replaces the newest copy in place and leaves the older
-    // generations the installer keeps (edvr.ini.1, edvr.ini.2) alone. Named for
+    // generations (edvr.ini.1, edvr.ini.2) alone. Named for
     // the file actually written, so the flat profile's edvr-flat.ini lands in
     // the mirror's edvr-flat.ini rather than over the VR profile's edvr.ini.
     const std::wstring mdir = mirrorDir();
@@ -1609,7 +1613,7 @@ bool menuIniWritePairs(const std::vector<std::pair<std::string, std::string>>& p
         if (writeGenerations(mdir, leaf, updated, false, &mirrorWhy)) {
             if (!g_mirrorNoted) {
                 g_mirrorNoted = true;
-                Log::get().note("menu: each write is mirrored to %s, the installer's copy outside "
+                Log::get().note("menu: each write is mirrored to %s, a safety copy of the settings outside "
                                 "the game folder.",
                                 utf8Of(mdir).c_str());
             }
