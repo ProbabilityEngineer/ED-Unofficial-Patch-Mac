@@ -38,6 +38,8 @@ constexpr uint32_t kFsrFlagDepthInfinite = 1u << 4;
 constexpr uint32_t kFsrFlagAutoExposure = 1u << 5;
 constexpr uint32_t kFsrFlagDebugChecking = 1u << 8;
 
+// MetalFX (metal_fx_engine.cpp, 2026-11-21): the HDR route evaluates with a fixed exposure of 1.0 too (a 1x1 texture, automatic
+// exposure off): its automatic exposure dimmed stars and holograms against AA off and FSR, the DLSS finding again.
 // FSR: reversed-Z always; infinite depth and AMD's debug checking as before. The HDR route adds the HDR bit and
 // auto exposure, and keeps the exposure resource null and preExposure 1 at dispatch (auto exposure computes it).
 inline constexpr uint32_t flatFsrCreateFlags(bool infiniteDepth, bool diagnostics, bool hdr) {
