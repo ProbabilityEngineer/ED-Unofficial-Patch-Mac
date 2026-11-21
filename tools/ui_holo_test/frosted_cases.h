@@ -221,10 +221,72 @@ inline void wiring() {
     check(text.find("== ui_holo_remap::kVs")==std::string::npos,"no hologram-only gate is left in front of the remap");
     check(text.substr(need,prep-need).find("f.crispHdr")!=std::string::npos,"needsRemap is told whether the draw is an HDR take");
 }
+// The cockpit comms panel's glass (PS 4981B99A0B30E9E2, 2604 bytes; not a fixture: the repository ships no game bytecode
+// beyond upstream's). Its recipe is checked on a hand-built program with the glass's own declarations and its first two
+// instructions token for token (read from the game's program by D3DDisassemble, 2026-11-21): SV_Position in v1, the
+// position scaled by cb1[332].zw, then taken to NDC. The edit must insert the same remap the frosted base gets, read v1
+// (not v2), and leave everything else alone. The remap's arithmetic is the frosted base's, which run() checks on the GPU.
+inline std::vector<uint32_t> glassProgram() {
+    std::vector<uint32_t> t={0x50,0,
+        0x04000059,0x00208e46,1,333,              // dcl_constantbuffer CB1[333]
+        0x04000059,0x00208e46,2,4,                // dcl_constantbuffer CB2[4]
+        0x03001062,0x001010f2,0,                  // dcl_input_ps linear v0.xyzw
+        0x04002064,0x00101032,1,1,                // dcl_input_ps_siv linear noperspective v1.xy, position
+        0x03000065,0x001020f2,0,                  // dcl_output o0.xyzw
+        0x02000068,2,                             // dcl_temps 2
+        0x08000038,0x00100032,0,0x00101046,1,0x00208ae6,1,332,   // mul r0.xy, v1.xyxx, cb1[332].zwzz
+        0x0f000032,0x00100032,0,0x00100046,0,0x00004002,0x40000000,0x40000000,0,0,0x00004002,0xbf800000,0xbf800000,0,0,
+        0x05000036,0x00102032,0,0x00100046,0,     // mov o0.xy, r0.xyxx
+        0x0100003e};                              // ret
+    t[1]=static_cast<uint32_t>(t.size());return t;
+}
+inline void panelGlass(const std::vector<BYTE>& frostedBytes) {
+    check(index(kPanelGlassPs)==3&&kindOf(3)==Kind::kPanelGlass&&kPrograms[3].bytes==2604,"the glass is the table's fourth program, 2604 bytes");
+    const uint64_t other=0x1234567890ABCDEFull;
+    check(needsRemap(other,kPanelGlassPs,false)&&needsRemap(other,kPanelGlassPs,true)&&!pair(kVs,kPanelGlassPs),"the glass asks for the remap wherever it is taken, and is no hologram pair");
+    const auto t=glassProgram();const auto out=patchProgram(t,Kind::kPanelGlass);
+    check(out.size()==t.size()+15&&out[1]==out.size(),"the glass edit adds the b13 declaration and one mad");
+    // Where things are in t: the temps declaration at 20, the target at 22.
+    check(t[20]==0x02000068&&t[22]==0x08000038,"the hand-built program's layout");
+    const uint32_t cb13[]={0x04000059,0x00208e46,13,1};
+    check(std::equal(cb13,cb13+4,out.begin()+20),"cb13[1] declared before the temps");
+    check(out[25]==3,"one more temp");
+    const uint32_t mad[]={0x0b000032,0x00100032,2,0x00101046,1,0x00208046,13,0,0x00208ae6,13,0};
+    check(std::equal(mad,mad+11,out.begin()+26),"r2.xy = v1.xy * cb13[0].xy + cb13[0].zw, from v1");
+    const uint32_t target[]={0x08000038,0x00100032,0,0x00100046,2,0x00208ae6,1,332};
+    check(std::equal(target,target+8,out.begin()+37),"the scale reads r2.xyxx where it read v1.xyxx");
+    check(std::equal(t.begin()+30,t.end(),out.begin()+45),"everything after the target is the game's own");
+    auto throws=[&](const std::vector<uint32_t>& p,Kind k,const char* what){bool threw=false;try{patchProgram(p,k);}catch(const std::exception&){threw=true;}check(threw,what);};
+    throws(t,Kind::kFrostedBase,"the frosted recipe finds nothing in the glass");
+    throws(t,Kind::kHologramDepth,"the hologram recipe finds nothing in the glass");
+    for(const auto& c:edvr::dxbc_container::parseContainer(frostedBytes.data(),frostedBytes.size(),0x50))if(c.tag==0x58454853){
+        std::vector<uint32_t> ft(c.bytes.size()/4);std::memcpy(ft.data(),c.bytes.data(),c.bytes.size());throws(ft,Kind::kPanelGlass,"the glass recipe finds nothing in the frosted base");}
+    auto broken=t;broken[30+6]^=1;throws(broken,Kind::kPanelGlass,"the glass edit refuses a program whose NDC mad differs");
+    auto v2=t;v2[22+4]=2;throws(v2,Kind::kPanelGlass,"the glass edit refuses a scale of another register");
+    std::vector<BYTE> outBytes;std::string why;
+    check(!patch(frostedBytes.data(),frostedBytes.size(),kPanelGlassPs,outBytes,why)&&outBytes.empty(),"other bytes under the glass hash are refused");
+}
+// The cockpit panels' frosted backing (ps A4D03619, 2026-11-21): the frosted base's lookup under a kind of its own. No game bytes here;
+// its recipe is shown on the frosted base's own tokens, which carry the identical instruction pair.
+inline void panelBacking(const std::vector<BYTE>& frostedBytes) {
+    check(index(kPanelBackingPs)==4&&kindOf(4)==Kind::kPanelBacking&&kPrograms[4].bytes==1428,"the backing is the table's fifth program, 1428 bytes");
+    check(std::strcmp(kindName(Kind::kPanelBacking),"panel backing")==0,"its own name in the log");
+    const uint64_t other=0x1234567890ABCDEFull;
+    check(needsRemap(other,kPanelBackingPs,false)&&needsRemap(other,kPanelBackingPs,true)&&!pair(kVs,kPanelBackingPs),"the backing asks for the remap wherever it is taken, and is no hologram pair");
+    check(&recipeOf(Kind::kPanelBacking)==&recipeOf(Kind::kFrostedBase)&&!hasRelief(Kind::kPanelBacking),"the frosted base's recipe, no relief");
+    for(const auto& c:edvr::dxbc_container::parseContainer(frostedBytes.data(),frostedBytes.size(),0x50))if(c.tag==0x58454853){
+        std::vector<uint32_t> ft(c.bytes.size()/4);std::memcpy(ft.data(),c.bytes.data(),c.bytes.size());
+        check(patchProgram(ft,Kind::kPanelBacking)==patchProgram(ft,Kind::kFrostedBase),"the backing's edit is the frosted base's, token for token");
+        bool threw=false;try{patchProgram(glassProgram(),Kind::kPanelBacking);}catch(const std::exception&){threw=true;}
+        check(threw,"the backing recipe finds nothing in the glass");
+    }
+    std::vector<BYTE> outBytes;std::string why;
+    check(!patch(frostedBytes.data(),frostedBytes.size(),kPanelBackingPs,outBytes,why)&&outBytes.empty(),"other bytes under the backing hash are refused");
+}
 inline void run(ID3D11Device* d,ID3D11DeviceContext* c) {
     const auto stockBytes=bytes(kFixture),hologramBytes=bytes("tools/ui_holo_test/fixtures/ps_EA02FAC2BD6C643C.dxbc");
     check(stockBytes.size()==2292&&edvrHash(stockBytes)==kFrostedPs,"the saved frosted PS is the game's 2292 bytes");
-    structure(stockBytes,hologramBytes);slots(d,c);wiring();
+    structure(stockBytes,hologramBytes);slots(d,c);wiring();panelGlass(stockBytes);panelBacking(stockBytes);
     const Pipe pipe=makePipe(d,c);
     ComPtr<ID3D11PixelShader> stock;ck(d->CreatePixelShader(stockBytes.data(),stockBytes.size(),nullptr,&stock));
     Cache cache;check(cache.remember(stock.Get(),kFrostedPs,stockBytes.data(),stockBytes.size(),false),"actual bytes captured");

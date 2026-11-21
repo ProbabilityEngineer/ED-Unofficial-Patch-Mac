@@ -734,6 +734,8 @@ void finish() {
 // ledger row joins a census line's r= token exactly. -1 for null (no RTV
 // bound), -2 when the table is full.
 int drawCensusIntern(void* view) { return internOf(view, Kind::kView); }
+uint32_t drawCensusFrameOrdinal() { return g_frameOrdinal; }
+uint32_t drawCensusOffIndex() { return g_offThisFrame; }
 
 void drawCensusRequest() {
     if (drawCensusArmed()) {

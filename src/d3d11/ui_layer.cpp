@@ -22,6 +22,8 @@
 #include "ui_scene_composites.h"  // the census of the interface composites left in the scene, and its line
 #include "ui_maps_math.h"   // the on-foot maps gate: the key, the step, the door's predicate, the lines
 #include "ui_holo_remap.h"
+#include "ui_layer_dump.h"   // F6: the HUD layer, one frame, to edvr_logs (diagnostic)
+#include "draw_census.h"
 #include "cockpit_glass.h"          // the legacy canopy's pixel map at b13 (cockpitGlassSetLayerMap)
 #include "ui_layer_draw_timing.h"
 #include "ui_layer_shaders.h"
@@ -666,6 +668,11 @@ struct Draw {
 Draw g_draw;
 // The SV_Position remap (ui_holo_remap.h): the two hologram sphere programs and, since 2026-09-30, the frosted
 // base. The "holo" names are the machinery's history; every counter below is per program slot or a total.
+// The census key's layer dump (ui_layer_dump.h): the left eye's HDR HUD layer at the tonemap re-issue and its 8-bit layer after the
+// coverage pass, once per census; written at the next frame boundary. Since 2026-11-21 also the game's scene target H as the tonemap
+// reads it (the scene, and whatever of the cockpit the layer did not take).
+ui_layer_dump::Slot g_dumpHdr, g_dumpPost, g_dumpScene;
+bool g_dumpTaken = false, g_dumpWrite = false;
 ui_holo_remap::Cache g_holoCache;
 ui_holo_remap::Binding g_holoBinding;
 constexpr size_t kRemapPrograms = ui_holo_remap::kProgramCount;
@@ -2902,8 +2909,8 @@ bool beginInner(ID3D11DeviceContext* ctx, int which) {
         const auto& v = g_draw.vp[0];
         const int slot = ui_holo_remap::index(g_draw.holoPsHash);
         // Only the hologram programs load the scene depth at t1, and only they need it to be the target's own
-        // size; the frosted base looks its blurred scene up by UV, so nothing about its textures constrains
-        // the take.
+        // size; the frosted base looks its blurred scene up by UV, and the panel glass its masks, so nothing
+        // about their textures constrains the take.
         const bool depthLoad = ui_holo_remap::kindOf(slot) == ui_holo_remap::Kind::kHologramDepth;
         if (depthLoad) ctx->PSGetShaderResources(1, 1, &g_draw.holoDepthCheck);
         const bool valid = g_draw.vpCount == 1 && std::isfinite(v.TopLeftX) &&
@@ -3236,6 +3243,19 @@ bool beginInner(ID3D11DeviceContext* ctx, int which) {
                     g_draw.targetW, g_draw.targetH, layerW, layerH,
                     double(holoParams.x), double(holoParams.y), double(holoParams.bx), double(holoParams.by),
                     sampler);
+            } else if (ui_holo_remap::kindOf(slot) == ui_holo_remap::Kind::kPanelBacking) {
+                char sampler[96];
+                describeSampler(ctx, 1, sampler, sizeof(sampler));
+                Log::get().note("crisp holo remap: admitted panel backing PS %016llX eye %d input %ux%u layer %ux%u inverse (%g,%g) bias (%g,%g); its blurred-scene lookup reads the game's pixel position, not the layer's (%s).",
+                    static_cast<unsigned long long>(g_draw.holoPsHash), g_draw.eye,
+                    g_draw.targetW, g_draw.targetH, layerW, layerH,
+                    double(holoParams.x), double(holoParams.y), double(holoParams.bx), double(holoParams.by),
+                    sampler);
+            } else if (ui_holo_remap::kindOf(slot) == ui_holo_remap::Kind::kPanelGlass) {
+                Log::get().note("crisp holo remap: admitted panel glass PS %016llX eye %d input %ux%u layer %ux%u inverse (%g,%g) bias (%g,%g); its panel-mask lookups read the game's pixel position, not the layer's.",
+                    static_cast<unsigned long long>(g_draw.holoPsHash), g_draw.eye,
+                    g_draw.targetW, g_draw.targetH, layerW, layerH,
+                    double(holoParams.x), double(holoParams.y), double(holoParams.bx), double(holoParams.by));
             } else {
                 Log::get().note("crisp holo remap: admitted VS %016llX PS %016llX eye %d input %ux%u layer %ux%u inverse (%g,%g) bias (%g,%g); original t1/materials/alpha, seeded stencil and stock write-back retained.",
                     static_cast<unsigned long long>(ui_holo_remap::kVs), static_cast<unsigned long long>(g_draw.holoPsHash),
@@ -4242,13 +4262,19 @@ void logTotals(double seconds) {
     // The frosted base's own count: the flight's answer to "did the station menu's base go through the
     // remapped program" -- admitted must climb with the panels, refused stay 0.
     const size_t frosted = static_cast<size_t>(ui_holo_remap::index(ui_holo_remap::kFrostedPs));
-    Log::get().note("crisp holo remap: cumulative capture_calls %llu captured %llu eligible %llu prepared %llu admitted %llu refused %llu; frosted base admitted %llu refused %llu; three exact PS only, zero admitted means no successful route, no extra scene-depth copy.",
+    const size_t glass = static_cast<size_t>(ui_holo_remap::index(ui_holo_remap::kPanelGlassPs));
+    const size_t backing = static_cast<size_t>(ui_holo_remap::index(ui_holo_remap::kPanelBackingPs));
+    Log::get().note("crisp holo remap: cumulative capture_calls %llu captured %llu eligible %llu prepared %llu admitted %llu refused %llu; frosted base admitted %llu refused %llu; panel glass admitted %llu refused %llu; panel backing admitted %llu refused %llu; five exact PS only, zero admitted means no successful route, no extra scene-depth copy.",
         static_cast<unsigned long long>(g_holoCaptureCalls.load(std::memory_order_relaxed)),
         static_cast<unsigned long long>(g_holoCaptured.load(std::memory_order_relaxed)),
         static_cast<unsigned long long>(g_holoEligible), static_cast<unsigned long long>(g_holoPrepared),
         static_cast<unsigned long long>(g_holoTaken), static_cast<unsigned long long>(g_holoRefused),
         static_cast<unsigned long long>(g_holoTakenBy[frosted]),
-        static_cast<unsigned long long>(g_holoRefusedBy[frosted]));
+        static_cast<unsigned long long>(g_holoRefusedBy[frosted]),
+        static_cast<unsigned long long>(g_holoTakenBy[glass]),
+        static_cast<unsigned long long>(g_holoRefusedBy[glass]),
+        static_cast<unsigned long long>(g_holoTakenBy[backing]),
+        static_cast<unsigned long long>(g_holoRefusedBy[backing]));
     g_seedCensus.report([](const char* line) { Log::get().note("%s", line); });
     g_hdrSeedGpu.report(g_hdrDrawTimingOn, [](const char* line) { Log::get().note("%s", line); });
     const double frames = g_win.frames ? static_cast<double>(g_win.frames) : 1.0;
@@ -6906,6 +6932,19 @@ bool uiLayerCrispToneBegin(ID3D11DeviceContext* ctx) {
         g_crispSave.fellBack = fellBack;
         g_crispSave.plainWhy = plainWhy;
         crispFindSceneImages(ctx, gameHdr.Get(), p.hdrSlot, p.vs, p.ps);
+        // F6's layer dump, the HDR half: the layer exactly as this re-issue reads it (every HUD draw of the frame is in).
+        if (hudC && p.eye == 0 && !g_dumpTaken && detail::g_drawCensusFramesLeft > 0) {
+            const char* why = "";
+            if (!ui_layer_dump::capture(ctx, e.hdrTex.Get(), "hdr", g_dumpHdr, &why))
+                Log::get().note("ui layer dump: the HDR HUD layer was not copied (%s).", why);
+            Ptr<ID3D11Resource> sceneRes;
+            Ptr<ID3D11Texture2D> sceneTex;
+            if (gameHdr) gameHdr->GetResource(&sceneRes);
+            if (sceneRes) sceneRes.As(&sceneTex);
+            why = "";
+            if (!ui_layer_dump::capture(ctx, sceneTex.Get(), "scene", g_dumpScene, &why))
+                Log::get().note("ui layer dump: the game's scene target was not copied (%s).", why);
+        }
         crispBindStep(ctx, plan.steps[0]);
         if (p.ps == kUiPsMapTone && !runtimeFlatProfile()) {
             const char* b2Why = "";
@@ -7035,6 +7074,14 @@ void uiLayerCrispToneEnd(ID3D11DeviceContext* ctx) {
     }
     if (ranCover && covered) {
         if (plan.coverage) ++g_win.hdrCoveragePasses;
+        // F6's layer dump, the 8-bit half: what the door composites (the tonemapped HUD, transmittance in alpha).
+        if (eye == 0 && g_dumpHdr.staging && !g_dumpTaken) {
+            const char* why = "";
+            if (!ui_layer_dump::capture(ctx, e.tex.Get(), "post", g_dumpPost, &why))
+                Log::get().note("ui layer dump: the 8-bit layer was not copied (%s).", why);
+            g_dumpTaken = true;
+            g_dumpWrite = true;
+        }
     } else {
         vScreenClearRenderTargetViewRaw(ctx, e.rtv.Get(), kUiLayerClear);
         // The tonemap ran, but its alpha transfer did not. Retire this
@@ -7068,7 +7115,10 @@ void uiLayerCrispToneEnd(ID3D11DeviceContext* ctx) {
     //    frosted label quads vs 2CECEC30..., the canopy, other families), was
     //    over that HUD draw in stock and is under it now -- the HUD layer is
     //    composited over the whole frame. There is no HDR-phase counterpart of
-    //    the after-the-UI take; tools/ui_quality_test pins the inversion.
+    //    the after-the-UI take; tools/ui_quality_test pins the inversion. Flat
+    //    takes the frosted label quads' exact pair since 2026-11-21
+    //    (flat_ui_layer_math.h flatUiPanelBackingPair: the nav tag over the
+    //    comms panel).
     e.seq = seq;
     e.draws = 1;
     e.target = rtvRes;  // the RGBA8 eye the game's tonemap wrote: the FIRST link of the identity
@@ -7918,6 +7968,27 @@ void uiLayerFrameBoundary(ID3D11DeviceContext* ctx) {
     // A run of map sprites never outlives a frame: its references are let go and the game's targets are on the context for everything the boundary and the next frame do.
     uiLayerMapRunEnd(ctx);
     settleIssueFence(ctx);
+    // F6's layer dump: written once the frame that copied it is over; re-armed when the census is.
+    if (g_dumpWrite) {
+        g_dumpWrite = false;
+        SYSTEMTIME t{};
+        GetLocalTime(&t);
+        char stamp[16];
+        std::snprintf(stamp, sizeof(stamp), "%02u%02u%02u", t.wHour, t.wMinute, t.wSecond);
+        for (ui_layer_dump::Slot* s : {&g_dumpHdr, &g_dumpPost, &g_dumpScene}) {
+            if (!s->staging) continue;
+            std::string name;
+            const char* why = "";
+            const char* what = s == &g_dumpHdr    ? "the HDR HUD layer as the tonemap re-issue reads it (premultiplied radiance, transmittance in alpha)"
+                               : s == &g_dumpPost ? "the 8-bit layer after the re-issue and the coverage pass (what the door composites)"
+                                                  : "the game's scene target H as its tonemap reads it (the scene and what the layer did not take)";
+            if (ui_layer_dump::write(ctx, *s, Log::get().dir(), stamp, name, &why))
+                Log::get().note("ui layer dump: %s, left eye, written to %s.", what, name.c_str());
+            else
+                Log::get().note("ui layer dump: %s was not written (%s).", what, why);
+        }
+    }
+    if (g_dumpTaken && !drawCensusArmed()) g_dumpTaken = false;
     // The Galaxy Map's sprite depth (40.6 MB for both eyes at 4508x4510) is let go once the map is shut.
     if (!mapui::vrOpen() && (g_eye[0].mapDepthTex || g_eye[1].mapDepthTex)) {
         for (Eye& e : g_eye) {

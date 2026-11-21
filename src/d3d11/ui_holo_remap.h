@@ -18,34 +18,50 @@
 //    SV_Position * a game constant. Left in the game's own frame it was fine; taken into the layer (the after-UI
 //    identity follows it there) the lookup ran past 1.0 by the layer's scale. Sean's report reads as a mirror-
 //    addressed sampler folding the blurred scene back on itself; no census line records the mode, so the first
-//    take logs it.
+//    take logs it;
+//  - the cockpit comms panel's glass (2026-11-21, flat): finds its place on the panel's own masks (t1, t2) from
+//    SV_Position * cb1[332].zw mapped into the panel's screen rectangle. flat_ui_layer_math.h takes it into the
+//    layer with the panels so it dims what the layer already holds; unremapped, its mask lookups ran a third past
+//    the panel on a 3024-wide layer over the game's 2268 and most of it was discarded (the 07:42 flight);
+//  - the cockpit panels' frosted backing (2026-11-21, flat; vs 2CECEC3065EF0D4A): the dark plate behind the comms panel and
+//    the other cockpit panels' labels, which samples a 1/8-size blurred copy of the scene at SV_Position * cb1[332].zw. The
+//    same instruction and the same lookup after it as the frosted base, so the frosted base's recipe, under a kind of its
+//    own so its admission and its count are told apart in the log.
 namespace edvr::ui_holo_remap {
 inline constexpr uint64_t kVs=0x5559BD94B6852E83ull;
-enum class Kind : uint8_t {kHologramDepth,kFrostedBase};
+enum class Kind : uint8_t {kHologramDepth,kFrostedBase,kPanelGlass,kPanelBacking};
 struct Program {uint64_t ps;uint32_t bytes;Kind kind;};
 inline constexpr Program kPrograms[]={
     {0xEA02FAC2BD6C643Cull,7092,Kind::kHologramDepth},
     {0xE95634B0F61D218Full,11428,Kind::kHologramDepth},
     {0x0146ABCC53240479ull,2292,Kind::kFrostedBase},
+    {0x4981B99A0B30E9E2ull,2604,Kind::kPanelGlass},
+    {0xA4D03619D631B186ull,1428,Kind::kPanelBacking},
 };
 inline constexpr size_t kProgramCount=sizeof(kPrograms)/sizeof(kPrograms[0]);
 inline constexpr uint64_t kFrostedPs=0x0146ABCC53240479ull;
 static_assert(kPrograms[2].ps==kFrostedPs,"frosted base slot");
+inline constexpr uint64_t kPanelGlassPs=0x4981B99A0B30E9E2ull;
+static_assert(kPrograms[3].ps==kPanelGlassPs,"panel glass slot");
+inline constexpr uint64_t kPanelBackingPs=0xA4D03619D631B186ull;
+static_assert(kPrograms[4].ps==kPanelBackingPs,"panel backing slot");
 inline int index(uint64_t ps) {
     for(size_t i=0;i<kProgramCount;++i)if(kPrograms[i].ps==ps)return static_cast<int>(i);
     return -1;
 }
 inline Kind kindOf(int slot) {return kPrograms[static_cast<size_t>(slot)].kind;} // slot from index(), never negative
-inline const char* kindName(Kind k) {return k==Kind::kFrostedBase?"frosted base":"hologram depth";}
+inline const char* kindName(Kind k) {
+    return k==Kind::kFrostedBase?"frosted base":k==Kind::kPanelGlass?"panel glass":k==Kind::kPanelBacking?"panel backing":"hologram depth";
+}
 inline bool pair(uint64_t vs,uint64_t ps) {
     const int slot=index(ps);return vs==kVs&&slot>=0&&kindOf(slot)==Kind::kHologramDepth;
 }
 // Which taken draws need a remapped shader. The sphere VS into the HDR HUD layer: always asked for, and a PS that
 // is not one of the two exact hologram programs is refused to stock by prepare(), never taken unremapped. The
-// frosted base: whatever draws it, and whichever layer it lands in.
+// frosted base and the panel glass: whatever draws them, and whichever layer they land in.
 inline bool needsRemap(uint64_t vs,uint64_t ps,bool hdrTake) {
     if(hdrTake&&vs==kVs)return true;
-    const int slot=index(ps);return slot>=0&&kindOf(slot)==Kind::kFrostedBase;
+    const int slot=index(ps);return slot>=0&&kindOf(slot)!=Kind::kHologramDepth;
 }
 inline uint64_t hash(const void* data,size_t n) {
     auto p=static_cast<const BYTE*>(data);uint64_t h=1469598103934665603ull;
@@ -53,7 +69,8 @@ inline uint64_t hash(const void* data,size_t n) {
 }
 inline void require(bool ok,const char* why) {if(!ok)throw std::runtime_error(why);}
 
-// One exact edit per kind. The program has ONE instruction that reads SV_Position (v2) as its first source:
+// One exact edit per kind. The program has ONE instruction that reads SV_Position (`position`: v2 in the hologram and
+// frosted programs, v1 in the panel glass) as its first source:
 // `target`, the exact tokens of it. `follow` is what must come straight after it, so the edit can only land on the
 // intended lookup. `operand` is the operand token that replaces v2 in the target: the new temp, with the swizzle
 // the target read v2 through. The remap itself is the same for both kinds, one instruction inserted before the
@@ -63,6 +80,7 @@ struct Recipe {
     uint32_t target[8];size_t targetLength;
     uint32_t follow[17];size_t followLength;
     uint32_t operand;
+    uint32_t position;   // the input register SV_Position is declared in
     const char* notFound,*notFollowed;
 };
 inline constexpr Recipe kRecipes[]={
@@ -70,13 +88,20 @@ inline constexpr Recipe kRecipes[]={
     {{0x0500001b,0x00100032,1,0x00101046,2},5,
      {0x08000036,0x001000c2,1,0x00004002,0,0,0,0,
       0x8900002d,0x800000c2,0x00155543,0x00100012,1,0x00100e46,1,0x00107e46,1},17,
-     0x00100046,"one SV_Position ftoi","exact t1 load"},
+     0x00100046,2,"one SV_Position ftoi","exact t1 load"},
     // mul r0.zw, v2.xxxy, cb1[332].zzzw  then  sample_indexable r1.xyz, r0.zwzz, t0.xyzw, s1
     {{0x08000038,0x001000c2,0,0x00101406,2,0x00208ea6,1,332},8,
      {0x8b000045,0x800000c2,0x00155543,0x00100072,1,0x00100ae6,0,0x00107e46,0,0x00106000,1},11,
-     0x00100406,"one SV_Position mul","exact t0 lookup"},
+     0x00100406,2,"one SV_Position mul","exact t0 lookup"},
+    // mul r0.xy, v1.xyxx, cb1[332].zwzz  then  mad r0.xy, r0.xyxx, l(2,2,0,0), l(-1,-1,0,0)  (to NDC, then the panel's rectangle)
+    {{0x08000038,0x00100032,0,0x00101046,1,0x00208ae6,1,332},8,
+     {0x0f000032,0x00100032,0,0x00100046,0,0x00004002,0x40000000,0x40000000,0,0,
+      0x00004002,0xbf800000,0xbf800000,0,0},15,
+     0x00100046,1,"one SV_Position mul","exact NDC mad"},
 };
-static_assert(sizeof(kRecipes)/sizeof(kRecipes[0])==2,"one recipe per kind");
+static_assert(sizeof(kRecipes)/sizeof(kRecipes[0])==3,"one recipe per lookup shape");
+// The panel backing's lookup is the frosted base's, token for token (the ps A4D03619 dump of 2026-11-21: instruction 3, then 4).
+inline const Recipe& recipeOf(Kind kind) {return kRecipes[kind==Kind::kPanelBacking?size_t(1):static_cast<size_t>(kind)];}
 
 // THE RELIEF (issue 140, 2026-11-01: the radar's terrain darker and flat with fix.ui_quality on). Both hologram programs
 // shade the picture they show (t4) from an 8-tap Sobel whose taps sit at UV +- ddx/ddy(UV) * r, with
@@ -105,7 +130,7 @@ inline bool hasRelief(Kind kind) {return kind==Kind::kHologramDepth;}
 // radius. Every other material/UV/derivative instruction, signature and resource stays stock.
 inline std::vector<uint32_t> patchProgram(const std::vector<uint32_t>& t,Kind kind=Kind::kHologramDepth) {
     using namespace dxbc_container;
-    const Recipe& r=kRecipes[static_cast<size_t>(kind)];
+    const Recipe& r=recipeOf(kind);
     const bool relief=hasRelief(kind);
     size_t target=0,tempAt=0,reliefAt=0;uint32_t temp=0;unsigned found=0,reliefFound=0;
     require(t.size()>2&&t[0]==0x50&&t[1]==t.size(),"pixel SM5 program");
@@ -122,7 +147,7 @@ inline std::vector<uint32_t> patchProgram(const std::vector<uint32_t>& t,Kind ki
         std::equal(r.follow,r.follow+r.followLength,t.begin()+target+r.targetLength),r.notFollowed);
     if(relief)require(reliefFound==1&&reliefAt>target,"one relief radius after the position");
     const uint32_t cb[]={0x04000059,0x00208e46,13,relief?2u:1u};
-    const uint32_t mad[]={0x0b000032,0x00100032,temp,0x00101046,2,0x00208046,13,0,0x00208ae6,13,0};
+    const uint32_t mad[]={0x0b000032,0x00100032,temp,0x00101046,r.position,0x00208046,13,0,0x00208ae6,13,0};
     std::vector<uint32_t> out(t.begin(),t.begin()+tempAt);out.insert(out.end(),cb,cb+4);
     out.insert(out.end(),t.begin()+tempAt,t.begin()+target);out[tempAt+5]=temp+1;
     out.insert(out.end(),mad,mad+11);out.insert(out.end(),t.begin()+target,t.end());
@@ -141,10 +166,11 @@ inline bool patch(const void* data,size_t n,uint64_t ps,std::vector<BYTE>& outpu
     try {
         const int slot=index(ps);
         require(slot>=0&&data&&n==kPrograms[slot].bytes&&hash(data,n)==ps,"unknown pixel bytes");
+        const uint32_t reg=recipeOf(kPrograms[slot].kind).position;
         auto chunks=dxbc_container::parseContainer(data,n,0x50);bool position=false;
         for(const auto& c:chunks)if(c.tag==0x4e475349){
             for(const auto& e:dxbc_container::parseSignature(c.bytes))if(e.systemValue==1){
-                require(!position&&e.registerIndex==2&&dxbc_container::equalName(e.name,"SV_Position"),"SV_Position signature");position=true;
+                require(!position&&e.registerIndex==reg&&dxbc_container::equalName(e.name,"SV_Position"),"SV_Position signature");position=true;
             }
         }
         require(position,"SV_Position missing");unsigned changed=0;
@@ -159,7 +185,7 @@ inline bool patch(const void* data,size_t n,uint64_t ps,std::vector<BYTE>& outpu
 // the game target's size over the layer's; bx,by the frame's jitter in the game's pixels (the layer's viewport moved
 // by -jitter * scale, ui_layer_math.h's uiLayerJitterCancel, so a layer pixel stands for game position
 // pixel / scale + jitter). The layer's map has no offset, so there is no other term. Register 1 (.x): the hologram
-// programs' relief radius factor (THE RELIEF; reliefRadius), 1 unless set; the frosted base never reads it.
+// programs' relief radius factor (THE RELIEF; reliefRadius), 1 unless set; the frosted base and the glass never read it.
 struct Params {float x,y,bx,by;float relief=1.0f,pad0=0.0f,pad1=0.0f,pad2=0.0f;};
 static_assert(sizeof(Params)==32,"two float4 registers: the position map, then the relief radius");
 inline bool params(uint32_t sourceW,uint32_t sourceH,uint32_t layerW,uint32_t layerH,float jx,float jy,Params& out) {

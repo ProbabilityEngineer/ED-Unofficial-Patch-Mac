@@ -43,6 +43,7 @@
 #include "device_hook.h"  // contextHookModeFor
 #include "flat_star_light.h"        // visual.star_light_colour
 #include "draw_census.h"
+#include "flat_pixel_history.h"   // F6's pixel history under the cursor (diagnostic)
 #include "draw_gate.h"    // the sampled subscriber gate the draw path reads
 #include "draw_fast_path.h"   // the AA-off draw path's decisions (2026-10-13)
 #include "../common/temporal_mode.h"  // temporalModeEnabledFor: the AA-off fast path's switch
@@ -5458,6 +5459,17 @@ struct DrawClock {
 // lives there. So the flat branch records the draw itself, before FlatRuntimeDrawScope substitutes any binding. Every flat draw is
 // recorded as an offscreen (DCO) line: flat has no eye textures to count, and the census arms its offscreen record for flat.
 // Armed is one bool load; the record is drawCensusOffDraw's own gate (frames left and offscreen), so an unarmed census costs nothing.
+// F6's pixel history (flat_pixel_history.h, diagnostic), called by the four flat draw hooks while the census's first frame runs: before the
+// real draw with the bindings it will use (after beginActualDraw, so a taken draw's are the layer's), and after it, before endActualDraw.
+// The draw is named by the census line flatCensusDraw just wrote. Owner context only.
+static void pixelHistoryBefore(ID3D11DeviceContext* self) {
+    if (self == g_state->ownerCtx)
+        flat_pixel_history::before(self, drawCensusOffIndex() - 1, bindingShaderHash(BindSlot::Vs), bindingShaderHash(BindSlot::Ps));
+}
+static void pixelHistoryAfter(ID3D11DeviceContext* self) {
+    if (self == g_state->ownerCtx) flat_pixel_history::after(self);
+}
+
 static void flatCensusDraw(ID3D11DeviceContext* self, char kind, uint32_t count, uint32_t instances, const DrawArgs& args) {
     if (drawCensusArmed()) drawCensusOffDraw(self, kind, count, instances, args);
     if (self == g_state->ownerCtx && hdrOutputOn()) hdrOutputNoteDraw(self);   // fix.hdr: tone-target learning (hdr_output.h)
@@ -5568,6 +5580,7 @@ void STDMETHODCALLTYPE hookedDraw(ID3D11DeviceContext* self, UINT count, UINT st
         }
         FlatRuntimeDrawScope flatDraw(self, 1, 'D', count, 0, static_cast<int32_t>(start));
         if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw();
+        if (flat_pixel_history::g_active) pixelHistoryBefore(self);
         FlatStationSunGate sun(self, flatDraw, stationSkip);   // built 2026-10-21: only a skipped sun draw is changed (no real call, or a masked one)
         {
             FlatParticleScope particle(self, 'D', count, 1);
@@ -5579,6 +5592,7 @@ void STDMETHODCALLTYPE hookedDraw(ID3D11DeviceContext* self, UINT count, UINT st
             if (sun.issues() && !pane.withheld()) g_state->realDraw(self, count, start);
         }
         sun.restore();
+        if (flat_pixel_history::g_active) pixelHistoryAfter(self);
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
         // visual.cockpit_glass = legacy (cockpit_glass.h): over the game's ice or condensation canopy draw, the legacy dirt, drawn again with EDVR's overlay; one relaxed load otherwise
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx && cockpitGlassOverlayBegin(self)) { g_state->realDraw(self, count, start); cockpitGlassOverlayEnd(self); }
@@ -5677,6 +5691,7 @@ void STDMETHODCALLTYPE hookedDrawIndexed(ID3D11DeviceContext* self, UINT count,
         }
         FlatRuntimeDrawScope flatDraw(self, 1, 'I', count, startIndex, baseVertex);
         if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw();
+        if (flat_pixel_history::g_active) pixelHistoryBefore(self);
         FlatStationSunGate sun(self, flatDraw, stationSkip);
         {
             FlatParticleScope particle(self, 'I', count, 1);
@@ -5691,6 +5706,7 @@ void STDMETHODCALLTYPE hookedDrawIndexed(ID3D11DeviceContext* self, UINT count,
             }
         }
         sun.restore();
+        if (flat_pixel_history::g_active) pixelHistoryAfter(self);
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx && cockpitGlassOverlayBegin(self)) { g_state->realDrawIndexed(self, count, startIndex, baseVertex); cockpitGlassOverlayEnd(self); }
         if (!stationSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawIndexed(self, count, startIndex, baseVertex); });
@@ -5786,6 +5802,7 @@ void STDMETHODCALLTYPE hookedDrawInstanced(ID3D11DeviceContext* self, UINT perIn
         FlatRuntimeDrawScope flatDraw(self, instances, 'N', perInstance, 0,
                                       static_cast<int32_t>(startVertex), startInstance);
         if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw();
+        if (flat_pixel_history::g_active) pixelHistoryBefore(self);
         FlatStationSunGate sun(self, flatDraw, stationSkip);
         {
             FlatParticleScope particle(self, 'N', perInstance, instances);
@@ -5797,6 +5814,7 @@ void STDMETHODCALLTYPE hookedDrawInstanced(ID3D11DeviceContext* self, UINT perIn
             if (sun.issues() && !pane.withheld()) g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance);
         }
         sun.restore();
+        if (flat_pixel_history::g_active) pixelHistoryAfter(self);
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx && cockpitGlassOverlayBegin(self)) { g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance); cockpitGlassOverlayEnd(self); }
         if (!stationSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance); });
@@ -5883,6 +5901,7 @@ void STDMETHODCALLTYPE hookedDrawIndexedInstanced(ID3D11DeviceContext* self,
         FlatRuntimeDrawScope flatDraw(self, instances, 'X', perInstance, startIndex,
                                       baseVertex, startInstance);
         if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw();
+        if (flat_pixel_history::g_active) pixelHistoryBefore(self);
         FlatStationSunGate sun(self, flatDraw, stationSkip);
         {
             FlatParticleScope particle(self, 'X', perInstance, instances);
@@ -5900,6 +5919,7 @@ void STDMETHODCALLTYPE hookedDrawIndexedInstanced(ID3D11DeviceContext* self,
             }
         }
         sun.restore();
+        if (flat_pixel_history::g_active) pixelHistoryAfter(self);
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx && cockpitGlassOverlayBegin(self)) { g_state->realDrawIndexedInstanced(self, perInstance, instances, startIndex, baseVertex, startInstance); cockpitGlassOverlayEnd(self); }
         if (!stationSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawIndexedInstanced(self, perInstance, instances, startIndex, baseVertex, startInstance); });
@@ -7017,7 +7037,12 @@ void vScreenFrameBoundary() {
 
     // Before this frame's counters are read or reset: a pending census starts
     // here, a running one advances, a spent one writes its tables.
+    // F6's pixel history (flat_pixel_history.h, diagnostic): the probed frame is reported before the census advances, and armed for the
+    // census's first frame once it has started.
+    if (runtimeFlatProfile()) flat_pixel_history::frameEnd(s->ownerCtx);
     tkDrawCensusBoundary.run([&] { drawCensusFrameBoundary(s->frameNo); });
+    if (runtimeFlatProfile())
+        flat_pixel_history::frameStart(edvr::detail::g_drawCensusFramesLeft > 0 && drawCensusFrameOrdinal() == 0, drawCensusArmed());
     gpuPassProfileFrameBoundary(g_state->ownerCtx, s->frameNo, s->eyeW, s->eyeH);
     tkFssReveal.run([&] {
         // The scanner is on show while the FSS mode latch is open or its chrome matched within the last five frames. Flat never arms the reveal fix.
