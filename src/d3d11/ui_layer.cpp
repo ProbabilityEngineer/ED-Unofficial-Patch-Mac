@@ -2902,8 +2902,8 @@ bool beginInner(ID3D11DeviceContext* ctx, int which) {
         const auto& v = g_draw.vp[0];
         const int slot = ui_holo_remap::index(g_draw.holoPsHash);
         // Only the hologram programs load the scene depth at t1, and only they need it to be the target's own
-        // size; the frosted base looks its blurred scene up by UV, so nothing about its textures constrains
-        // the take.
+        // size; the frosted base looks its blurred scene up by UV, and the panel glass its masks, so nothing
+        // about their textures constrains the take.
         const bool depthLoad = ui_holo_remap::kindOf(slot) == ui_holo_remap::Kind::kHologramDepth;
         if (depthLoad) ctx->PSGetShaderResources(1, 1, &g_draw.holoDepthCheck);
         const bool valid = g_draw.vpCount == 1 && std::isfinite(v.TopLeftX) &&
@@ -3236,6 +3236,11 @@ bool beginInner(ID3D11DeviceContext* ctx, int which) {
                     g_draw.targetW, g_draw.targetH, layerW, layerH,
                     double(holoParams.x), double(holoParams.y), double(holoParams.bx), double(holoParams.by),
                     sampler);
+            } else if (ui_holo_remap::kindOf(slot) == ui_holo_remap::Kind::kPanelGlass) {
+                Log::get().note("crisp holo remap: admitted panel glass PS %016llX eye %d input %ux%u layer %ux%u inverse (%g,%g) bias (%g,%g); its panel-mask lookups read the game's pixel position, not the layer's.",
+                    static_cast<unsigned long long>(g_draw.holoPsHash), g_draw.eye,
+                    g_draw.targetW, g_draw.targetH, layerW, layerH,
+                    double(holoParams.x), double(holoParams.y), double(holoParams.bx), double(holoParams.by));
             } else {
                 Log::get().note("crisp holo remap: admitted VS %016llX PS %016llX eye %d input %ux%u layer %ux%u inverse (%g,%g) bias (%g,%g); original t1/materials/alpha, seeded stencil and stock write-back retained.",
                     static_cast<unsigned long long>(ui_holo_remap::kVs), static_cast<unsigned long long>(g_draw.holoPsHash),
@@ -4242,13 +4247,16 @@ void logTotals(double seconds) {
     // The frosted base's own count: the flight's answer to "did the station menu's base go through the
     // remapped program" -- admitted must climb with the panels, refused stay 0.
     const size_t frosted = static_cast<size_t>(ui_holo_remap::index(ui_holo_remap::kFrostedPs));
-    Log::get().note("crisp holo remap: cumulative capture_calls %llu captured %llu eligible %llu prepared %llu admitted %llu refused %llu; frosted base admitted %llu refused %llu; three exact PS only, zero admitted means no successful route, no extra scene-depth copy.",
+    const size_t glass = static_cast<size_t>(ui_holo_remap::index(ui_holo_remap::kPanelGlassPs));
+    Log::get().note("crisp holo remap: cumulative capture_calls %llu captured %llu eligible %llu prepared %llu admitted %llu refused %llu; frosted base admitted %llu refused %llu; panel glass admitted %llu refused %llu; four exact PS only, zero admitted means no successful route, no extra scene-depth copy.",
         static_cast<unsigned long long>(g_holoCaptureCalls.load(std::memory_order_relaxed)),
         static_cast<unsigned long long>(g_holoCaptured.load(std::memory_order_relaxed)),
         static_cast<unsigned long long>(g_holoEligible), static_cast<unsigned long long>(g_holoPrepared),
         static_cast<unsigned long long>(g_holoTaken), static_cast<unsigned long long>(g_holoRefused),
         static_cast<unsigned long long>(g_holoTakenBy[frosted]),
-        static_cast<unsigned long long>(g_holoRefusedBy[frosted]));
+        static_cast<unsigned long long>(g_holoRefusedBy[frosted]),
+        static_cast<unsigned long long>(g_holoTakenBy[glass]),
+        static_cast<unsigned long long>(g_holoRefusedBy[glass]));
     g_seedCensus.report([](const char* line) { Log::get().note("%s", line); });
     g_hdrSeedGpu.report(g_hdrDrawTimingOn, [](const char* line) { Log::get().note("%s", line); });
     const double frames = g_win.frames ? static_cast<double>(g_win.frames) : 1.0;
