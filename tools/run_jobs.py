@@ -2799,7 +2799,10 @@ def self_test_gates(check):
     # The printed words are built at run time so a command's header never contains them.
     ok = '-c "print(\'ok-\' + \'gate\')"'
     bad = '-c "import sys; print(\'bad-\' + \'gate\'); sys.exit(3)"'
-    crash = '-c "import sys; sys.exit(-1073741819)"'
+    # A crash as the host reports one: an NTSTATUS exit code on Windows (an access violation), a signal elsewhere,
+    # where an exit code is 8 bits and -1073741819 would arrive as 5, an ordinary failure.
+    crash = ('-c "import sys; sys.exit(-1073741819)"' if os.name == "nt" else
+             '-c "import os, signal; os.kill(os.getpid(), signal.SIGABRT)"')
 
     out = io.BytesIO()
     code = run_gates([ok, ok], 2, out)
