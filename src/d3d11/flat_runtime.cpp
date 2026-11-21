@@ -7651,7 +7651,7 @@ FlatRuntimeDrawScope::FlatRuntimeDrawScope(ID3D11DeviceContext* context, uint32_
     }
     Ptr<ID3D11ShaderResourceView> engineSlots, enginePool, outputView, engineSkin; Ptr<ID3D11Buffer> nowCb, prevCb;
     engineSlots.Attach(f.engine.slots); enginePool.Attach(f.engine.pool); nowCb.Attach(f.engine.sceneNow); prevCb.Attach(f.engine.scenePrev);
-    engineSkin.Attach(f.engine.skin);   // (null in the flat profile, which has no target 7; released with the rest)
+    engineSkin.Attach(f.engine.skin);   // (null unless a skinned draw wrote target 7 this frame: in flat only with fix.character_motion on; released with the rest)
     // The weapon on the copy route (flatWeaponRoute == Copy, flat_copy_structure.h): a frame that is mixed-camera (the model's cohort
     // in it, or a first-person draw the domain planned: flatCopyMixedCamera, above) asks the same foreground contract the HDR route asks
     // at its trigger, here at the final copy, and the resolver takes a qualified map or refuses. EDVR's TAA is never asked (the call
@@ -8043,7 +8043,7 @@ void FlatRuntimeDrawScope::treatHdr(const FlatMonoFrame& selected, uint32_t srvS
     }
     Ptr<ID3D11ShaderResourceView> engineSlots, enginePool, outputView, engineSkin; Ptr<ID3D11Buffer> nowCb, prevCb;
     engineSlots.Attach(f.engine.slots); enginePool.Attach(f.engine.pool); nowCb.Attach(f.engine.sceneNow); prevCb.Attach(f.engine.scenePrev);
-    engineSkin.Attach(f.engine.skin);   // (null in the flat profile, which has no target 7; released with the rest)
+    engineSkin.Attach(f.engine.skin);   // (null unless a skinned draw wrote target 7 this frame: in flat only with fix.character_motion on; released with the rest)
     // The foreground contract of a mixed-camera frame (the copy route's final copy asks the same, below its engine source views).
     FlatForegroundMotion::Output foregroundOutput;
     foregroundContractAtH(s,ctx,selected,f,foregroundOutput);

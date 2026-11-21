@@ -357,9 +357,10 @@ struct EngineVelocityViews {
     ID3D11Buffer* sceneNow = nullptr;
     ID3D11Buffer* scenePrev = nullptr;
     ID3D11ShaderResourceView* gameMark = nullptr;
-    // F2 on foot (VR, engineVelocitySourceViews only): the source pass's target 7, R16G16B16A16_FLOAT at the source depth's size, xyz = a skinned
+    // F2 on foot (engineVelocitySourceViews only: VR, and flat with fix.character_motion on): the source pass's target 7, R16G16B16A16_FLOAT at the source depth's size, xyz = a skinned
     // character's previous - current position in centimetres and w = 1 valid / 0 none, cleared to zero at the first skinned draw of the frame. Null when
-    // no skinned draw wrote it this frame and ALWAYS in the flat profile (it has no target 7): the consumers then keep what they had. The eyes' own is
+    // no skinned draw wrote it this frame, and always in the flat profile while fix.character_motion is off (nothing writes target 7 there then): the
+    // consumers then keep what they had. The eyes' own is
     // engineVelocitySkinView. AddRef'd like the rest; every consumer that releases the others releases this.
     ID3D11ShaderResourceView* skin = nullptr;
 };
