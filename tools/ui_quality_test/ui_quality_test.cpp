@@ -1492,6 +1492,23 @@ void testFlatLayerRules() {
           "flat layer: the legacy canopy is asked for, named only with the legacy fact (odyssey names nothing), and has no scene slot");
     check(flatUiLegacyGlassPair(kUiVsLegacyGlass, kUiPsLegacyGlass) && !flatUiLegacyGlassPair(kUiVsLegacyGlass, 0) && !flatUiLegacyGlassPair(0, kUiPsLegacyGlass),
           "flat layer: the canopy pair is the pair, not either shader");
+    // 2026-11-21: the comms panel's glass is taken with the panels in flat (it dims the HUD the layer holds as the game's frame does), by its exact pair only,
+    // whatever the map and target facts; VR's shared rule does not name it.
+    check(flatUiFamilyOf(kFlatUiPanelGlassVs, kFlatUiPanelGlassPs) == UiLayerFamily::kHolo &&
+              flatUiFamilyOf(kFlatUiPanelGlassVs, kFlatUiPanelGlassPs, true) == UiLayerFamily::kHolo &&
+              flatUiFamilyFor(kFlatUiPanelGlassVs, kFlatUiPanelGlassPs, true, true) == UiLayerFamily::kHolo &&
+              flatUiLayerTakesFamily(flatUiFamilyOf(kFlatUiPanelGlassVs, kFlatUiPanelGlassPs)),
+          "flat layer: the comms panel's glass is a holo-panel draw, taken");
+    check(flatUiFamilyOf(kFlatUiPanelGlassVs, 0) == UiLayerFamily::kNone && flatUiFamilyOf(0, kFlatUiPanelGlassPs) == UiLayerFamily::kNone &&
+              flatUiFamilyOf(kFlatUiPanelGlassVs, kFlatUiPanelGlassPs ^ 1) == UiLayerFamily::kNone,
+          "flat layer: the panel glass is the pair, not either shader");
+    {
+        UiFamilyFacts glass;
+        glass.vs = kFlatUiPanelGlassVs; glass.ps = kFlatUiPanelGlassPs;
+        bool vrNames = false;
+        for (uint32_t kind : {1u, 2u}) { glass.targetKind = kind; vrNames = vrNames || uiLayerFamilyFor(glass) != UiLayerFamily::kNone; }
+        check(!vrNames, "flat layer: the panel glass is flat's rule; the shared (VR) rule names nothing for it");
+    }
     check(flatUiSceneSlotOf(UiLayerFamily::kSupercruiseBars) == 0 && flatUiSceneSlotOf(UiLayerFamily::kSpaceDust) == 1 &&
               flatUiSceneSlotOf(UiLayerFamily::kNormalSpaceDust) == 2 && flatUiSceneSlotOf(UiLayerFamily::kOrbitLines) == 3 &&
               flatUiSceneSlotOf(UiLayerFamily::kHolo) == -1 && flatUiSceneSlotOf(UiLayerFamily::kMapCanvas) == -1,

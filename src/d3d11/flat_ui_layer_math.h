@@ -26,10 +26,22 @@ inline FlatUiTarget flatUiTargetClass(bool isBackBuffer, uint32_t w, uint32_t h,
     return FlatUiTarget::kOther;
 }
 
+// THE COMMS PANEL'S GLASS (flat only, 2026-11-21; draw census #2, #3, #5-#8 of edvr_gfx_20261121_050837): the dark backing plate of the
+// left (comms) panel, one draw a frame of the same 480-vertex mesh, open or collapsed, alpha-blended (SRC_ALPHA, INV_SRC_ALPHA),
+// depth-tested and writing depth and stencil bit 4 like the panels, issued right after the panels and the target sprite. Left in H it
+// dimmed the scene behind the panel but not the HUD the layer took: the nav tag and the panel-edge HUD arc stayed bright over it with
+// the AA on, where the game's own frame dims them (the AA-off screenshots). Taken with the panels (kHolo), it lands in the layer after
+// them, in the game's order, and dims what the layer holds as it dims the scene. Only the exact pair is named; the layer's own refusals
+// still apply and leave the draw in H as before.
+constexpr uint64_t kFlatUiPanelGlassVs = 0x4BF5B83CBFE54849ull;
+constexpr uint64_t kFlatUiPanelGlassPs = 0x4981B99A0B30E9E2ull;
+inline bool flatUiPanelGlassPair(uint64_t vs, uint64_t ps) { return vs == kFlatUiPanelGlassVs && ps == kFlatUiPanelGlassPs; }
+
 // The shared family rule, asked both ways (an HDR eye target, then the post-tonemap one) with no learned surface:
-// ui_layer_math.h's shader-pair recognitions, not a second hash table.
+// ui_layer_math.h's shader-pair recognitions, not a second hash table. Flat adds one pair of its own ahead of it, the comms panel's glass.
 // legacyGlass: visual.cockpit_glass is legacy (the caller's one load of cockpitGlassLegacyLive); false names no canopy, so `odyssey` leaves the game's own canopy draw unnamed.
 inline UiLayerFamily flatUiFamilyOf(uint64_t vs, uint64_t ps, bool legacyGlass = false) {
+    if (flatUiPanelGlassPair(vs, ps)) return UiLayerFamily::kHolo;
     UiFamilyFacts f;
     f.vs = vs;
     f.ps = ps;

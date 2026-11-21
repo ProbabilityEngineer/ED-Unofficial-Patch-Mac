@@ -75,6 +75,13 @@ inline int flatPairFactsTests() {
                "...and the family rule names it only with the legacy fact");
     }
 
+    // ---- the comms panel's glass (2026-11-21): a flat UI family the memo names (uiMayAsk), so the adapter asks for it; not the canopy ------
+    {
+        const FlatPairFacts g = flatPairFactsFresh(kFlatUiPanelGlassVs, kFlatUiPanelGlassPs, true);
+        expect(g.uiMayAsk && !g.legacyGlassPair && g.toneSlot == ~0u && !g.copyPair, "the panel glass pair is uiMayAsk, and nothing else the memo names");
+        expect(!flatPairFactsFresh(kFlatUiPanelGlassVs, 0, true).uiMayAsk, "...by the pair, not by its vertex shader");
+    }
+
     // ---- the Full System Scanner's tonemap is the UI layer's table alone ------------------------------------------------------
     // (flatUiMapToneSlotOf: slot 0, like the map's). Not a registry tone, not an E894-layout source tone, not the copy, no UI family, and the
     // same in both profiles: the resolve's tone selection, the target's tone record and the HDR route's trigger do not see a new pass.
