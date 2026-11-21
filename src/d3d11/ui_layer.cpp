@@ -22,6 +22,8 @@
 #include "ui_scene_composites.h"  // the census of the interface composites left in the scene, and its line
 #include "ui_maps_math.h"   // the on-foot maps gate: the key, the step, the door's predicate, the lines
 #include "ui_holo_remap.h"
+#include "ui_layer_dump.h"   // F6: the HUD layer, one frame, to edvr_logs (diagnostic)
+#include "draw_census.h"
 #include "cockpit_glass.h"          // the legacy canopy's pixel map at b13 (cockpitGlassSetLayerMap)
 #include "ui_layer_draw_timing.h"
 #include "ui_layer_shaders.h"
@@ -666,6 +668,10 @@ struct Draw {
 Draw g_draw;
 // The SV_Position remap (ui_holo_remap.h): the two hologram sphere programs and, since 2026-09-30, the frosted
 // base. The "holo" names are the machinery's history; every counter below is per program slot or a total.
+// The census key's layer dump (ui_layer_dump.h): the left eye's HDR HUD layer at the tonemap re-issue and its 8-bit layer after the
+// coverage pass, once per census; written at the next frame boundary.
+ui_layer_dump::Slot g_dumpHdr, g_dumpPost;
+bool g_dumpTaken = false, g_dumpWrite = false;
 ui_holo_remap::Cache g_holoCache;
 ui_holo_remap::Binding g_holoBinding;
 constexpr size_t kRemapPrograms = ui_holo_remap::kProgramCount;
@@ -6914,6 +6920,12 @@ bool uiLayerCrispToneBegin(ID3D11DeviceContext* ctx) {
         g_crispSave.fellBack = fellBack;
         g_crispSave.plainWhy = plainWhy;
         crispFindSceneImages(ctx, gameHdr.Get(), p.hdrSlot, p.vs, p.ps);
+        // F6's layer dump, the HDR half: the layer exactly as this re-issue reads it (every HUD draw of the frame is in).
+        if (hudC && p.eye == 0 && !g_dumpTaken && detail::g_drawCensusFramesLeft > 0) {
+            const char* why = "";
+            if (!ui_layer_dump::capture(ctx, e.hdrTex.Get(), "hdr", g_dumpHdr, &why))
+                Log::get().note("ui layer dump: the HDR HUD layer was not copied (%s).", why);
+        }
         crispBindStep(ctx, plan.steps[0]);
         if (p.ps == kUiPsMapTone && !runtimeFlatProfile()) {
             const char* b2Why = "";
@@ -7043,6 +7055,14 @@ void uiLayerCrispToneEnd(ID3D11DeviceContext* ctx) {
     }
     if (ranCover && covered) {
         if (plan.coverage) ++g_win.hdrCoveragePasses;
+        // F6's layer dump, the 8-bit half: what the door composites (the tonemapped HUD, transmittance in alpha).
+        if (eye == 0 && g_dumpHdr.staging && !g_dumpTaken) {
+            const char* why = "";
+            if (!ui_layer_dump::capture(ctx, e.tex.Get(), "post", g_dumpPost, &why))
+                Log::get().note("ui layer dump: the 8-bit layer was not copied (%s).", why);
+            g_dumpTaken = true;
+            g_dumpWrite = true;
+        }
     } else {
         vScreenClearRenderTargetViewRaw(ctx, e.rtv.Get(), kUiLayerClear);
         // The tonemap ran, but its alpha transfer did not. Retire this
@@ -7926,6 +7946,26 @@ void uiLayerFrameBoundary(ID3D11DeviceContext* ctx) {
     // A run of map sprites never outlives a frame: its references are let go and the game's targets are on the context for everything the boundary and the next frame do.
     uiLayerMapRunEnd(ctx);
     settleIssueFence(ctx);
+    // F6's layer dump: written once the frame that copied it is over; re-armed when the census is.
+    if (g_dumpWrite) {
+        g_dumpWrite = false;
+        SYSTEMTIME t{};
+        GetLocalTime(&t);
+        char stamp[16];
+        std::snprintf(stamp, sizeof(stamp), "%02u%02u%02u", t.wHour, t.wMinute, t.wSecond);
+        for (ui_layer_dump::Slot* s : {&g_dumpHdr, &g_dumpPost}) {
+            if (!s->staging) continue;
+            std::string name;
+            const char* why = "";
+            const char* what = s == &g_dumpHdr ? "the HDR HUD layer as the tonemap re-issue reads it (premultiplied radiance, transmittance in alpha)"
+                                               : "the 8-bit layer after the re-issue and the coverage pass (what the door composites)";
+            if (ui_layer_dump::write(ctx, *s, Log::get().dir(), stamp, name, &why))
+                Log::get().note("ui layer dump: %s, left eye, written to %s.", what, name.c_str());
+            else
+                Log::get().note("ui layer dump: %s was not written (%s).", what, why);
+        }
+    }
+    if (g_dumpTaken && !drawCensusArmed()) g_dumpTaken = false;
     // The Galaxy Map's sprite depth (40.6 MB for both eyes at 4508x4510) is let go once the map is shut.
     if (!mapui::vrOpen() && (g_eye[0].mapDepthTex || g_eye[1].mapDepthTex)) {
         for (Eye& e : g_eye) {
