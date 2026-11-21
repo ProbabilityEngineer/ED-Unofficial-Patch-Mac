@@ -5459,6 +5459,17 @@ struct DrawClock {
 // lives there. So the flat branch records the draw itself, before FlatRuntimeDrawScope substitutes any binding. Every flat draw is
 // recorded as an offscreen (DCO) line: flat has no eye textures to count, and the census arms its offscreen record for flat.
 // Armed is one bool load; the record is drawCensusOffDraw's own gate (frames left and offscreen), so an unarmed census costs nothing.
+// F6's pixel history (flat_pixel_history.h, diagnostic), called by the four flat draw hooks while the census's first frame runs: before the
+// real draw with the bindings it will use (after beginActualDraw, so a taken draw's are the layer's), and after it, before endActualDraw.
+// The draw is named by the census line flatCensusDraw just wrote. Owner context only.
+static void pixelHistoryBefore(ID3D11DeviceContext* self) {
+    if (self == g_state->ownerCtx)
+        flat_pixel_history::before(self, drawCensusOffIndex() - 1, bindingShaderHash(BindSlot::Vs), bindingShaderHash(BindSlot::Ps));
+}
+static void pixelHistoryAfter(ID3D11DeviceContext* self) {
+    if (self == g_state->ownerCtx) flat_pixel_history::after(self);
+}
+
 static void flatCensusDraw(ID3D11DeviceContext* self, char kind, uint32_t count, uint32_t instances, const DrawArgs& args) {
     if (drawCensusArmed()) drawCensusOffDraw(self, kind, count, instances, args);
     if (self == g_state->ownerCtx && hdrOutputOn()) hdrOutputNoteDraw(self);   // fix.hdr: tone-target learning (hdr_output.h)
@@ -5569,8 +5580,7 @@ void STDMETHODCALLTYPE hookedDraw(ID3D11DeviceContext* self, UINT count, UINT st
         }
         FlatRuntimeDrawScope flatDraw(self, 1, 'D', count, 0, static_cast<int32_t>(start));
         if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw();
-        // F6's pixel history (flat_pixel_history.h, diagnostic): the census's first frame only, with the bindings the real draw will use.
-        if (flat_pixel_history::g_active && self == g_state->ownerCtx) flat_pixel_history::before(self, drawCensusOffIndex() - 1, bindingShaderHash(BindSlot::Vs), bindingShaderHash(BindSlot::Ps));
+        if (flat_pixel_history::g_active) pixelHistoryBefore(self);
         FlatStationSunGate sun(self, flatDraw, stationSkip);   // built 2026-10-21: only a skipped sun draw is changed (no real call, or a masked one)
         {
             FlatParticleScope particle(self, 'D', count, 1);
@@ -5582,7 +5592,7 @@ void STDMETHODCALLTYPE hookedDraw(ID3D11DeviceContext* self, UINT count, UINT st
             if (sun.issues() && !pane.withheld()) g_state->realDraw(self, count, start);
         }
         sun.restore();
-        if (flat_pixel_history::g_active && self == g_state->ownerCtx) flat_pixel_history::after(self);
+        if (flat_pixel_history::g_active) pixelHistoryAfter(self);
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
         // visual.cockpit_glass = legacy (cockpit_glass.h): over the game's ice or condensation canopy draw, the legacy dirt, drawn again with EDVR's overlay; one relaxed load otherwise
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx && cockpitGlassOverlayBegin(self)) { g_state->realDraw(self, count, start); cockpitGlassOverlayEnd(self); }
@@ -5681,8 +5691,7 @@ void STDMETHODCALLTYPE hookedDrawIndexed(ID3D11DeviceContext* self, UINT count,
         }
         FlatRuntimeDrawScope flatDraw(self, 1, 'I', count, startIndex, baseVertex);
         if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw();
-        // F6's pixel history (flat_pixel_history.h, diagnostic): the census's first frame only, with the bindings the real draw will use.
-        if (flat_pixel_history::g_active && self == g_state->ownerCtx) flat_pixel_history::before(self, drawCensusOffIndex() - 1, bindingShaderHash(BindSlot::Vs), bindingShaderHash(BindSlot::Ps));
+        if (flat_pixel_history::g_active) pixelHistoryBefore(self);
         FlatStationSunGate sun(self, flatDraw, stationSkip);
         {
             FlatParticleScope particle(self, 'I', count, 1);
@@ -5697,7 +5706,7 @@ void STDMETHODCALLTYPE hookedDrawIndexed(ID3D11DeviceContext* self, UINT count,
             }
         }
         sun.restore();
-        if (flat_pixel_history::g_active && self == g_state->ownerCtx) flat_pixel_history::after(self);
+        if (flat_pixel_history::g_active) pixelHistoryAfter(self);
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx && cockpitGlassOverlayBegin(self)) { g_state->realDrawIndexed(self, count, startIndex, baseVertex); cockpitGlassOverlayEnd(self); }
         if (!stationSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawIndexed(self, count, startIndex, baseVertex); });
@@ -5793,8 +5802,7 @@ void STDMETHODCALLTYPE hookedDrawInstanced(ID3D11DeviceContext* self, UINT perIn
         FlatRuntimeDrawScope flatDraw(self, instances, 'N', perInstance, 0,
                                       static_cast<int32_t>(startVertex), startInstance);
         if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw();
-        // F6's pixel history (flat_pixel_history.h, diagnostic): the census's first frame only, with the bindings the real draw will use.
-        if (flat_pixel_history::g_active && self == g_state->ownerCtx) flat_pixel_history::before(self, drawCensusOffIndex() - 1, bindingShaderHash(BindSlot::Vs), bindingShaderHash(BindSlot::Ps));
+        if (flat_pixel_history::g_active) pixelHistoryBefore(self);
         FlatStationSunGate sun(self, flatDraw, stationSkip);
         {
             FlatParticleScope particle(self, 'N', perInstance, instances);
@@ -5806,7 +5814,7 @@ void STDMETHODCALLTYPE hookedDrawInstanced(ID3D11DeviceContext* self, UINT perIn
             if (sun.issues() && !pane.withheld()) g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance);
         }
         sun.restore();
-        if (flat_pixel_history::g_active && self == g_state->ownerCtx) flat_pixel_history::after(self);
+        if (flat_pixel_history::g_active) pixelHistoryAfter(self);
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx && cockpitGlassOverlayBegin(self)) { g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance); cockpitGlassOverlayEnd(self); }
         if (!stationSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance); });
@@ -5893,8 +5901,7 @@ void STDMETHODCALLTYPE hookedDrawIndexedInstanced(ID3D11DeviceContext* self,
         FlatRuntimeDrawScope flatDraw(self, instances, 'X', perInstance, startIndex,
                                       baseVertex, startInstance);
         if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw();
-        // F6's pixel history (flat_pixel_history.h, diagnostic): the census's first frame only, with the bindings the real draw will use.
-        if (flat_pixel_history::g_active && self == g_state->ownerCtx) flat_pixel_history::before(self, drawCensusOffIndex() - 1, bindingShaderHash(BindSlot::Vs), bindingShaderHash(BindSlot::Ps));
+        if (flat_pixel_history::g_active) pixelHistoryBefore(self);
         FlatStationSunGate sun(self, flatDraw, stationSkip);
         {
             FlatParticleScope particle(self, 'X', perInstance, instances);
@@ -5912,7 +5919,7 @@ void STDMETHODCALLTYPE hookedDrawIndexedInstanced(ID3D11DeviceContext* self,
             }
         }
         sun.restore();
-        if (flat_pixel_history::g_active && self == g_state->ownerCtx) flat_pixel_history::after(self);
+        if (flat_pixel_history::g_active) pixelHistoryAfter(self);
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx && cockpitGlassOverlayBegin(self)) { g_state->realDrawIndexedInstanced(self, perInstance, instances, startIndex, baseVertex, startInstance); cockpitGlassOverlayEnd(self); }
         if (!stationSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawIndexedInstanced(self, perInstance, instances, startIndex, baseVertex, startInstance); });
