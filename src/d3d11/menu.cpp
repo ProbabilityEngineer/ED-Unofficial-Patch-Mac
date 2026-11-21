@@ -281,6 +281,8 @@ struct State {
 
     std::vector<Page> pages;
     int  page = 0;
+    int  badgeLinesMax = 0;   // the most badge lines any settings page keeps in its window (buildPages; pageBadgeLines)
+    bool badgeLinesNoted = false;
     bool contentDirty = true;
     bool developerBuilt = false;
 
@@ -2065,6 +2067,49 @@ Page makePage(const MenuPageDef& d) {
     return p;
 }
 
+// The flat F8 panel's information pages (status, monitor) stand as tall as its settings pages (2026-11-21): the height a settings page
+// of this card would have -- its rows (visibleRows of them, as many keeping a badge line as the tallest page: badgeLinesMax), its hint
+// box, its footer and the locked readout line if any -- measured by the layout itself, as the least height of this page. Not in VR,
+// whose pages keep their own heights under the raster's 2048-px guard.
+void fillToSettingsHeight(MenuContent& c) {
+    if (!runtimeFlatProfile()) return;
+    MenuContent probe = c;
+    probe.toast = probe.notice = false;
+    probe.compact = false;
+    probe.tileCount = probe.graphCount = 0;
+    probe.popupLine = -1;
+    probe.minHeightPx = 0;
+    probe.reserveHint = true;
+    probe.hint[0] = 0;
+    const int rows = menuPanelEntryRows(probe, kFlatVisibleRows);
+    memset(probe.lines, 0, sizeof(probe.lines));
+    probe.lineCount = rows;
+    for (int i = 0; i < rows; ++i) probe.lines[i].style = kMenuInfo;
+    probe.extraBadgeLines = g_s.badgeLinesMax;
+    c.minHeightPx = menuPanelLayoutHeight(probe);
+}
+
+// A settings row that keeps its badge line whatever its state (the row builder's rule, buildContent): a restart-only row, a row
+// whose application is unknown, a flat conditional-restart row and flat's Anti-aliasing row.
+bool entryKeepsBadgeLine(const Entry& e, bool flat) {
+    if (e.kind != EntryKind::Setting || e.def < 0 || e.def >= kRowDefCount) return false;
+    const auto& d = kMenuRows[e.def];
+    return d.applies == 2 || d.applies == 0 || (flat && conditionalRestartFor(d.section, d.key) != nullptr) ||
+           (flat && strcmp(d.section, "fix") == 0 && strcmp(d.key, "temporal_aa") == 0);
+}
+// The most such rows in any window of `window` consecutive entries of a page: its height at its tallest scroll.
+int pageBadgeLines(const Page& p, int window, bool flat) {
+    int best = 0;
+    const int n = static_cast<int>(p.entries.size());
+    for (int start = 0; start == 0 || start + window <= n; ++start) {
+        int k = 0;
+        for (int i = start; i < n && i < start + window; ++i) k += entryKeepsBadgeLine(p.entries[i], flat) ? 1 : 0;
+        best = (std::max)(best, k);
+        if (start + window >= n) break;
+    }
+    return best;
+}
+
 void buildPages() {
     State& s = g_s;
     const int keepPage = s.page;
@@ -2082,6 +2127,23 @@ void buildPages() {
         if (menuPageShown(kMenuPages[i], flat, s.developer)) s.pages.push_back(makePage(kMenuPages[i]));
     }
     s.developerBuilt = s.developer;
+    // Every settings page stands as tall as the one whose rows keep the most badge lines (the Visual page, 2026-11-21): the card no
+    // longer changes height from tab to tab. Information pages (status, monitor) keep their own layout.
+    {
+        int most = 0;
+        const char* tallest = "";
+        for (const Page& p : s.pages) {
+            if (p.status || p.prompt) continue;
+            const int window = p.visibleRows > 0 ? p.visibleRows : flat ? kFlatVisibleRows : kVisibleRows;
+            const int k = pageBadgeLines(p, window, flat);
+            if (k > most) { most = k; tallest = p.name; }
+        }
+        if (most != s.badgeLinesMax || !s.badgeLinesNoted) {
+            Log::get().note("menu: settings pages stand as tall as %s, %d badge line(s).", most ? tallest : "any", most);
+            s.badgeLinesNoted = true;
+        }
+        s.badgeLinesMax = most;
+    }
     // F177: while the aiming choice is up its page is the last, and the one shown.
     if (s.aimPromptUp) s.pages.push_back(makeAimPromptPage());
     s.page = s.aimPromptUp ? static_cast<int>(s.pages.size()) - 1 : keepPage < static_cast<int>(s.pages.size()) ? keepPage : 0;
@@ -2768,6 +2830,7 @@ void buildContent(MenuContent& c) {
         // nothing in it, adding to the bitmap's height and pushing the page
         // nearer the raster's 2048-px bound for no reason.
         buildMonitor(c);
+        fillToSettingsHeight(c);
     } else if (p.status) {
         buildStatus(c);
         // Fifteen lines on the native path. At the raster's row pitch of
@@ -2800,6 +2863,7 @@ void buildContent(MenuContent& c) {
                 ppn::statusHintTurn(vrss::below(rw, rh, ew, eh) || terrainCheckerboardOn(), s.tickMs, tcn::kHintAlternateMs))
                 ppn::formatStatusHint(c.hint, sizeof(c.hint));
         }
+        fillToSettingsHeight(c);
     } else {
         // The tooltip waits for the look or the hand to settle on one row:
         // it is an explanation for someone who has stopped, not something
@@ -2926,7 +2990,8 @@ void buildContent(MenuContent& c) {
                              (glassDirtRow && cockpitGlassDirtRowDisabled()) ||
                              (doorsRow && stationWindowDistanceRowDisabled()) ||
                              (windowDistanceRow && stationWindowDistanceRowDisabled()) ||
-                             (hdrWhiteRow && hdrWhiteRowDisabled());
+                             (hdrWhiteRow && hdrWhiteRowDisabled()) ||
+                             (isStarGlowRow(d) && sgb::dimRow(runtimeFlatProfile(), s.starGlowBloom.state()));
             l.dim = dim;
             strncpy(l.left, d.label, sizeof(l.left) - 1);
             if (dlssRow) {
@@ -2991,7 +3056,8 @@ void buildContent(MenuContent& c) {
                 else if (r.clashCount) l.badge = kBadgeClash;
             }
             strncpy(l.right, v.c_str(), sizeof(l.right) - 1);
-            l.reserveBadge = d.applies == 2 || d.applies == 0 ||
+            // Or'ed with what the Anti-aliasing block above reserved: it said "keeps its badge line" and this assignment threw that away.
+            l.reserveBadge = l.reserveBadge || d.applies == 2 || d.applies == 0 ||
                              (runtimeFlatProfile() && conditionalRestartFor(d.section, d.key) != nullptr) ||
                              r.clashCount > 0;
             // Anything with two states is a switch, drawn where the value
@@ -3244,6 +3310,12 @@ void buildContent(MenuContent& c) {
                 c.lines[i].style = kMenuInfo;   // an empty, non-selectable row: presence only, not a setting
                 c.lineCount++;
             }
+            // As tall as the tallest settings page (badgeLinesMax): the badge lines this window does not use, below the rows.
+            if (!p.status) {
+                int own = 0;
+                for (int i = 0; i < c.lineCount; ++i) own += c.lines[i].badge != kBadgeNone || c.lines[i].reserveBadge ? 1 : 0;
+                c.extraBadgeLines = (std::max)(0, s.badgeLinesMax - own);
+            }
         }
         if (c.lineCount == 0) {
             MenuLine& l = c.lines[c.lineCount++];
@@ -3373,6 +3445,7 @@ constexpr float kOverlayWidthDeg = 12.0f;
 void buildToastContent(MenuContent& c, const std::string& text, float widthDeg, float capScale) {
     memset(&c, 0, sizeof(c));
     c.toast = true;
+    c.notice = true;
     c.lineCount = 1;
     strncpy(c.lines[0].left, text.c_str(), sizeof(c.lines[0].left) - 1);
     c.lines[0].style = kMenuInfo;
@@ -3389,14 +3462,13 @@ void buildToastContent(MenuContent& c, const std::string& text, float widthDeg, 
     // Measured in the font the notice is drawn in: the row face (menu_panel.cpp, Font::Row), not the cap size the footer measures with --
     // the first cut used the cap size, so a notice the row face ellipsised measured as fitting and never wrapped (flown 2026-11-19).
     const int rowPx = c.rowFontPx > 0 ? c.rowFontPx : c.capPx * 10 / 7;
-    // The card fits its text instead of a fixed width (the black box ran far past "AA off, press F7 to restore", flown 2026-11-19),
-    // never narrower than F7's off notice, so F7's off and restore notices are one size and do not jump. Never wider than before:
-    // a longer notice wraps (below).
+    // The card fits its own text instead of a fixed width (the black box ran far past "AA off, press F7 to restore", flown 2026-11-19).
+    // Each notice is its own length (2026-11-21: F7's off and restore notices no longer share the off notice's width). Never wider
+    // than before: a longer notice wraps (below).
     {
         const int padPx = c.capPx * 8 / 10;
-        const std::string sizeLike = aacmp::noticeText(aacmp::Press::WentOff, std::string(), aaCompareKeyText());
-        const int textPx = (std::max)(menuPanelMeasureLine(text.c_str(), rowPx), menuPanelMeasureLine(sizeLike.c_str(), rowPx));
-        const int needPx = textPx + 2 * padPx + padPx / 2;
+        const int textPx = menuPanelMeasureLine(text.c_str(), rowPx);
+        const int needPx = textPx + 2 * padPx + 2;   // the same margin each side of the text (2 px against a rounding ellipsis)
         if (needPx > 0 && needPx < c.cardPx) {
             c.cardPx = needPx;
             c.widthPx = needPx;
@@ -4982,7 +5054,7 @@ void openMenu(uint64_t now) {
         s.flatSettingsForce = true;   // Elite's graphics files are looked at when the panel opens
         s.alpha = 1.0f;
     }
-    starGlowBloomMenuOpened();   // Elite's Bloom option is read again when the Star glow is above 100 (flat: the files are looked at when the panel opens)
+    starGlowBloomMenuOpened();   // Elite's Bloom option is read again at every opening (flat: the Star glow row greys out while it is off)
     if (world) {
         perfMonitorNoteEvent(kEvMenu);
         Log::get().note("menu: open (%s, %.1f m, keys %s).", s.pages[s.page].name,

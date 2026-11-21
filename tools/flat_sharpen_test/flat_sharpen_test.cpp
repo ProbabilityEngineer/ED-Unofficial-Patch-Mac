@@ -231,9 +231,11 @@ bool sourceSaysStarGlowBloom(const std::string& menuCpp) {
            // the VR hint: the highlighted Star glow row, by the placement function, into the hint line
            build.find("sgb::rowHint(runtimeFlatProfile(), hi && isStarGlowRow(d), s.starGlowBloom.percent(), s.starGlowBloom.state())") != std::string::npos &&
            occurrences(menuCpp, "sgb::rowHint(") == 1 && build.find("snprintf(c.hint, sizeof(c.hint), \"%s\", bloomHint);") != std::string::npos &&
-           // the row is matched by its key, wherever it is drawn, and never dimmed or refused for the hint
-           row.find("strcmp(d.section, \"visual\") == 0 && strcmp(d.key, \"star_glow\") == 0") != std::string::npos && dim.find("tarGlow") == std::string::npos &&
-           step.find("tarGlow") == std::string::npos && occurrences(menuCpp, "isStarGlowRow(") == 2 &&
+           // the row is matched by its key, wherever it is drawn; greyed out by the dim rule exactly while Bloom is off (2026-11-21, flat), with no
+           // refusal of its own in the step
+           row.find("strcmp(d.section, \"visual\") == 0 && strcmp(d.key, \"star_glow\") == 0") != std::string::npos &&
+           dim.find("(isStarGlowRow(d) && sgb::dimRow(runtimeFlatProfile(), s.starGlowBloom.state()))") != std::string::npos &&
+           step.find("tarGlow") == std::string::npos && occurrences(menuCpp, "isStarGlowRow(") == 3 &&
            // read when the config's generation moved, never per frame; a menu opening reads again; both profiles configure it and tick it
            tick.find("if (s.starGlowBloomGenSeen && generation == s.starGlowBloomGen) return;") != std::string::npos && tick.find("Config::get().generation()") != std::string::npos &&
            tick.find("starGlowPercent(Config::get())") != std::string::npos && tick.find("s.starGlowBloom.noteSetting(percent, &line)") != std::string::npos &&
@@ -524,18 +526,20 @@ void panelTable(const std::string& root, const std::string& gen) {
         for (int percent : {100, 125, 150, 175, 200})
             for (Bloom state : {Bloom::Unknown, Bloom::Off, Bloom::On}) {
                 const bool want = percent > 100 && state == Bloom::Off;
-                visualTable = visualTable && (edvr::sgb::tabNote(true, true, percent, state) != nullptr) == want && edvr::sgb::tabNote(true, false, percent, state) == nullptr &&
+                // The flat note follows the greyed-out row (Bloom off, any setting; 2026-11-21); the VR hint keeps the setting's condition.
+                visualTable = visualTable && (edvr::sgb::tabNote(true, true, percent, state) != nullptr) == (state == Bloom::Off) && edvr::sgb::tabNote(true, false, percent, state) == nullptr &&
                               (edvr::sgb::rowHint(false, true, percent, state) != nullptr) == want && edvr::sgb::rowHint(false, false, percent, state) == nullptr &&
                               edvr::sgb::rowHint(true, true, percent, state) == nullptr && edvr::sgb::tabNote(false, true, percent, state) == nullptr;
             }
-        check(visualTable, "the Bloom note (Visual tab) and the VR hint (highlighted Star glow row) show for 125..400 with Bloom off and for no other setting or Bloom state, and the other profile's place stays empty");
+        check(visualTable, "the Bloom note (Visual tab) shows with Bloom off at any setting and the VR hint (highlighted Star glow row) for 125..400 with Bloom off, for no other Bloom state, and the other profile's place stays empty");
         check(sourceSaysStarGlowBloom(menuCpp),
-              "menu.cpp says it: the note on the Visual tab above the settings warning, the hint on the highlighted Star glow row, the row never dimmed or refused, read at a menu opening and a change of the setting");
+              "menu.cpp says it: the note on the Visual tab above the settings warning, the hint on the highlighted Star glow row, the row greyed out exactly while Bloom is off and never refused, read at a menu opening and a change of the setting");
         const std::string noteEveryTab = mutated("strcmp(p.name, kFlatTabNames[1]) == 0, s.starGlowBloom.percent(),", "true, s.starGlowBloom.percent(),");
         const std::string noteInVr = mutated("sgb::tabNote(runtimeFlatProfile(),", "sgb::tabNote(true,");
         const std::string hintEveryRow = mutated("hi && isStarGlowRow(d), s.starGlowBloom.percent()", "hi, s.starGlowBloom.percent()");
         const std::string hintInFlat = mutated("sgb::rowHint(runtimeFlatProfile(),", "sgb::rowHint(false,");
-        const std::string rowDimmed = mutated("(hdrWhiteRow && hdrWhiteRowDisabled());", "(hdrWhiteRow && hdrWhiteRowDisabled()) || isStarGlowRow(d);");
+        const std::string rowDimmed = mutated("(isStarGlowRow(d) && sgb::dimRow(runtimeFlatProfile(), s.starGlowBloom.state()))", "isStarGlowRow(d)");
+        const std::string rowNeverDimmed = mutated(" ||\n                             (isStarGlowRow(d) && sgb::dimRow(runtimeFlatProfile(), s.starGlowBloom.state()))", "");
         const std::string stepRefused = mutated("    if (isOpenxrRenderScaleRow(d)) {\n        // A width for the worn headset", "    if (isStarGlowRow(d)) return;\n    if (isOpenxrRenderScaleRow(d)) {\n        // A width for the worn headset");
         const std::string everyFrame = mutated("    if (s.starGlowBloomGenSeen && generation == s.starGlowBloomGen) return;\n", "");
         const std::string noOpenRead = mutated("starGlowBloomMenuOpened();   // Elite's Bloom option is read again", "// Elite's Bloom option is read again");
@@ -545,7 +549,8 @@ void panelTable(const std::string& root, const std::string& gen) {
         check(!noteInVr.empty() && !sourceSaysStarGlowBloom(noteInVr), "control: a note asked of a profile other than the running one is caught");
         check(!hintEveryRow.empty() && !sourceSaysStarGlowBloom(hintEveryRow), "control: a VR hint on every highlighted row is caught");
         check(!hintInFlat.empty() && !sourceSaysStarGlowBloom(hintInFlat), "control: a VR hint asked of a profile other than the running one is caught");
-        check(!rowDimmed.empty() && !sourceSaysStarGlowBloom(rowDimmed), "control: a Star glow row dimmed for the hint (it would stop responding) is caught");
+        check(!rowDimmed.empty() && !sourceSaysStarGlowBloom(rowDimmed), "control: a Star glow row greyed out whatever Bloom is (it would stop responding) is caught");
+        check(!rowNeverDimmed.empty() && !sourceSaysStarGlowBloom(rowNeverDimmed), "control: a Star glow row not greyed out while Bloom is off is caught");
         check(!stepRefused.empty() && !sourceSaysStarGlowBloom(stepRefused), "control: a Star glow row that refuses its steps is caught");
         check(!everyFrame.empty() && !sourceSaysStarGlowBloom(everyFrame), "control: a tick that looks at the setting every frame, with no change of the config generation, is caught");
         check(!noOpenRead.empty() && !sourceSaysStarGlowBloom(noOpenRead), "control: a menu that does not read Elite's Bloom when it opens is caught");

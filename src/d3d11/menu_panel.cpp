@@ -297,6 +297,9 @@ void layout(const MenuContent& c, std::vector<Op>& ops, std::vector<LineRect>& l
     // are the tooltip's, and are transparent when no tooltip is up.
     const int cardW = c.cardPx > 0 && c.cardPx <= W ? c.cardPx : W;
     const int pad = cap * 8 / 10;
+    // A notice's card is one or a few lines and nothing else: half the menu's padding above and below its text, so the box does not
+    // stand far taller than the words (the F7 notice, 2026-11-21). The menu and the readouts keep their own.
+    const int padV = c.notice ? pad / 2 : pad;
     const int rowPitch = c.compact ? cap * 17 / 10 : cap * 2;
     const int tabH = c.toast ? 0 : cap * 24 / 10;
     const int hintH = c.toast ? 0 : cap * 34 / 10;   // two lines of hint
@@ -311,6 +314,8 @@ void layout(const MenuContent& c, std::vector<Op>& ops, std::vector<LineRect>& l
         const MenuLine& line = c.lines[i];
         rowsH += line.badge != kBadgeNone || line.reserveBadge ? primaryH + badgeH : rowPitch;
     }
+    const int extraRowsH = c.toast ? 0 : (std::max)(0, c.extraBadgeLines) * badgeH;
+    rowsH += extraRowsH;
     // The tile grid: caption, big value, a two-line sub, in a box five
     // tile-units tall, the unit being nine tenths of a cap. Each box is
     // sized to its font's LINE height, not its cap height -- the first
@@ -340,8 +345,11 @@ void layout(const MenuContent& c, std::vector<Op>& ops, std::vector<LineRect>& l
     // A locked FPS readout sits above the tabs so it stays visible while
     // the menu is scrolled or a tooltip is up.
     const int overlayH = (c.toast || !c.overlayLine[0]) ? 0 : cap * 16 / 10;
-    const int H = pad + overlayH + tabH + tilesH + rowsH + (c.toast ? cap * 2 / 10 : 0) +
-                  graphH + (hintReserved ? hintH : 0) + footH + pad;
+    const int natural = padV + overlayH + tabH + tilesH + rowsH + (c.toast && !c.notice ? cap * 2 / 10 : 0) +
+                        graphH + (hintReserved ? hintH : 0) + footH + padV;
+    // An information page made as tall as the settings pages: the difference sits above the hint and the footer (minHeightPx).
+    const int fillH = !c.toast && c.minHeightPx > natural ? c.minHeightPx - natural : 0;
+    const int H = natural + fillH;
     *outH = H;
 
     // Background.
@@ -352,7 +360,7 @@ void layout(const MenuContent& c, std::vector<Op>& ops, std::vector<LineRect>& l
         o.alpha = kBgAlpha;
         ops.push_back(o);
     }
-    int y = pad;
+    int y = padV;
     if (overlayH > 0) {
         Op o;
         o.text = true;
@@ -595,6 +603,7 @@ void layout(const MenuContent& c, std::vector<Op>& ops, std::vector<LineRect>& l
         }
         y += rowH;
     }
+    y += extraRowsH;   // the empty badge lines: the height of the tallest settings page (extraBadgeLines)
     for (int g = 0; g < c.graphCount; ++g) {
         // One strip per measure, fpsVR's pair stacked: one bar per frame,
         // oldest left, against a scale of twice the display's budget, with
@@ -651,6 +660,7 @@ void layout(const MenuContent& c, std::vector<Op>& ops, std::vector<LineRect>& l
         }
         y += graphOneH;
     }
+    y += fillH;
     if (!c.toast) {
         if (c.hint[0]) {
             Op h;
@@ -1962,6 +1972,14 @@ bool menuPanelStats(int* w, int* h, double* lastMs, float* gpuMs) {
     if (lastMs) *lastMs = g_w.lastMs;
     if (gpuMs) *gpuMs = g_gpuMsAvg.load();
     return true;
+}
+
+int menuPanelLayoutHeight(const MenuContent& c) {
+    std::vector<Op> ops;
+    std::vector<LineRect> lines;
+    int height = 0;
+    layout(c, ops, lines, &height, 0, nullptr);
+    return height;
 }
 
 int menuPanelEntryRows(const MenuContent& c, int requested) {

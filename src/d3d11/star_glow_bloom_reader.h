@@ -60,9 +60,9 @@ public:
         if (percent <= kStockPercent || percent == before) return false;
         return readNow(before <= kStockPercent, line);
     }
-    // A menu opened. With the setting above 100 the files are read again, and a changed state is said.
+    // A menu opened: the files are read again, whatever the setting (the flat panel greys the Star glow row out while Bloom is off,
+    // 2026-11-21), and a changed state is said.
     bool noteMenuOpened(std::string* line) {
-        if (percent_ <= kStockPercent) return false;
         return readNow(false, line);
     }
     int percent() const { return percent_; }

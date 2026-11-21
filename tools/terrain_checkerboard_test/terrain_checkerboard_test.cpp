@@ -1077,10 +1077,11 @@ void caseT7() {
               "T7b: at the stock 100, or with Bloom on or unknown, there is no hint (a hint that may be wrong is worse than none)");
         check(sgb::kStockPercent == 100, "T7b: the threshold is the stock 100");
     }
-    // c. where each menu says it: the flat panel's Visual tab as a note, the VR menu as the highlighted row's hint, never both, never a dimmed row
+    // c. where each menu says it: the flat panel's Visual tab as a note (whenever its Star glow row is greyed out: Bloom off, any setting,
+    // 2026-11-21), the VR menu as the highlighted row's hint (above 100 with Bloom off), never both; the row greys out in flat only
     {
         const Bloom states[] = {Bloom::Unknown, Bloom::Off, Bloom::On};
-        bool flatTab = true, vrRow = true, exclusive = true;
+        bool flatTab = true, vrRow = true, exclusive = true, dim = true;
         for (int percent : {100, 150})
             for (Bloom state : states)
                 for (int a = 0; a < 2; ++a) {
@@ -1090,15 +1091,18 @@ void caseT7() {
                     const char* vrNote = sgb::tabNote(false, b, percent, state);
                     const char* flatHint = sgb::rowHint(true, b, percent, state);
                     const char* vrHint = sgb::rowHint(false, b, percent, state);
-                    flatTab = flatTab && ((flatNote != nullptr) == (cond && b)) && vrNote == nullptr;
+                    flatTab = flatTab && ((flatNote != nullptr) == (state == Bloom::Off && b)) && vrNote == nullptr;
                     vrRow = vrRow && ((vrHint != nullptr) == (cond && b)) && flatHint == nullptr;
                     exclusive = exclusive && !(flatNote && flatHint) && !(vrNote && vrHint);
+                    dim = dim && sgb::dimRow(true, state) == (state == Bloom::Off) && !sgb::dimRow(false, state);
                 }
-        check(flatTab, "T7c: the flat panel's note shows on the Visual tab only, under the condition, and never in the VR menu");
+        check(dim, "T7c: the flat Star glow row is greyed out exactly while Bloom is known to be off, at any setting; never in VR");
+        check(flatTab, "T7c: the flat panel's note shows on the Visual tab only, whenever the row is greyed out, and never in the VR menu");
         check(vrRow, "T7c: the VR hint shows only while the Star glow row is highlighted, under the condition, and never in the flat panel");
         check(exclusive, "T7c: the note and the hint are never both said in one profile");
-        check(sgb::tabNote(true, true, 150, Bloom::Off) == sgb::hint(150, Bloom::Off) && sgb::rowHint(false, true, 150, Bloom::Off) == sgb::hint(150, Bloom::Off),
-              "T7c: both places say the very same words");
+        check(sgb::tabNote(true, true, 150, Bloom::Off) == sgb::hint(150, Bloom::Off) && sgb::rowHint(false, true, 150, Bloom::Off) == sgb::hint(150, Bloom::Off) &&
+                  sgb::tabNote(true, true, 100, Bloom::Off) == sgb::hint(150, Bloom::Off),
+              "T7c: both places say the very same words, the note at 100 too");
     }
     // d. the reader, on fixture folders
     {
@@ -1238,32 +1242,35 @@ void caseT7() {
         sgb::Watch w;
         w.configure(fx.folder, fx.game);
         std::string line;
-        check(!w.noteSetting(100, &line) && !w.noteMenuOpened(&line) && w.reads() == 0 && w.hint() == nullptr && w.state() == Bloom::Unknown,
-              "T7h: at the stock 100 nothing is read and nothing is said, a menu opening included");
-        check(w.noteSetting(150, &line) && w.reads() == 1 &&
+        check(!w.noteSetting(100, &line) && w.reads() == 0 && w.state() == Bloom::Unknown, "T7h: the setting at the stock 100 reads nothing");
+        check(w.noteMenuOpened(&line) && w.reads() == 1 && w.state() == Bloom::Off && w.hint() == nullptr &&
+                  line == "star glow: Elite's Bloom is off (preset VRHigh, BloomQuality 0): the glow changes nothing until Bloom is on",
+              "T7h: a menu opening reads at 100 too (the flat row greys out) and says the state the first time; no hint at 100");
+        check(w.noteSetting(150, &line) && w.reads() == 2 &&
                   line == "star glow: Elite's Bloom is off (preset VRHigh, BloomQuality 0): the glow changes nothing until Bloom is on",
               "T7h: the setting rising above 100 reads once and says Bloom is off, with the preset and the value");
         check(w.hint() && std::strcmp(w.hint(), sgb::kHint) == 0 && w.percent() == 150 && w.state() == Bloom::Off, "T7h: ...and the hint is on");
-        check(!w.noteSetting(150, &line) && w.reads() == 1, "T7h: the same setting again reads nothing (the per-frame tick is a compare)");
-        check(!w.noteSetting(175, &line) && w.reads() == 2 && w.hint(), "T7h: moving to another value above 100 reads again, and says nothing while the state is the same");
-        check(!w.noteMenuOpened(&line) && w.reads() == 3, "T7h: a menu opening reads again, and says nothing while the state is the same");
+        check(!w.noteSetting(150, &line) && w.reads() == 2, "T7h: the same setting again reads nothing (the per-frame tick is a compare)");
+        check(!w.noteSetting(175, &line) && w.reads() == 3 && w.hint(), "T7h: moving to another value above 100 reads again, and says nothing while the state is the same");
+        check(!w.noteMenuOpened(&line) && w.reads() == 4, "T7h: a menu opening reads again, and says nothing while the state is the same");
         // the player turns Bloom on in Elite (the preset changes), then opens the menu
         fx.put("Settings.xml", bloomSettingsXml("High"));
-        check(w.noteMenuOpened(&line) && w.reads() == 4 && line == "star glow: Elite's Bloom is on (preset High, BloomQuality 2)", "T7h: Bloom turned on is said once, when the menu opens");
+        check(w.noteMenuOpened(&line) && w.reads() == 5 && line == "star glow: Elite's Bloom is on (preset High, BloomQuality 2)", "T7h: Bloom turned on is said once, when the menu opens");
         check(w.hint() == nullptr && w.state() == Bloom::On, "T7h: ...and the hint ends");
-        check(!w.noteMenuOpened(&line) && w.reads() == 5, "T7h: and it is not said again");
+        check(!w.noteMenuOpened(&line) && w.reads() == 6, "T7h: and it is not said again");
         // the settings file goes away
         DeleteFileW((fx.folder + L"\\Settings.xml").c_str());
         check(w.noteMenuOpened(&line) &&
                   line == "star glow: Elite's Bloom setting is unknown (Settings.xml is missing or unreadable, so the active preset is not known)",
               "T7h: Bloom unknown says so, with the reason");
         check(w.hint() == nullptr && w.state() == Bloom::Unknown, "T7h: ...and there is no hint");
-        // down to 100: nothing is read; up again: said again, whatever it finds
+        // down to 100: the setting reads nothing, a menu opening still does; up again: said again, whatever it finds
         fx.put("Settings.xml", bloomSettingsXml("VRHigh"));
         const uint32_t readsAt = w.reads();
-        check(!w.noteSetting(100, &line) && w.reads() == readsAt && w.hint() == nullptr && !w.noteMenuOpened(&line) && w.reads() == readsAt,
-              "T7h: back to 100 reads nothing and the hint is gone");
-        check(w.noteSetting(125, &line) && w.reads() == readsAt + 1 && line.rfind("star glow: Elite's Bloom is off (preset VRHigh", 0) == 0,
+        check(!w.noteSetting(100, &line) && w.reads() == readsAt && w.hint() == nullptr, "T7h: back to 100 reads nothing and the hint is gone");
+        check(w.noteMenuOpened(&line) && w.reads() == readsAt + 1 && w.state() == Bloom::Off && w.hint() == nullptr,
+              "T7h: ...a menu opening at 100 reads, says the changed state (off after unknown), and gives no hint");
+        check(w.noteSetting(125, &line) && w.reads() == readsAt + 2 && line.rfind("star glow: Elite's Bloom is off (preset VRHigh", 0) == 0,
               "T7h: rising above 100 again says it again");
         w.noteSetting(100, &line);
         check(w.noteSetting(150, &line) && has(line, "Bloom is off"), "T7h: ...every rise is said, even when the state is the one said last");
