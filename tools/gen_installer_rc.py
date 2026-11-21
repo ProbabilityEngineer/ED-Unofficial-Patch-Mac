@@ -52,7 +52,8 @@ def parse_version_tuple(describe):
     """Parse a `git describe` string into a numeric (major, minor, patch,
     commits) tuple for FILEVERSION/PRODUCTVERSION.
 
-    'v0.17.0-rc.2-16-g2c6e820' -> (0, 17, 0, 16): the trailing '-<n>-g<hash>'
+    'v0.17.0-rc.2-16-g2c6e820' -> (0, 17, 0, 16), and the Mac port's
+    'macos-v0.23.0-21-g27e201e8' -> (0, 23, 0, 21): the trailing '-<n>-g<hash>'
     `git describe` appends past the tag is the commit count since it; a
     '-rc.N' pre-release suffix and a trailing '-dirty' are not fields
     VERSIONINFO has room for and are dropped either way. A bare tag
@@ -62,7 +63,7 @@ def parse_version_tuple(describe):
     becomes the all-zero version Windows shows for "no version". Every field
     is clamped to 0..65535, VERSIONINFO's numeric field width.
     """
-    m = re.match(r'^v?(\d+)\.(\d+)\.(\d+)(?:-.*)?$', describe or '')
+    m = re.match(r'^(?:macos-)?v?(\d+)\.(\d+)\.(\d+)(?:-.*)?$', describe or '')
     if not m:
         return (0, 0, 0, 0)
     major, minor, patch = (int(m.group(i)) for i in (1, 2, 3))
@@ -254,6 +255,12 @@ def self_test():
     assert parse_version_tuple('garbage') == (0, 0, 0, 0)
     assert parse_version_tuple('v1.2.3-70000-gabcdef1') == (1, 2, 3, 65535)  # clamped
     assert parse_version_tuple('0.1.0') == (0, 1, 0, 0)  # no "v" and no suffix
+    # The Mac port's tags (macos-vX.Y.Z, 2026-11-19) and its base tag; another prefix is still unparsable.
+    assert parse_version_tuple('macos-v0.23.0-21-g27e201e8') == (0, 23, 0, 21)
+    assert parse_version_tuple('macos-v0.23.0') == (0, 23, 0, 0)
+    assert parse_version_tuple('macos-v0.23.0-21-g27e201e8-dirty') == (0, 23, 0, 21)
+    assert parse_version_tuple('v0.22.3-mfx-32-g5818a391') == (0, 22, 3, 32)
+    assert parse_version_tuple('linux-v0.23.0') == (0, 0, 0, 0)
 
     # The default edvr-flat.ini install_edvr.py writes (and aa_compare_test pins the F7 line of).
     flat_ini = flat_ini_bytes()
