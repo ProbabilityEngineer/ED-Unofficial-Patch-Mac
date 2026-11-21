@@ -2496,7 +2496,7 @@ def _scope_self_test():
     import contextlib
     import io
     import openxr_pe as _scope_pe
-    import fetch_openxr_loader as _scope_loader
+    _scope_loader = _loader_tool_for_tests()
 
     ok = True
     tmp = tempfile.mkdtemp(prefix="edvr_scope_test_")
@@ -3472,7 +3472,7 @@ def _prune_self_test():
                 os.chmod(gfx[0], stat.S_IWRITE | stat.S_IREAD)
 
         # --- through main(): a good install prunes; a dry run and a refused count do not ---
-        import fetch_openxr_loader as _prune_loader
+        _prune_loader = _loader_tool_for_tests()
         import openxr_pe as _prune_pe
         sroot = os.path.join(tmp, "repo")
         os.makedirs(os.path.join(sroot, "build"))
@@ -3799,7 +3799,7 @@ def _compile_only_ini_self_test():
     import contextlib
     import io
     import openxr_pe as _pe
-    import fetch_openxr_loader as _loader
+    _loader = _loader_tool_for_tests()
 
     ok = True
     tmp = tempfile.mkdtemp(prefix="edvr_compile_ini_test_")
@@ -4177,6 +4177,34 @@ class _ExpectedErrorLabel(object):
         return getattr(self._stream, name)
 
 
+_LOADER_STAND_IN = None
+
+
+def _loader_tool_for_tests():
+    """tools/fetch_openxr_loader.py, or a stand-in when the tree no longer has it.
+
+    The loader tool went with the VR runtime (strip stage 1, 66d141a1). The
+    self-tests replace its verify() and put it back; they never need the real
+    one. The stand-in is registered under the module's name so the install
+    route a test drives imports the same object the test patched. Outside the
+    self-test nothing calls this, and that route's import of the missing module
+    is a refusal ("pinned OpenXR loader verification failed").
+    """
+    global _LOADER_STAND_IN
+    try:
+        import fetch_openxr_loader
+        return fetch_openxr_loader
+    except ImportError:
+        if _LOADER_STAND_IN is None:
+            _LOADER_STAND_IN = types.ModuleType("fetch_openxr_loader (absent: strip stage 1)")
+
+            def verify(path):
+                raise ImportError("tools/fetch_openxr_loader.py went with the VR runtime (strip stage 1)")
+            _LOADER_STAND_IN.verify = verify
+            sys.modules["fetch_openxr_loader"] = _LOADER_STAND_IN
+        return _LOADER_STAND_IN
+
+
 def _run_self_test_labelled():
     real_out, real_err = sys.stdout, sys.stderr
     sys.stdout = _ExpectedErrorLabel(real_out)
@@ -4303,7 +4331,7 @@ def self_test():
         with open(os.path.join(sgame, GAME_EXE), "wb") as f: f.write(b"GAME")
         with open(os.path.join(sgame, "edvr.ini"), "wb") as f: f.write(b"[user]\nkeep=1\n")
         import openxr_pe as _standard_pe
-        import fetch_openxr_loader as _standard_loader
+        _standard_loader = _loader_tool_for_tests()
         old_loader_verify = _standard_loader.verify
         _standard_loader.verify = lambda path: None
         old_standard_pair = _standard_pe.validate_native_pair
