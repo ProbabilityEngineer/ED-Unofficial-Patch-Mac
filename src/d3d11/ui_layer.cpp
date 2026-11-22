@@ -4566,7 +4566,11 @@ void uiLayerConfigure(Config& cfg) {
     // The fallback, for an ini with no such line (a hand-copied DLL over an old
     // file, a deleted line), is the shipped default: 100 since 2026-09-29. A line
     // that is present and not off/100/125/150/200 is refused below and reads as off.
-    const std::string text = cfg.getString("fix.ui_quality", "100");
+    // The flat edition reads no fix.ui_quality (removed there 2026-11-22: the owner's choice, its HUD take cost ~25% of the frame rate and
+    // its look was the old gamma blend's, not the game's). The layer runs at the display's size (100) whenever the flat anti-aliasing is on, for
+    // what flat still draws into it after the upscale: the supercruise bars, the orbit lines, both dusts, the map icons and the weapons fire.
+    // The cockpit HUD stays in the game's scene (flat_ui_layer_math.h flatUiLayerTakesFamily) and the panels keep the game's own size.
+    const std::string text = runtimeFlatProfile() ? std::string("100") : cfg.getString("fix.ui_quality", "100");
     bool recognized = true;
     const char* newSpelling = nullptr;
     const float target = uiQualityParse(text.c_str(), &recognized, &newSpelling);
@@ -4633,11 +4637,12 @@ void uiLayerConfigure(Config& cfg) {
     }
     // The panels follow the same key -- one setting, both halves -- and the
     // instruments with them.
-    uiSurfacesSetTarget(target);
+    // Flat: none (the panels at the game's own size; fix.ui_quality is not read there).
+    uiSurfacesSetTarget(runtimeFlatProfile() ? 0.0f : target);
     // The panels' AA gate (2026-10-13): VR's temporal AA (the same reading as `temporal` here), set before the first
     // configure with the key on can apply the patch.
     if (!runtimeFlatProfile()) uiPanelScaleSetVrTemporal(temporalVr);
-    uiPanelScaleSetTarget(target);
+    uiPanelScaleSetTarget(runtimeFlatProfile() ? 0.0f : target);
     // The flat profile's panel factor (ui_panel_scale.cpp) needs its anti-aliasing on too.
     if (runtimeFlatProfile()) uiPanelScaleSetFlatTemporal(flatAa);
     if (!changed) return;

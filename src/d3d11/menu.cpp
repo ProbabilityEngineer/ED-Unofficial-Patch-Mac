@@ -2562,8 +2562,8 @@ void buildFlatStatus(MenuContent& c) {
     } else in.fg = FlatFgState::OnIdle;
 
     const std::string sharpening = shownText("fix", "render_sharpness");
-    const std::string hud = shownText("fix", "ui_quality");
-    const std::string hudAa = _stricmp(shownValue("fix", "ui_quality").c_str(), "off") == 0 ? std::string() : shownText("fix", "hud_antialiasing");
+    // No HUD row since 2026-11-22: flat reads neither fix.ui_quality nor fix.hud_antialiasing (an empty value leaves the line out).
+    const std::string hud, hudAa;
     in.sharpening = sharpening.c_str();
     in.hudQuality = hud.c_str();
     in.hudAntiAliasing = hudAa.c_str();

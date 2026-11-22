@@ -1293,8 +1293,8 @@ static bool wiredFlat(const std::string& adapter, const std::string& runtimeH, c
 static void flatTests() {
     // The family rule.
     check(flatUiLayerTakesFamily(UiLayerFamily::kWeaponsFire) && flatUiLayerTakesFamily(UiLayerFamily::kShieldRipple), "the flat adapter takes the weapons fire and the shield ripple");
-    check(flatUiLayerTakesFamily(UiLayerFamily::kFlightHud) && !flatUiLayerTakesFamily(UiLayerFamily::kHoloGeneric),
-          "...and still the cockpit HUD families besides (not the holograms)");
+    check(!flatUiLayerTakesFamily(UiLayerFamily::kFlightHud) && !flatUiLayerTakesFamily(UiLayerFamily::kHoloGeneric),
+          "...and not the cockpit HUD families (fix.ui_quality removed from flat, 2026-11-22)");
     // 2026-11-03: the supercruise bars, the two dusts and the orbit lines joined them (they blur under the flat anti-aliasing's history; ui_quality_test pins the rest).
     check(flatUiLayerTakesFamily(UiLayerFamily::kSupercruiseBars) && flatUiLayerTakesFamily(UiLayerFamily::kSpaceDust) && flatUiLayerTakesFamily(UiLayerFamily::kNormalSpaceDust) &&
               flatUiLayerTakesFamily(UiLayerFamily::kOrbitLines),

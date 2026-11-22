@@ -804,7 +804,8 @@ void flatUiLayerAtCopy(ID3D11DeviceContext* ctx, uint64_t frame, bool treated, u
     // The HUD layer's edge smoothing (fix.hud_antialiasing, off by default; the F8 panel's HUD Anti-Aliasing row): the key is read here, a frame at a time, so a
     // change is live; the layer decides nothing, it does what the ask says and reports what it did. A key the flat allow-list does not carry reads off, and the
     // 30 s line shows it.
-    const bool smooth = Config::get().getBool("fix.hud_antialiasing", false);
+    // Flat reads no fix.hud_antialiasing (removed there 2026-11-22 with fix.ui_quality): no smoothing.
+    const bool smooth = false;
     g_w.edgeKeyOn = smooth;
     uiLayerFlatSetEdgeSmoothing(smooth);
     // `treated`: the picture is the one EDVR's resolve made (unjittered), which the shield ripple reads at D minus the jitter; the game's own is left alone.
