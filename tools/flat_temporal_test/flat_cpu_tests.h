@@ -463,9 +463,11 @@ inline int flatCpuTests() {
                 char ms[32], calls[32];
                 std::snprintf(ms, sizeof(ms), "%.3f", r.emRenderMs[p] / 20.0);
                 flatcpu::callsText(calls, sizeof(calls), static_cast<double>(r.emRenderCalls[p]) / 20.0);
-                const std::string token = std::string(i ? ", " : "engine motion hooks by part (render thread, per clocked frame): ") +
-                                          (flatcpu::kEmNames[i].name + 7) + " " + ms + " ms (calls " + calls + ")";
-                tokens = tokens && has(text, token);
+                const std::string body = std::string(flatcpu::kEmNames[i].name + 7) + " " + ms + " ms (calls " + calls + ")";
+                // A later token may open a continuation line instead of following ", " (the line breaks at a token, and
+                // where it falls moves with the length of the text before it).
+                tokens = tokens && (i ? has(text, ", " + body) || has(text, "\nflat cpu 5s (cont.): " + body)
+                                      : has(text, "engine motion hooks by part (render thread, per clocked frame): " + body));
             }
             expect(prefixes && tokens, "all eight by-part tokens are there, in order, each with its own figures");
         }
@@ -475,7 +477,8 @@ inline int flatCpuTests() {
         expect(has(text, "engine jobs 0.000 ms (calls 0.0)") && has(text, "engine builder 0.000 ms (calls 0.0)") &&
                has(text, "engine rigid emit 0.000 ms (calls 0.0)") && has(text, "engine tees 0.000 ms (calls 0.0)"),
                "the parts that did not run print as zeros");
-        expect(has(text, "engine eval relays 8.0 calls (counted, not clocked)"), "the evaluator relays print as a count");
+        expect(has(text, "engine eval relays 0.000 ms (8.0 calls on sampled frames; the clock floor is inside this)"),
+               "the evaluator relays print their sampled-frame time and their count");
     }
 
     // ---- 8: the draw wrapper's D3D calls, the GPU spans, the paused frames -------------------------------
