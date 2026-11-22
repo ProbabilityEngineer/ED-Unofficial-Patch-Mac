@@ -5760,6 +5760,192 @@ ID3D11ShaderResourceView* uiLayerGlowFeed(ID3D11DeviceContext* ctx, uint64_t fra
     return out;
 }
 
+// THE HUD MERGED INTO THE TONE'S SCENE INPUT (flat, the HDR route; 2026-11-22). On the HDR route the scene the game's tone pass reads is
+// already resolved at the output size or above, so the HUD layer's light can go back into it BEFORE the tonemap: S' = S * T + HUD
+// (kUiHudMergePsHlsl), bound at the tone's HDR slot for the game's own issue. The game then tonemaps the HUD with the scene, as with the
+// AA off, and the re-issue over the 8-bit layer is not run: that layer is cleared and published empty, so the door composites nothing of the
+// HUD (the post-tone draws and the multiply still land on it in game order). Why: the HUD tonemapped alone and blended over the tonemapped
+// picture has no right blend -- added as encoded values the pedestal lines read brighter than the game's, added as light darker (the tone's
+// toe dims a faint line alone; with the scene under it the line lands where the curve is steeper). Only a frame with the HUD's light alone
+// (no weapons light, the 8-bit layer not yet drawn) merges; any other keeps the re-issue, and any failure here leaves the game's draw and
+// the re-issue exactly as before. The pending admission (crispArm) is consumed by a merge, so the re-issue cannot also run.
+struct HudMergeTexture {
+    Ptr<ID3D11Texture2D> tex;
+    Ptr<ID3D11RenderTargetView> rtv;
+    Ptr<ID3D11ShaderResourceView> srv;
+    uint32_t w = 0, h = 0;
+    DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN, view = DXGI_FORMAT_UNKNOWN;
+};
+static HudMergeTexture g_merge;
+static ID3D11PixelShader* g_mergePs = nullptr;
+static bool g_mergePsTried = false;
+static FaultBudget g_mergeBudget("uiLayer.hudMerge", 4);
+struct HudMergeSave {
+    bool active = false;
+    int slot = -1;
+    uint64_t seq = 0;
+    const void* rtvRes = nullptr;
+};
+static HudMergeSave g_mergeSave;
+static bool g_mergeNoted = false;
+static uint64_t g_mergeCount = 0, g_mergeDeclines = 0;
+
+static const char* hudMergeTry(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView** original) {
+    if (!runtimeFlatProfile()) return "not the flat profile";
+    if (!g_crispPending.pending) return "no tone admitted";
+    const CrispTonePending p = g_crispPending;
+    if (p.eye != 0 || p.hdrSlot < 0 || p.hdrSlot > 3) return "not eye 0's tone";
+    Eye& e = g_eye[0];
+    const bool hudC = e.hdrSeq == p.seq && e.hdrDraws && e.hdrSrv;
+    const bool wpnC = e.wSeq == p.seq && e.wDraws && e.wSrv;
+    if (!hudC) return "no HUD light this frame";
+    if (wpnC) return "the weapons' light is in the layer too";
+    if (e.seq == p.seq && e.draws) return "the 8-bit layer is already drawn this frame";
+    if (e.hdrToneSeq == p.seq) return "a second tonemap this frame";
+    if (!ensureLayerFor(ctx, 0) || !e.rtv) return "the 8-bit layer is unavailable";
+    Ptr<ID3D11RenderTargetView> rtvNow;
+    ctx->OMGetRenderTargets(1, &rtvNow, nullptr);
+    Ptr<ID3D11Resource> outNow;
+    if (rtvNow) rtvNow->GetResource(&outNow);
+    Ptr<ID3D11ShaderResourceView> scene;
+    ctx->PSGetShaderResources(static_cast<UINT>(p.hdrSlot), 1, &scene);
+    Ptr<ID3D11Resource> sceneRes;
+    if (scene) scene->GetResource(&sceneRes);
+    if (!outNow || outNow.Get() != p.rtvRes || !sceneRes || sceneRes.Get() != p.hdrRes) return "the bindings are not the admitted draw's";
+    D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
+    scene->GetDesc(&sd);
+    Ptr<ID3D11Texture2D> sTex;
+    if (sd.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D || sd.Texture2D.MostDetailedMip != 0 || FAILED(sceneRes.As(&sTex)))
+        return "the scene input is not a plain 2D view";
+    D3D11_TEXTURE2D_DESC td{};
+    sTex->GetDesc(&td);
+    if (td.SampleDesc.Count != 1 || td.ArraySize != 1) return "the scene input is multisampled or an array";
+    if (sd.Format != DXGI_FORMAT_R11G11B10_FLOAT && sd.Format != DXGI_FORMAT_R16G16B16A16_FLOAT)
+        return "the scene input's format is not R11G11B10 or FP16";
+    compileCoverageOnce(ctx);  // the shared fullscreen vertex shader
+    if (!g_mergePs && !g_mergePsTried) {
+        g_mergePsTried = true;
+        g_mergePs = shaderSwapCreatePs(ctx, kUiHudMergePsBytecode, sizeof(kUiHudMergePsBytecode), "ui_hud_merge_ps", "crisp hud");
+    }
+    if (!g_covVs || !g_mergePs || !crispCoverageContextReady(ctx) || !g_crispDeferred) return "the merge pass's shaders are unavailable";
+    if (!g_merge.tex || g_merge.w != td.Width || g_merge.h != td.Height || g_merge.view != sd.Format) {
+        g_merge = HudMergeTexture{};
+        Ptr<ID3D11Device> dev;
+        ctx->GetDevice(&dev);
+        D3D11_TEXTURE2D_DESC d{};
+        d.Width = td.Width;
+        d.Height = td.Height;
+        d.MipLevels = 1;
+        d.ArraySize = 1;
+        d.Format = sd.Format;
+        d.SampleDesc.Count = 1;
+        d.Usage = D3D11_USAGE_DEFAULT;
+        d.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        HudMergeTexture made;
+        if (!dev || FAILED(dev->CreateTexture2D(&d, nullptr, &made.tex)) || !made.tex ||
+            FAILED(dev->CreateRenderTargetView(made.tex.Get(), nullptr, &made.rtv)) || !made.rtv ||
+            FAILED(dev->CreateShaderResourceView(made.tex.Get(), nullptr, &made.srv)) || !made.srv)
+            return "the merged scene's texture could not be made";
+        made.w = td.Width;
+        made.h = td.Height;
+        made.format = made.view = sd.Format;
+        g_merge = made;
+        Log::get().note("flat ui layer: the merged scene's texture is %ux%u (format %u, %.1f MB).", td.Width, td.Height,
+                        static_cast<unsigned>(sd.Format), (sd.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ? 8.0 : 4.0) * td.Width * td.Height / 1048576.0);
+    }
+    ID3D11DeviceContext* dc = g_crispDeferred.Get();
+    ID3D11RenderTargetView* target = g_merge.rtv.Get();
+    const D3D11_VIEWPORT vp{0.0f, 0.0f, static_cast<float>(td.Width), static_cast<float>(td.Height), 0.0f, 1.0f};
+    dc->IASetInputLayout(nullptr);
+    dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    dc->VSSetShader(g_covVs, nullptr, 0);
+    ID3D11ShaderResourceView* in[2] = {e.hdrSrv.Get(), scene.Get()};
+    dc->PSSetShader(g_mergePs, nullptr, 0);
+    dc->PSSetShaderResources(0, 2, in);
+    dc->OMSetRenderTargets(1, &target, nullptr);
+    dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
+    dc->RSSetViewports(1, &vp);
+    dc->Draw(3, 0);
+    ID3D11ShaderResourceView* none[2] = {};
+    dc->PSSetShaderResources(0, 2, none);
+    Ptr<ID3D11CommandList> list;
+    if (FAILED(dc->FinishCommandList(FALSE, &list)) || !list) return "the merge pass's command list failed";
+    vScreenExecuteCommandListRaw(ctx, list.Get(), 1);
+    // The admission is the merge's now: the re-issue does not run for this tone.
+    g_crispPending = CrispTonePending{};
+    detail::g_uiLayerCrispPending = false;
+    *original = scene.Detach();  // one reference, released by uiLayerHudMergeEnd
+    ID3D11ShaderResourceView* merged = g_merge.srv.Get();
+    vScreenPSSetShaderResourcesRaw(ctx, static_cast<uint32_t>(p.hdrSlot), 1, &merged);
+    g_mergeSave.active = true;
+    g_mergeSave.slot = p.hdrSlot;
+    g_mergeSave.seq = p.seq;
+    g_mergeSave.rtvRes = p.rtvRes;
+    return nullptr;
+}
+
+bool uiLayerHudMergeBegin(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView** original) {
+    if (!ctx || !original) return false;
+    *original = nullptr;
+    if (g_mergeSave.active) return false;
+    const char* why = "a fault in the merge pass";
+    if (!guardedBudget(g_mergeBudget, [&] { why = hudMergeTry(ctx, original); })) why = "a fault in the merge pass";
+    if (!why && *original) {
+        ++g_mergeCount;
+        if (!g_mergeNoted) {
+            g_mergeNoted = true;
+            Log::get().note("flat ui layer: the HUD's light goes into the tone's scene input (frame %llu, slot t%d, %ux%u): the game's tonemap "
+                            "takes the HUD with the scene, and the layer's own tonemap and blend stand aside for such frames; said once.",
+                            static_cast<unsigned long long>(g_mergeSave.seq), g_mergeSave.slot, g_merge.w, g_merge.h);
+        }
+        return true;
+    }
+    if (*original) {
+        (*original)->Release();
+        *original = nullptr;
+    }
+    ++g_mergeDeclines;
+    static const char* said[16] = {};
+    static uint32_t saidCount = 0;
+    bool seen = false;
+    for (uint32_t i = 0; i < saidCount; ++i)
+        if (said[i] == why) seen = true;
+    if (!seen && saidCount < 16) {
+        said[saidCount++] = why;
+        Log::get().note("flat ui layer: the HUD is not merged into the tone's scene (%s): the layer's tonemap and blend serve the frame; "
+                        "said once per reason.", why ? why : "?");
+    }
+    return false;
+}
+
+void uiLayerHudMergeEnd(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* original, bool publish) {
+    const HudMergeSave save = g_mergeSave;
+    g_mergeSave = HudMergeSave{};
+    if (ctx && save.active && save.slot >= 0) {
+        ID3D11ShaderResourceView* game = original;
+        vScreenPSSetShaderResourcesRaw(ctx, static_cast<uint32_t>(save.slot), 1, &game);
+    }
+    if (original) original->Release();
+    if (!ctx || !save.active || !publish) return;
+    // Published empty: the HUD is in the picture through the game's own tonemap, so the 8-bit layer carries nothing of it. The fields are
+    // uiLayerCrispToneEnd's publication, so the door, the post-tone draws and the missed-tonemap deadline see a tone that ran.
+    Eye& e = g_eye[0];
+    if (e.rtv) vScreenClearRenderTargetViewRaw(ctx, e.rtv.Get(), kUiLayerClear);
+    e.seq = save.seq;
+    e.draws = 1;
+    e.target = save.rtvRes;
+    e.chainOpen = true;
+    e.hdrToneSeq = save.seq;
+    e.wToneSeq = save.seq;
+    flatUiTrailNoteReissue(save.seq, FlatUiTrailReissue::kPublished, 0, save.seq);
+    e.hdrMissStreak = 0;
+    g_lastRedirectSeq = save.seq;
+    detail::g_uiLayerWatching = true;
+}
+
+uint64_t uiLayerHudMerges() { return g_mergeCount; }
+uint64_t uiLayerHudMergeDeclines() { return g_mergeDeclines; }
+
 // The HUD's light for the headset's bloom (ui_layer.h UiHeadsetGlow). An eye's first level reads that eye's H; the HUD the layer took out of H is in the
 // eye's HDR HUD layer, whose `hdrTarget` is that very H (the tonemap admission finds the eye the same way, by the resource its HDR slot reads). So the
 // H a first-level draw reads names its eye by identity (uiHeadsetHudPick), and the draw may be fed that eye's HUD once a frame: the claim is taken before the
@@ -8268,6 +8454,13 @@ void releaseDeviceObjects() {
         g_glowPs = nullptr;
     }
     g_glowPsTried = false;
+    g_merge = HudMergeTexture{};
+    g_mergeSave = HudMergeSave{};
+    if (g_mergePs) {
+        g_mergePs->Release();
+        g_mergePs = nullptr;
+    }
+    g_mergePsTried = false;
     if (g_starAddPs) {
         g_starAddPs->Release();
         g_starAddPs = nullptr;
