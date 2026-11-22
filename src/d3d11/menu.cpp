@@ -515,10 +515,10 @@ bool sharpenRowDisabled() {
 }
 
 // fix.hud_antialiasing (the HUD Anti-Aliasing row, 2026-10-24 on the flat panel; on VR's Performance page too since 2026-11-03). It smooths the UI layer, which is
-// live only while fix.ui_quality is not off AND the profile's own anti-aliasing is on (flat_ui_layer.cpp for flat, ui_layer.cpp's uiLayerConfigure for VR), so with
-// either off the row stays on the page, dimmed, and stops responding. UI quality is read as the layer reads it (uiQualityParse, the shipped 100 for a missing line)
-// and the anti-aliasing as the running profile reads it (flat: the flat mode, requestedTemporalMode; VR: fix.temporal_aa), live, every time the page is drawn or a
-// row is touched. The hint and the refused step name the cause that applies: UI quality first when it is off, else the anti-aliasing.
+// live only while the profile's own anti-aliasing is on (flat_ui_layer.cpp for flat, ui_layer.cpp's uiLayerConfigure for VR), so with it off the row stays on the
+// page, dimmed, and stops responding. UI quality does not gate it (2026-11-23): off, the layer still carries the supercruise bars, dust, orbit lines, map icons and
+// weapons fire at the display's size. The anti-aliasing is read as the running profile reads it (flat: the flat mode, requestedTemporalMode; VR: fix.temporal_aa),
+// live, every time the page is drawn or a row is touched. UI quality is read for the row's own display (hudAntiAliasingUiQualityOn).
 bool isHudAntiAliasingRow(const MenuRowDef& d) {
     return strcmp(d.section, "fix") == 0 && strcmp(d.key, "hud_antialiasing") == 0;
 }
@@ -539,12 +539,11 @@ bool hudAntiAliasingRowDisabled() {
 }
 
 const char* hudAntiAliasingHint() {
-    return hudAntiAliasingUiQualityOn() ? "Needs anti-aliasing: turn it on to use this." : "Needs UI quality: turn it on to use this.";
+    return "Needs anti-aliasing: turn it on to use this.";
 }
 
 const char* hudAntiAliasingRefusal() {
-    return hudAntiAliasingUiQualityOn() ? "HUD Anti-Aliasing is inactive: turn anti-aliasing on first."
-                                        : "HUD Anti-Aliasing is inactive: turn UI quality on above first.";
+    return "HUD Anti-Aliasing is inactive: turn anti-aliasing on first.";
 }
 
 // fix.xess_frame_generation and fix.xess_generated_frames (the XeSS Frame Generation and XeSS-FG frames rows, flat Performance tab only, 2026-11-12). Both are

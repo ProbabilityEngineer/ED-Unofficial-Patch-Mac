@@ -688,7 +688,8 @@ void sharpenRowDim() {
 // The HUD Anti-Aliasing row (2026-10-24): dimmed unless both fix.ui_quality is on and the flat anti-aliasing is on (the layer it smooths is live only then).
 int hudAaTruthTableMisses(bool (*dim)(bool, bool)) {
     struct Case { bool uiQualityOn, antiAliasingOn, want; };
-    const Case cases[] = {{false, false, true}, {false, true, true}, {true, false, true}, {true, true, false}};
+    // 2026-11-23: UI quality no longer gates the row (the layer runs for the bars, dust, lines, maps and weapons with it off); the anti-aliasing does.
+    const Case cases[] = {{false, false, true}, {false, true, false}, {true, false, true}, {true, true, false}};
     int wrong = 0;
     for (const Case& c : cases) wrong += dim(c.uiQualityOn, c.antiAliasingOn) != c.want;
     return wrong;
@@ -696,11 +697,10 @@ int hudAaTruthTableMisses(bool (*dim)(bool, bool)) {
 
 void hudAntiAliasingRowDimTable() {
     check(hudAaTruthTableMisses(edvr::hudAntiAliasingRowDim) == 0,
-          "the HUD Anti-Aliasing row dims with UI quality off or the anti-aliasing off, and with both on does not");
+          "the HUD Anti-Aliasing row dims with the anti-aliasing off (whatever UI quality says), and with it on does not");
     check(hudAaTruthTableMisses([](bool, bool) { return false; }) > 0, "control: a row that never dims is caught");
     check(hudAaTruthTableMisses([](bool, bool) { return true; }) > 0, "control: a row that always dims is caught");
     check(hudAaTruthTableMisses([](bool uiQualityOn, bool) { return !uiQualityOn; }) > 0, "control: a row that ignores the anti-aliasing being off is caught");
-    check(hudAaTruthTableMisses([](bool, bool antiAliasingOn) { return !antiAliasingOn; }) > 0, "control: a row that ignores UI quality being off is caught");
     check(hudAaTruthTableMisses([](bool uiQualityOn, bool antiAliasingOn) { return uiQualityOn && antiAliasingOn; }) > 0, "control: a row that dims with both on is caught");
 }
 
