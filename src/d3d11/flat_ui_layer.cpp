@@ -11,6 +11,7 @@
 #include "supercruise_bars.h"     // the bars' strip pass, bracketed in the flat issue path (flatUiLayerBarsBegin) and its 30 s line
 #include "tonemap_admit.h"        // read-only structural description of the actual game's tone-shaped draw
 #include "ui_layer.h"
+#include "ui_layer_hud_aa.h"     // hudAaParse/hudAaWord: the HUD Anti-Aliasing row's off | light | sharp
 #include "vscreen.h"            // vScreenPSSetShaderResourcesRaw: the bloom feed binds past the shadow
 
 #include "../common/config.h"
@@ -51,6 +52,7 @@ struct Window {
     // layer because the key was off, the raw layer because the passes could not be had -- the key as the last composite read it, and the layer's size then.
     uint64_t edgeSmoothed = 0, edgeRawKeyOff = 0, edgeRawFault = 0;
     bool edgeKeyOn = false;
+    HudAaMode edgeKeyMode = HudAaMode::kOff;   // off | light | sharp, as the last composite read it
     uint32_t edgeW = 0, edgeH = 0;
     uint32_t inW = 0, inH = 0, outW = 0, outH = 0;  // the last copy's picture and the display
     double otherX = 0.0, otherY = 0.0;              // the last other-shift draw's measured shift, render pixels
@@ -788,11 +790,12 @@ void flatUiLayerAtCopy(ID3D11DeviceContext* ctx, uint64_t frame, bool treated, u
     // The composite: this frame's HUD over the picture the copy reads (the resolve's, or the game's own after a refusal).
     const uint32_t region[4] = {0, 0, td.Width, td.Height};
     const float uv[4] = {0.0f, 0.0f, 1.0f, 1.0f};
-    // The HUD layer's edge smoothing (fix.hud_antialiasing, off by default; the F8 panel's HUD Anti-Aliasing row): the key is read here, a frame at a time, so a
-    // change is live; the layer decides nothing, it does what the ask says and reports what it did. A key the flat allow-list does not carry reads off, and the
-    // 30 s line shows it.
-    const bool smooth = Config::get().getBool("fix.hud_antialiasing", false);
-    g_w.edgeKeyOn = smooth;
+    // The HUD layer's edge smoothing (fix.hud_antialiasing, off | light FXAA | sharp SMAA, off by default; the F8 panel's HUD Anti-Aliasing row): the key is
+    // read here, a frame at a time, so a change is live; the layer decides nothing, it does what the ask says and reports what it did. A key the flat
+    // allow-list does not carry reads off, and the 30 s line shows it.
+    const HudAaMode smooth = hudAaParse(Config::get().getString("fix.hud_antialiasing", "off").c_str());
+    g_w.edgeKeyOn = smooth != HudAaMode::kOff;
+    g_w.edgeKeyMode = smooth;
     uiLayerFlatSetEdgeSmoothing(smooth);
     // `treated`: the picture is the one EDVR's resolve made (unjittered), which the shield ripple reads at D minus the jitter; the game's own is left alone.
     ID3D11Texture2D* out = uiLayerComposite(frame, 0, picture.Get(), region, uv, false, treated);
@@ -926,7 +929,7 @@ void flatUiLayerReport(uint64_t windowSeconds) {
     // output, those that read the raw layer because the key was off, those that fell back to it because the passes could not be had, the key as the last
     // composite read it and the layer's size. A window with composites and all three counts zero says the composite never reached the smoothing.
     if (w.composites || w.edgeSmoothed || w.edgeRawKeyOff || w.edgeRawFault)
-        Log::get().note("flat ui layer smaa: key=%s smoothed=%llu raw-key-off=%llu raw-fault=%llu size=%ux%u", w.edgeKeyOn ? "on" : "off",
+        Log::get().note("flat ui layer aa: key=%s smoothed=%llu raw-key-off=%llu raw-fault=%llu size=%ux%u", hudAaWord(w.edgeKeyMode),
                         static_cast<unsigned long long>(w.edgeSmoothed), static_cast<unsigned long long>(w.edgeRawKeyOff),
                         static_cast<unsigned long long>(w.edgeRawFault), w.edgeW, w.edgeH);
     const UiLayerFamily families[4] = {UiLayerFamily::kHolo, UiLayerFamily::kFlightHud, UiLayerFamily::kSprite,

@@ -6,3 +6,9 @@ static std::vector<Variant> glowFeedVariants() { return {
     {"kUiGlowFeedPsBytecode","ui_glow_feed_ps","main",nullptr,{},false,edvr::kUiGlowFeedPsHlsl,"ps_5_0"},
     {"kStarGlowAddPsBytecode","star_glow_add_ps","main",nullptr,{},false,edvr::kStarGlowAddPsHlsl,"ps_5_0"},
 }; }
+
+// The HUD layer's FXAA (fix.hud_antialiasing = light; src/d3d11/ui_layer_fxaa.h, fixed_shader_source.h kUiLayerFxaaHlsl). Its own list, registered LAST,
+// so the indexed contracts of the lists before it keep their places.
+static std::vector<Variant> hudAaFxaaVariants() { return {
+    {"kUiLayerFxaaBytecode","ui_layer_fxaa_cs","main",nullptr,{},false,edvr::kUiLayerFxaaHlsl,"cs_5_0"},
+}; }

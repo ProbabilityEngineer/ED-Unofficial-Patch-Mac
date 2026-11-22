@@ -124,12 +124,15 @@ Stubs g_stubs;
 // ============================================================================== the neighbours, stubbed
 namespace edvr {
 thread_local bool g_flatComputeInternal = false;
-thread_local bool g_vrWorldInternal = false;
+// g_vrWorldInternal is vr_world_route.h's own (inline); the rig reads it, and sets it nowhere.
 // The back-off trail's two hooks that ui_layer.cpp calls: flat_ui_layer.cpp defines them in the product, and this rig does not link it.
 void flatUiTrailNoteReissue(uint64_t, FlatUiTrailReissue, uint8_t, uint64_t) {}
 void flatUiTrailReport() {}
 namespace detail {
 BindingSlot g_bindingSlots[static_cast<size_t>(BindSlot::Count)];
+// draw_census.h's two flags (drawCensusArmed is inline over them): no census in this rig.
+bool g_drawCensusPending = false;
+uint32_t g_drawCensusFramesLeft = 0;
 }  // namespace detail
 void breadcrumb(const char*) {}  // production guard.cpp's crash-channel dependency
 
@@ -145,28 +148,12 @@ namespace detail {
 bool g_uiDepthOn = true;
 bool g_uiDepthStoodDown = false;
 }  // namespace detail
-bool vrWorldRouteEnabled() { return g_stubs.enabled; }
-bool vrWorldRouteLayerMayTake() { return g_stubs.mayTake; }
-bool vrWorldRouteDoorLayerOnly(uint32_t, uint64_t) { return g_stubs.routeDoor; }
+// vrWorldRouteLayerMayTake, vrWorldRouteDoorLayerOnly and vrWorldRouteNoteEyeTaken are vr_world_route.h's own inline
+// (false, false, nothing): the VR route is gone from this port, and the rig's g_stubs.mayTake/routeDoor/took* are read by
+// nothing since. Kept in Stubs so the cases that set them still compile.
 uint32_t vScreenEyeDrawsThisFrame() { return g_stubs.eyeDraws; }
-void vrWorldRouteNoteEyeTaken(uint32_t eye, uint64_t sequence) {
-    ++g_stubs.tookCalls;
-    g_stubs.tookEye = eye;
-    g_stubs.tookSeq = sequence;
-}
-ID3D11ShaderResourceView* vrWorldMipsScreen(ID3D11DeviceContext*, ID3D11Texture2D* screen, uint64_t frame) {
-    ++g_stubs.mipsCalls;
-    if (g_vrWorldInternal && g_flatComputeInternal) ++g_stubs.mipsInternal;
-    g_stubs.lastMipsFrame = frame;
-    g_stubs.lastMipsScreen = screen;
-    return g_stubs.mipsAnswer;
-}
-ID3D11SamplerState* vrWorldMipsSampler(ID3D11Device*, const D3D11_SAMPLER_DESC&) {
-    ++g_stubs.samplerCalls;
-    if (g_vrWorldInternal && g_flatComputeInternal) ++g_stubs.samplerInternal;
-    return g_stubs.samplerAnswer;
-}
-bool nativeTemporalDrawJitter(uint32_t eye, uint64_t* sequence, float* jx, float* jy, uint32_t* w, uint32_t* h) {
+// ui_layer.h declares nativeTemporalDrawJitter inline (the VR channel is gone); the composite reads it for the jitter.
+bool nativeTemporalDrawJitterRig(uint32_t eye, uint64_t* sequence, float* jx, float* jy, uint32_t* w, uint32_t* h) {
     if (!g_stubs.jitterOk || eye > 1) return false;
     if (sequence) *sequence = g_stubs.seq;
     if (jx) *jx = g_stubs.jx;
@@ -816,7 +803,7 @@ void testHudSmoothVr(Rig& r) {
     const uint32_t whole[4] = {0, 0, kDoorW, kDoorH};
     const float uv[4] = {0, 0, 1, 1};
     auto& cfg = Config::get();
-    const auto round = [&](const char* key, UiLayerEdgeSmoothing expect, const char* what) {
+    const auto round = [&](const char* key, UiLayerEdgeSmoothing expect, const char* what, HudAaMode expectMode = HudAaMode::kOff) {
         cfg.set("fix.hud_antialiasing", key);
         uiLayerConfigure(cfg);
         g_stubs.mayTake = true;
@@ -828,10 +815,13 @@ void testHudSmoothVr(Rig& r) {
         check(out != nullptr, "the composite runs");
         if (out) out->Release();
         const UiLayerEdgeSmoothingResult edge = uiLayerFlatEdgeSmoothingResult();
-        check(edge.outcome == expect && edge.w && edge.h, what);
+        check(edge.outcome == expect && edge.w && edge.h && edge.applied == expectMode, what);
     };
     round("off", UiLayerEdgeSmoothing::kRaw, "VR, fix.hud_antialiasing off (shipped): the composite reads the raw layer");
-    round("on", UiLayerEdgeSmoothing::kSmoothed, "VR, fix.hud_antialiasing on: the composite reads the SMAA output of the layer (live: the next configure takes it)");
+    round("sharp", UiLayerEdgeSmoothing::kSmoothed, "VR, fix.hud_antialiasing sharp: the composite reads the SMAA output of the layer (live: the next configure takes it)",
+          HudAaMode::kSmaa);
+    round("light", UiLayerEdgeSmoothing::kSmoothed, "...light: it reads the FXAA output instead (the mode switches, the other pass's targets released)", HudAaMode::kFxaa);
+    round("on", UiLayerEdgeSmoothing::kSmoothed, "...and the older word on still means sharp", HudAaMode::kSmaa);
     round("off", UiLayerEdgeSmoothing::kRaw, "VR, fix.hud_antialiasing off again: the composite reads the raw layer");
     cfg.set("fix.hud_antialiasing", "off");
     uiLayerConfigure(cfg);

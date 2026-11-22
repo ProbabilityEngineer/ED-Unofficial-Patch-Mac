@@ -343,6 +343,8 @@ static std::vector<Variant> fixedVariants(const std::string& core) {
     variants.insert(variants.end(), galaxyMap.begin(), galaxyMap.end());
     const auto cockpitGlass = cockpitGlassVariants();
     variants.insert(variants.end(), cockpitGlass.begin(), cockpitGlass.end());
+    const auto hudAaFxaa = hudAaFxaaVariants();
+    variants.insert(variants.end(), hudAaFxaa.begin(), hudAaFxaa.end());
     return variants;
 }
 
@@ -606,8 +608,8 @@ static void selfTest() {
     coreLegacy.insert(coreLegacy.end(), originalCore.begin(), originalCore.end());
     coreLegacy.insert(coreLegacy.end(), originalExtra.begin(), originalExtra.end());
     auto coreFixed = fixedVariants(extractCore(edvr::kTemporalCsHlsl));
-    check(originalCore.size() == 28 && originalExtra.size() == 12 && coreFixed.size() == 102 && coreLegacy.size() + 55 == coreFixed.size(),
-          "all original fixed shader contracts, three bounded diagnostics, six flat foreground shaders, the supercruise bars' geometry shader, the foreground map's four sibling-pass compute shaders (donor, fit and the shadow's two), the sky ring's compute shader, the UI layer's in-place composite, the explosion billboards' five facing transcriptions the sharp weapons' two source-pass shaders, the shield ripple's door pass, the HUD bloom feed pass, the star light pass, the visor's axis-centred vertex shader, the desktop window's two draw shaders, the scope lens's three compute passes, the SRV turret HUD's eleven geometry shaders, the VR maps' twelve (five transcribed vertex shaders, the probe's vertex and pixel shader, the sprites' depth issue's two pixel shaders, the System Map's marker vertex shader and the cut-out's vertex and pixel shader) and the legacy cockpit glass's three pixel shaders (intact, ice overlay, condensation overlay) are registered");
+    check(originalCore.size() == 28 && originalExtra.size() == 12 && coreFixed.size() == 103 && coreLegacy.size() + 56 == coreFixed.size(),
+          "all original fixed shader contracts, three bounded diagnostics, six flat foreground shaders, the supercruise bars' geometry shader, the foreground map's four sibling-pass compute shaders (donor, fit and the shadow's two), the sky ring's compute shader, the UI layer's in-place composite, the explosion billboards' five facing transcriptions the sharp weapons' two source-pass shaders, the shield ripple's door pass, the HUD bloom feed pass, the star light pass, the visor's axis-centred vertex shader, the desktop window's two draw shaders, the scope lens's three compute passes, the SRV turret HUD's eleven geometry shaders, the VR maps' twelve (five transcribed vertex shaders, the probe's vertex and pixel shader, the sprites' depth issue's two pixel shaders, the System Map's marker vertex shader and the cut-out's vertex and pixel shader) and the legacy cockpit glass's three pixel shaders (intact, ice overlay, condensation overlay) and the HUD layer's FXAA are registered");
     for(size_t i=0;i<coreFixed.size();++i)for(size_t j=0;j<i;++j)
         check(std::strcmp(coreFixed[i].symbol,coreFixed[j].symbol)!=0,"generated shader symbols do not collide");
     using ReflectFn = HRESULT(WINAPI*)(LPCVOID, SIZE_T, REFIID, void**);

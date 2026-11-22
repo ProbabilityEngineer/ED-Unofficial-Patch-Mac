@@ -70,6 +70,7 @@
 #include "temporal_pass.h"
 #include "terrain_checkerboard.h"   // Elite's terrain checkerboard rendering in VR: the worker's tick and the word it publishes
 #include "ui_layer_math.h"  // uiQualityParse: the HUD Anti-Aliasing row dims while fix.ui_quality is off (or the anti-aliasing is), UI quality read as the layer reads it
+#include "ui_layer_hud_aa.h"  // hudAaParse/hudAaWord: the HUD Anti-Aliasing row shows and steps off | light | sharp
 #include "vscreen.h"        // vScreenRenderBelowEye: Elite's Supersampling below 1, from the sizes
 #include "concourse_pane.h"     // concoursePaneTakeToast: the concourse window mode's toast (TEMPORARY, docs\concourse-cull-2026-11-05.md)
 #include "hdr_output.h"         // hdrOutputOn: whether HDR is running, for the HDR white rows
@@ -521,6 +522,7 @@ bool sharpenRowDisabled() {
 bool isHudAntiAliasingRow(const MenuRowDef& d) {
     return strcmp(d.section, "fix") == 0 && strcmp(d.key, "hud_antialiasing") == 0;
 }
+
 
 bool hudAntiAliasingUiQualityOn() {
     const std::string quality = Config::get().getString("fix.ui_quality", "100");
@@ -1274,6 +1276,13 @@ std::string displayValue(const MenuRowDef& d, const std::string& v) {
         case MenuKind::Choice: {
             if (isFpsOverlayRow(d)) {
                 const char* word = fpsOverlayWord(parseFpsOverlay(v.c_str()));
+                for (const ChoiceItem& c : choicesOf(d)) {
+                    if (_stricmp(c.value.c_str(), word) == 0) return c.label;
+                }
+            }
+            // An older HUD Anti-Aliasing spelling (on, smaa, fxaa) shown as the choice it now means (sharp, light).
+            if (isHudAntiAliasingRow(d)) {
+                const char* word = hudAaWord(hudAaParse(v.c_str()));
                 for (const ChoiceItem& c : choicesOf(d)) {
                     if (_stricmp(c.value.c_str(), word) == 0) return c.label;
                 }
@@ -3744,7 +3753,9 @@ void stepRow(int defIndex, int dir, int mult) {
             const std::vector<ChoiceItem> items = choicesOf(d);
             if (items.empty()) return;
             int at = -1;
-            const std::string curWord = isFpsOverlayRow(d) ? std::string(fpsOverlayWord(parseFpsOverlay(cur.c_str()))) : cur;
+            // The HUD Anti-Aliasing row steps from the word a mode means, so an older spelling (on, smaa, fxaa) steps to a real choice.
+            const std::string curWord = isFpsOverlayRow(d) ? std::string(fpsOverlayWord(parseFpsOverlay(cur.c_str())))
+                                      : isHudAntiAliasingRow(d) ? std::string(hudAaWord(hudAaParse(cur.c_str()))) : cur;
             for (size_t i = 0; i < items.size(); ++i) {
                 if (_stricmp(items[i].value.c_str(), curWord.c_str()) == 0) at = static_cast<int>(i);
             }
