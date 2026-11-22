@@ -1669,16 +1669,18 @@ bool flatMonoResolve(ID3D11Device* device,ID3D11DeviceContext* context,const Fla
     // t4..t7 are the later kernels' (motion, rejection, expected depth, history): null for prep. t8 is the later kernels' history depth
     // and the prep's too, but only on a frame whose steady-detail check runs (last frame's depth). t9 and t10 are the first-person map and
     // stencil, null unless the pair was accepted above.
-    ID3D11ShaderResourceView* prepViews[]={g.color.srv.Get(),f.depth,f.engine.slots,f.engine.pool,
+    // t0 (Color) only for mfx: prep widens it into the MetalFX colour (backend.x). Upstream 05f3dcac unbinds it, no other backend reads it.
+    ID3D11ShaderResourceView* prepViews[]={mfx?g.color.srv.Get():nullptr,f.depth,f.engine.slots,f.engine.pool,
         nullptr,nullptr,nullptr,nullptr,depthCheck?g.depth[prevDepthIndex].srv.Get():nullptr,firstPersonMap,firstPersonStencil,
         nullptr,nullptr,f.untrustedCameraCoverage,nullptr,foreground?f.foregroundMotion:nullptr,nullptr,skin?f.engine.skin:nullptr,
         celestialBound?f.celestialRecords:nullptr};
     const UINT prepViewCount=celestialBound?19:(skin?18:(foreground?16:14));
     context->CSSetShaderResources(0,prepViewCount,prepViews);
-    // u4 receives the MetalFX colour expansion in prep (backend.x); u5 is the refusal census's class texture.
-    ID3D11UnorderedAccessView* prepOutputs[]={g.depth[depthIndex].uav.Get(),g.motion.uav.Get(),g.rejection.uav.Get(),g.expected.uav.Get(),
-        mfx?g.mfxColor.uav.Get():nullptr,needClass?g.klass.uav.Get():nullptr};
-    context->CSSetUnorderedAccessViews(0,(needClass||mfx)?6:4,prepOutputs,nullptr);
+    // u4 receives the MetalFX colour expansion in prep (backend.x); u5 is the refusal census's class texture. u3 (expected) is TAA's
+    // alone (upstream 05f3dcac): every other backend leaves it unbound.
+    ID3D11UnorderedAccessView* prepOutputs[]={g.depth[depthIndex].uav.Get(),g.motion.uav.Get(),g.rejection.uav.Get(),
+        taa?g.expected.uav.Get():nullptr,mfx?g.mfxColor.uav.Get():nullptr,needClass?g.klass.uav.Get():nullptr};
+    context->CSSetUnorderedAccessViews(0,(needClass||mfx)?6:(taa?4:3),prepOutputs,nullptr);
     context->CSSetShader(g.prep.Get(),nullptr,0);
     context->Dispatch((f.renderWidth+7)/8,(f.renderHeight+7)/8,1);
     ID3D11UnorderedAccessView* nullUavs[6]={};ID3D11ShaderResourceView* nullViews[19]={};

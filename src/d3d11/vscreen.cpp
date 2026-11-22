@@ -3115,7 +3115,7 @@ void STDMETHODCALLTYPE hookedOMSetRenderTargets(ID3D11DeviceContext* self, UINT 
                                                 ID3D11RenderTargetView* const* rtvs,
                                                 ID3D11DepthStencilView* dsv) {
     flatOmSetNote();   // the forward-light watch's output-merger answer is stale (flat_om_generation.h)
-    if (!foreignContext(self)) flatIssueEpochBumpRt();
+    if (!foreignContext(self)) { flatIssueEpochBumpRt(); flatOmNoteUavBound(false); }
     if (g_flatComputeInternal) { g_state->realOMSetRenderTargets(self, n, rtvs, dsv); return; }
     ++g_state->thunkHits[kHitOmSet];
     if (foreignContext(self)) {
@@ -3167,7 +3167,12 @@ void STDMETHODCALLTYPE hookedOMSetRtvAndUav(ID3D11DeviceContext* self, UINT n,
                                             const UINT* counts) {
     flatOmSetNote();   // UAV-only sets too (flat_om_generation.h)
     // 0xFFFFFFFF keeps the current targets. Anything else can replace the depth view.
-    if (!foreignContext(self) && n != 0xFFFFFFFFu) flatIssueEpochBumpRt();
+    if (!foreignContext(self)) {
+        if (n != 0xFFFFFFFFu) flatIssueEpochBumpRt();
+        else flatIssueEpochBumpOutput();
+        if (uavCount > 0) flatOmNoteUavBound(true);
+        else if (n != 0xFFFFFFFFu) flatOmNoteUavBound(false);
+    }
     if (g_flatComputeInternal) { g_state->realOMSetRtvAndUav(self, n, rtvs, dsv, uavStart, uavCount, uavs, counts); return; }
     // A foreign deferred context cannot write the immediate target yet, but
     // an eventual command list or undocumented cross-context path must not
@@ -3363,6 +3368,7 @@ void STDMETHODCALLTYPE hookedSwapDeviceContextState(ID3D11DeviceContext* self, I
 void STDMETHODCALLTYPE hookedOMSetBlendState(ID3D11DeviceContext* self, ID3D11BlendState* state,
                                              const FLOAT factor[4], UINT sampleMask) {
     flatOmSetNote();
+    if (!foreignContext(self)) flatIssueEpochBumpOutput();
     if (g_flatComputeInternal) {
         g_state->realOMSetBlendState(self, state, factor, sampleMask);
         // The shadow does not move, but the device blend did. The foreground record has to follow or its check disagrees.
@@ -3467,6 +3473,7 @@ void forgetBindings(State*) { bindingForgetAll(); flatOmForget(); }
 void STDMETHODCALLTYPE hookedClearState(ID3D11DeviceContext* self) {
     flatOmSetNote();
     if (!foreignContext(self)) flatIssueEpochRevoke();
+    if (!foreignContext(self)) flatOmNoteUavBound(false);
     if (g_flatComputeInternal) { g_state->realClearState(self); return; }
     gpuFrameCommandIfLive(self);
     State* s = g_state;
@@ -6589,6 +6596,7 @@ void vScreenSetRenderTargetsRaw(ID3D11DeviceContext* ctx, uint32_t n,
     if (!g_state || !g_state->realOMSetRenderTargets || !ctx) return;
     flatOmSetNote();
     flatIssueEpochBumpRt();
+    if (ctx == g_state->ownerCtx) flatOmNoteUavBound(false);
     g_state->realOMSetRenderTargets(ctx, n, rtvs, dsv);
 }
 
@@ -6615,6 +6623,7 @@ void vScreenOMSetBlendStateRaw(ID3D11DeviceContext* ctx, ID3D11BlendState* state
                                const float blendFactor[4], uint32_t sampleMask) {
     if (!g_state || !g_state->realOMSetBlendState || !ctx) return;
     flatOmSetNote();
+    if (ctx == g_state->ownerCtx) flatIssueEpochBumpOutput();
     g_state->realOMSetBlendState(ctx, state, blendFactor, sampleMask);
     // Past the binding shadow on purpose (engine velocity's derived blend must not look like the game's set).
     // The foreground record is what OMGet returns, so it follows this set. The blend generation does not.
@@ -6624,6 +6633,7 @@ void vScreenOMSetBlendStateRaw(ID3D11DeviceContext* ctx, ID3D11BlendState* state
 void vScreenOMSetDepthStencilStateRaw(ID3D11DeviceContext* ctx, ID3D11DepthStencilState* state, uint32_t stencilRef) {
     if (!ctx) return;
     flatOmSetNote();
+    if (g_state && ctx == g_state->ownerCtx) flatIssueEpochBumpDepth();
     if (g_state && g_state->realOMSetDepthStencilState) g_state->realOMSetDepthStencilState(ctx, state, stencilRef);
     else ctx->OMSetDepthStencilState(state, stencilRef);
 }
