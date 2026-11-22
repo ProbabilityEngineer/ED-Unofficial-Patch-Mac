@@ -3426,6 +3426,19 @@ void testFlatOverlayDrawThunkWiring() {
             check(direct?pinned:s0==std::string::npos,"visual.solid_hud: one pre-issue in each direct flat hook, before beginActualDraw, none in the others");
             if(pinned)flat.erase(s0,s1+solidClose.size()-s0);
         }
+        // The cockpit HUD's history refusal (flat_hud_mask.h, 2026-11-22): the HUD draws are issued once more into the mask, right after
+        // the solid HUD's line and before beginActualDraw. Pinned once in each direct hook and taken out the same way.
+        {
+            const std::string maskOpen="if(hud_mask::g_on&&self==g_state->ownerCtx&&hud_mask::begin(self)){";
+            const std::string maskClose="hud_mask::end(self);}";
+            const size_t s0=flat.find(maskOpen);
+            const bool direct=t.kind=='D'||t.kind=='I'||t.kind=='N'||t.kind=='X';
+            const size_t s1=s0==std::string::npos?std::string::npos:flat.find(maskClose,s0);
+            const bool pinned=s0!=std::string::npos&&s1!=std::string::npos&&flat.find(t.real,s0)<s1&&
+                              flat.find(maskOpen,s0+1)==std::string::npos&&s1<flat.find("if(flatDraw.needsActualDraw())flatDraw.beginActualDraw(");
+            check(direct?pinned:s0==std::string::npos,"hud mask: one pre-issue in each direct flat hook, before beginActualDraw, none in the others");
+            if(pinned)flat.erase(s0,s1+maskClose.size()-s0);
+        }
         if(!valid(flat,t))std::printf("overlay draw thunk failed: %s\n",t.name);
         check(valid(flat,t),"each flat thunk guards begin -> exact real draw -> end with the shared policy");
         if(!valid(flat,t))continue;
