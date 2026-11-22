@@ -2,6 +2,16 @@
 
 ## Status
 
+- **2026-11-22: `fix.ui_quality` and `fix.hud_antialiasing` are REMOVED from the flat edition** (the owner's choice; branch
+  `flat-remove-ui-quality`). The cockpit HUD (holo panels, flight HUD, target sprite, holograms) stays in the game's scene and the panels
+  keep the game's own size; with the flat AA on, the layer still runs at the display's size for the supercruise bars, the orbit lines,
+  both dusts, the map icons and the weapons fire. Why: the take cost about a quarter of the frame rate (SS 0.65: 51.9 fps off against
+  43.4 at 100), and the HUD tonemapped alone and blended over the tonemapped picture has no right blend -- added as gamma values it read
+  brighter and more opaque than the game, added as light darker; tonemapped with the scene (the HDR-route merge, `flat-hud-merge-tone`,
+  2026-11-22) it matched the game and UI quality changed nothing visible. The "solid" look the owner liked below SS 1.0 was the gamma
+  blend raising the panels' transmittance to about the 2.2th power; `visual.solid_hud` (flat_solid_hud.h, off by default) now gives it
+  on purpose: each holo panel draw is issued once more, darken-only and read-only, before the game's own (about 13 extra draws a frame
+  in a station, flown OK 2026-11-22, log `edvr_gfx_20261122_045028`). The entries below describe the take as it was.
 - **2026-10-28: the Sharp weapons setting is RETIRED** (`fix.sharp_weapons`): its flat row is gone, and the HUD Anti-Aliasing row no longer sits under it.
 - **State: SHIPPED (2026-10-09); B390 cockpit proof gap fixed locally (10-11).**
   Steam flat XeSS/UI 125: user reports HUD and menus stable. Correct 4b7bfec4
