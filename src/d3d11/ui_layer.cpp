@@ -3605,7 +3605,9 @@ ID3D11Texture2D* compositeInner(Eye& e, uint32_t eye, ID3D11Texture2D* frame,
     p.layerSize[1] = static_cast<float>(e.h);
     p.outSize[0] = rw;
     p.outSize[1] = rh;
-    p.mode = view == DXGI_FORMAT_R16G16B16A16_FLOAT ? 2u : 0u;
+    // Flat's FP16 frame (the only FP16 caller): keep its range (bit 1) and blend in linear light (bit 2), as the game blends the HUD
+    // into the scene before the tone (2026-11-22: the pedestal lines, added as encoded values, read brighter with the AA on).
+    p.mode = view == DXGI_FORMAT_R16G16B16A16_FLOAT ? (2u | 4u) : 0u;
     p.useMult = useMult ? 1u : 0u;
     D3D11_MAPPED_SUBRESOURCE m{};
     if (FAILED(ctx->Map(g_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &m)) || !m.pData) {

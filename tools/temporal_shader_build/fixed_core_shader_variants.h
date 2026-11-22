@@ -86,10 +86,11 @@ static std::vector<Variant> compositeInPlaceVariants() {
 
 static std::vector<LegacyContract> coreLegacyContracts() {
     return {
+        // Re-pinned 2026-11-22: flat's FP16 composite blends in linear light under mode bit 2; 8-bit arithmetic is unchanged. Was 0x10CE867229A4CBD6.
         // Re-pinned 2026-10-25: flat FP16 range is selected by mode bit 1; 8-bit arithmetic is unchanged.
         // Re-pinned 2026-10-13 on purpose: the thread group is 32x8, not 8x8 (the launch of 254,000 groups was the cost of the pass at the eye's
         // size: 0.120 ms an eye against 0.090; ui_holo_pass_test --bench-groups holds the two byte for byte). Was 0x237EEBB920BC9015.
-        {"ui_layer_composite_cs", "main", "cs_5_0", nullptr, 0x10CE867229A4CBD6ull},
+        {"ui_layer_composite_cs", "main", "cs_5_0", nullptr, 0xF7E323D33E34E1D5ull},
         {"ui_layer_coverage_vs", "main", "vs_5_0", nullptr, 0xC0A9BDF65E71A8DCull},
         {"ui_layer_coverage_ps", "main", "ps_5_0", nullptr, 0xA12E6D166D50BDA1ull},
         {"ui_layer_seed", "main", "vs_5_0", nullptr, 0xCC059AB4FCFA26BCull},

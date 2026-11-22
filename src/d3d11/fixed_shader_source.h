@@ -215,7 +215,7 @@ cbuffer P : register(b0) {
     float4 uv;         // the layer's rectangle for that region: u0, v0, u1, v1
     float2 layerSize;  // the layer, texels
     uint2  outSize;    // the region's size, which is the output's
-    uint   mode;       // bit 0: debug view; bit 1: preserve flat FP16 range
+    uint   mode;       // bit 0: debug view; bit 1: preserve flat FP16 range; bit 2: blend in linear light (flat FP16)
     uint   useMult;    // 1: a multiply drew into M this frame
     uint2  pad;
 };
@@ -247,8 +247,20 @@ void main(uint3 id : SV_DispatchThreadID) {
     }
     float4 l = wsum > 0 ? acc / wsum : float4(0, 0, 0, 1);
     float3 m = (useMult != 0 && wsum > 0) ? accM / wsum : float3(1, 1, 1);
-    float3 c = (mode & 1u) != 0 ? l.rgb + float3(0.0, 0.08, 0.25) * (1.0 - l.a * dot(m, 1.0 / 3.0))
-                         : l.rgb + f.rgb * l.a * m;
+    float3 c;
+    if ((mode & 1u) != 0) {
+        c = l.rgb + float3(0.0, 0.08, 0.25) * (1.0 - l.a * dot(m, 1.0 / 3.0));
+    } else if ((mode & 4u) != 0) {
+        // Flat's FP16 frame and layer are display-referred gamma 2.2 (the HDR tone shader's encode). The game blends its HUD into the
+        // scene in linear light, before the tone; adding the two encoded values instead overstates a faint additive line over a dark
+        // scene about twice (the pedestal lines, 2026-11-22). Decode, blend, encode; sign-preserving, so out-of-range FP16 survives.
+        float3 ll = sign(l.rgb) * pow(abs(l.rgb), 2.2);
+        float3 fl = sign(f.rgb) * pow(abs(f.rgb), 2.2);
+        float3 cl = ll + fl * l.a * m;
+        c = sign(cl) * pow(abs(cl), 1.0 / 2.2);
+    } else {
+        c = l.rgb + f.rgb * l.a * m;
+    }
     Out[id.xy] = float4((mode & 2u) != 0 ? c : saturate(c), f.a);
 }
 )HLSL";
