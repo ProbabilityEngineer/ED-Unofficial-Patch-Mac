@@ -5,6 +5,7 @@
 
 #include <d3d11.h>
 
+#include <cstdint>
 #include <cstring>
 
 #include "../common/log.h"
@@ -35,6 +36,37 @@ struct Cached {
 // is nothing to reclaim. A different context drops its own reference from the
 // owner thread when it re-queries.
 Cached &cached() { return *new Cached; }
+
+// The HDR route's fixed exposure (2026-11-21): a 1x1 R16_FLOAT texture holding 1.0, made once on the context's device and, like
+// Cached, never released. flat's input is the game's pre-tonemap radiance, which its own tone pass exposes later, so MetalFX is
+// told exposure 1.0 instead of computing one: MetalFX's automatic exposure (DXMT's overlay read "Exposure Auto 8.95") dimmed the
+// stars and some holograms against AA off and FSR, as NVIDIA's did on this route (design-flat-temporal-aa section 106).
+// Null when it could not be made; the caller then keeps automatic exposure, as before.
+ID3D11Texture2D *unitExposure(ID3D11DeviceContext *ctx) {
+    static ID3D11Device *madeFor = nullptr;
+    static ID3D11Texture2D *tex = nullptr;
+    ID3D11Device *dev = nullptr;
+    ctx->GetDevice(&dev);
+    if (!dev) return nullptr;
+    if (dev != madeFor) {
+        tex = nullptr;   // a recreated device: its old texture is not usable on this one (leaked, as above)
+        D3D11_TEXTURE2D_DESC d{};
+        d.Width = d.Height = 1;
+        d.MipLevels = d.ArraySize = 1;
+        d.Format = DXGI_FORMAT_R16_FLOAT;
+        d.SampleDesc.Count = 1;
+        d.Usage = D3D11_USAGE_IMMUTABLE;
+        d.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        const uint16_t one = 0x3C00;   // 1.0 as a half
+        D3D11_SUBRESOURCE_DATA init{&one, sizeof(one), 0};
+        if (FAILED(dev->CreateTexture2D(&d, &init, &tex))) tex = nullptr;
+        madeFor = dev;
+        Log::get().note("MFX: the HDR route's exposure is a fixed 1.0 (a 1x1 texture, automatic exposure off)%s.",
+                        tex ? "" : " -- the texture could not be made, so MetalFX keeps its automatic exposure");
+    }
+    dev->Release();
+    return tex;
+}
 
 // Said once a session, so a refusal is visible without a flight's log being a
 // wall of the same line.
@@ -155,7 +187,7 @@ bool mfxAvailable(ID3D11DeviceContext *ctx, const char **why) {
 
 bool mfxEvaluate(ID3D11DeviceContext *ctx, ID3D11Texture2D *colour, ID3D11Texture2D *depth,
                  ID3D11Texture2D *mv, ID3D11Texture2D *out, uint32_t w, uint32_t h, uint32_t outW,
-                 uint32_t outH, float jx, float jy, bool reset, const char **why, bool autoExposure) {
+                 uint32_t outH, float jx, float jy, bool reset, const char **why, bool hdr) {
     if (why) *why = nullptr;
     // Every one of these is refused before the interface is asked, so a
     // malformed frame can never become a partially filled descriptor crossing
@@ -207,7 +239,14 @@ bool mfxEvaluate(ID3D11DeviceContext *ctx, ID3D11Texture2D *colour, ID3D11Textur
     // here is a tonemap.
     desc.PreExposure = 1.0f;
     desc.ExposureTexture = nullptr;
-    desc.AutoExposure = autoExposure ? TRUE : FALSE;
+    desc.AutoExposure = FALSE;
+    // The HDR route: a fixed exposure of 1.0 (unitExposure), automatic exposure only if that texture could not be made. The LDR copy
+    // route keeps what it always had: automatic exposure off and no texture.
+    if (hdr) {
+        ID3D11Texture2D *unit = unitExposure(ctx);
+        desc.ExposureTexture = unit;
+        desc.AutoExposure = unit ? FALSE : TRUE;
+    }
     desc.JitterOffsetX = mfxJitterOffsetX(jx);
     desc.JitterOffsetY = mfxJitterOffsetY(jy);
 

@@ -194,8 +194,8 @@ bool mfxAvailable(ID3D11DeviceContext* ctx, const char** why);
 // that already back them, with no copy in either direction. jx/jy are
 // EDVR's current-frame raster phase in render pixels; reset is the frontend's
 // effective temporal reset (the same value FSR3 and NGX are given), not an
-// MFX-specific one. autoExposure is the HDR route's flag. False on any
-// refusal, with why.
+// MFX-specific one. hdr is the HDR route's flag: the route's exposure is then a fixed 1.0 (2026-11-21; it was MetalFX's
+// automatic exposure, which dimmed stars). False on any refusal, with why.
 //
 // TemporalUpscale returns void: a dispatched call proves EDVR asked, not that
 // DXMT created the scaler or that the GPU ran it (its implementation returns
@@ -229,7 +229,7 @@ inline float mfxJitterOffsetY(float jy) { return kJitterSign * jy; }
 // interface: one descriptor in, no generation select, no fallback.
 bool mfxEvaluate(ID3D11DeviceContext* ctx, ID3D11Texture2D* colour, ID3D11Texture2D* depth,
                  ID3D11Texture2D* mv, ID3D11Texture2D* out, uint32_t w, uint32_t h, uint32_t outW,
-                 uint32_t outH, float jx, float jy, bool reset, const char** why, bool autoExposure);
+                 uint32_t outH, float jx, float jy, bool reset, const char** why, bool hdr);
 
 // Whether the D3D11 under the game is a DXMT that says it has fixed the Apple fault with a pixel shader that discards and a
 // partial colour write mask (Feature::PrivatePartialWriteMaskDiscardFixed). False for stock DXMT (an unknown feature), for any

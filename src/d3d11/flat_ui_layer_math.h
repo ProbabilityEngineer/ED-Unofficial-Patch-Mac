@@ -338,7 +338,13 @@ inline bool flatUiLayerTakesFamily(UiLayerFamily f) {
     return f == UiLayerFamily::kHolo || f == UiLayerFamily::kFlightHud || f == UiLayerFamily::kSprite ||
            f == UiLayerFamily::kMapCanvas || f == UiLayerFamily::kMapSprite || f == UiLayerFamily::kWeaponsFire || f == UiLayerFamily::kShieldRipple ||
            f == UiLayerFamily::kSupercruiseBars || f == UiLayerFamily::kSpaceDust || f == UiLayerFamily::kNormalSpaceDust ||
-           f == UiLayerFamily::kOrbitLines || f == UiLayerFamily::kLegacyGlass;   // the glass is named only under the legacy look (flatUiFamilyFor's legacyGlass)
+           f == UiLayerFamily::kOrbitLines || f == UiLayerFamily::kLegacyGlass ||   // the glass is named only under the legacy look (flatUiFamilyFor's legacyGlass)
+           // The cockpit holograms (2026-11-21): the radar's contacts, stalks and icon, and the target sphere (holo_families.h). Left out since
+           // 2026-10-09, when six of the seven radar pairs had no camera rows flat read and taking one alone split the loading screen's
+           // hologram. Left in H they lie under the holo-panel pedestals the layer takes (drawn before them in the game) and smear over the
+           // window (no depth, so the sky's motion). Every pair now has a projection recipe (flat_projection_recipes.h), so flat jitters
+           // them by the frame's phase; the flight decides, by the per-pair lines (flatUiLayerDecide), whether any pair is still refused.
+           f == UiLayerFamily::kHoloGeneric;
 }
 // The four scene families (2026-11-03) the adapter keeps per-family reasons for beside the maps': 0 the supercruise bars, 1 the supercruise
 // space dust, 2 the normal-space dust, 3 the orbit lines. Their window slot (flat_ui_layer.cpp Window::sceneRefused / sceneDeclined, kFlatUiSceneSlots

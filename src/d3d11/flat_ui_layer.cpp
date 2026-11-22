@@ -86,7 +86,26 @@ Window g_w;
 bool g_glowNoted = false;  // the once-only first feed line
 FlatUiLayerAsk g_lastAsk = FlatUiLayerAsk::kNotAsked;
 UiLayerFamily g_decidedFamily = UiLayerFamily::kNone;  // the family of the last kDecided draw (flatUiLayerNoteIssue's)
-bool g_decidedDim = false;   // the last kDecided draw is the panel backing, issued darken-only
+bool g_decidedDim = false;
+// The cockpit holograms' pairs, each said once taken and once refused (with the reason), so a flight shows whether the family is taken
+// whole (2026-11-21; the 2026-10-09 split was one pair of seven taken). Owner thread only.
+struct HoloPairNote { uint64_t vs = 0, ps = 0; bool taken = false, refused = false; };
+HoloPairNote g_holoPairs[24];
+HoloPairNote* holoPairNote(uint64_t vs, uint64_t ps) {
+    for (HoloPairNote& n : g_holoPairs) {
+        if (n.vs == vs && n.ps == ps) return &n;
+        if (!n.vs) { n.vs = vs; n.ps = ps; return &n; }
+    }
+    return nullptr;
+}
+void noteHoloPair(uint64_t vs, uint64_t ps, bool taken, const char* why) {
+    HoloPairNote* n = holoPairNote(vs, ps);
+    if (!n || (taken ? n->taken : n->refused)) return;
+    (taken ? n->taken : n->refused) = true;
+    Log::get().note("flat ui layer: hologram pair vs %016llX ps %016llX: first %s%s%s (said once each way).",
+                    static_cast<unsigned long long>(vs), static_cast<unsigned long long>(ps), taken ? "taken into the layer" : "left in H",
+                    taken ? "" : ": ", taken ? "" : why);
+}   // the last kDecided draw is the panel backing, issued darken-only
 bool g_mapCanvasNoted = false, g_mapSpriteNoted = false;  // the once-only first take of each map family
 bool g_glassNoted = false;                                // the once-only first take of the legacy canopy
 bool g_sceneNoted[kFlatUiSceneSlots] = {};              // the once-only first take of each scene family (flatUiSceneSlotOf)
@@ -281,6 +300,7 @@ FlatUiLayerAsk flatUiLayerDecide(ID3D11DeviceContext* ctx, const FlatUiLayerDraw
     flatUiTrailNoteAsk(d.frame, d.color);
     g_lastAsk = FlatUiLayerAsk::kRefused;
     const auto refuse = [&](FlatUiRefuse r) {
+        if (family == UiLayerFamily::kHoloGeneric) noteHoloPair(d.vs, d.ps, false, flatUiRefuseName(r));
         ++g_w.refused[static_cast<size_t>(r)];
         flatUiTrailNoteRefuse(d.frame, r);
         if (ms >= 0) ++g_w.mapRefused[ms][static_cast<size_t>(r)];
@@ -330,6 +350,11 @@ FlatUiLayerAsk flatUiLayerDecide(ID3D11DeviceContext* ctx, const FlatUiLayerDraw
     uiLayerFlatSetDraw(d.frame, j.jx, j.jy, d.width, d.height);
     if (!uiLayerDecide(ctx, static_cast<int>(family), true, false, 0)) {
         const int decision = uiLayerLastDecision();
+        if (family == UiLayerFamily::kHoloGeneric) {
+            char why[48];
+            _snprintf_s(why, _TRUNCATE, "the layer's decision %d (uiLayerDecide)", decision);
+            noteHoloPair(d.vs, d.ps, false, why);
+        }
         if (decision >= 0 && static_cast<size_t>(decision) < kDecisions) {
             ++g_w.declined[static_cast<size_t>(decision)];
             if (ms >= 0) ++g_w.mapDeclined[ms][static_cast<size_t>(decision)];
@@ -339,6 +364,7 @@ FlatUiLayerAsk flatUiLayerDecide(ID3D11DeviceContext* ctx, const FlatUiLayerDraw
         return g_lastAsk;
     }
     ++g_w.decided[fi];
+    if (family == UiLayerFamily::kHoloGeneric) noteHoloPair(d.vs, d.ps, true, nullptr);
     g_decidedFamily = family;  // flatUiLayerNoteIssue counts this draw under it
     g_decidedDim = flatUiPanelBackingPair(d.vs, d.ps);
     uiLayerSetDimOnly(g_decidedDim);

@@ -2563,6 +2563,60 @@ void reportHdrProjectionCapture(State& s, const char* event) {
     Log::get().note("flat HDR projection ledger: event=%s write-identity-evictions=%u incomplete-finished-frames=%u; missing ledger identity means unavailable freshness, payload completeness is not camera proof",
         event,s.hdrCaptureWriteEvictions,c.frames-c.completeFrames);
 }
+// The cockpit holograms' own clip rows, for the flat UI layer's jitter read (2026-11-22). The radar's contacts and stalks
+// (holo_families.h) build SV_Position from VS b2 rows (flat_projection_recipes.h: ForwardColumns at b2[6], [7] or [8]), and
+// the buffer bound at their b1 is not one the camera table holds, so the layer had no rows to measure and left them in H
+// (no-camera-rows, log edvr_gfx_20261122_003050: A2C2D551, 9B34C331, 5453D19B). Their b2 rows have the camera table's
+// layout (component 3 of the first three rows is the view direction), so flatCameraMeasureRowShift reads the shift from
+// them as from b1's. Only an exact recipe pair, only one vertex ForwardColumns request, only an original shadow written
+// this frame: anything else stays no-camera-rows. A world matrix with a non-uniform scale makes the measurement neither
+// the phase nor zero, which the adapter refuses as other-shift (left in H, as before).
+enum class HoloRowsResult : uint8_t { kRead = 0, kNoRecipe, kUnbound, kRange, kNoShadow, kStale, kCopy };
+const char* holoRowsResultName(HoloRowsResult r) {
+    switch(r) {
+    case HoloRowsResult::kRead: return "read";
+    case HoloRowsResult::kNoRecipe: return "no-recipe";
+    case HoloRowsResult::kUnbound: return "unbound";
+    case HoloRowsResult::kRange: return "range";
+    case HoloRowsResult::kNoShadow: return "no-original-shadow";
+    case HoloRowsResult::kStale: return "not-this-frame";
+    default: return "copy-failed";
+    }
+}
+HoloRowsResult readHoloClipRows(State& s, uint64_t vs, uint64_t ps, float (&rows)[6][4], uint32_t& slotOut, uint32_t& rowOut) {
+    const FlatProjectionRecipes recipes=flatProjectionDrawRecipes(vs,ps);
+    if(recipes.count!=1)return HoloRowsResult::kNoRecipe;
+    const FlatProjectionRuntimeRequest& r=recipes.requests[0];
+    if(r.stage!=FlatProjectionStage::Vertex || r.patchCount!=1 || r.patches[0].layout!=FlatProjectionPatchLayout::ForwardColumns)
+        return HoloRowsResult::kNoRecipe;
+    const uint32_t row=r.patches[0].byteOffset/16u;
+    slotOut=r.slot; rowOut=row;
+    Ptr<ID3D11Buffer> buffer;UINT first=0,count=0;
+    if(s.projectionContext)s.projectionContext->VSGetConstantBuffers1(r.slot,1,&buffer,&first,&count);
+    if(!buffer)return HoloRowsResult::kUnbound;
+    if(!flatHdrCaptureRange(first,count,row,3))return HoloRowsResult::kRange;
+    const auto metadata=s.projection?s.projection->constantsMetadata(buffer.Get()):FlatProjectionShadowMetadata{};
+    if(!(metadata.tracked && metadata.shadowPresent && !metadata.mapped) || metadata.width<(first+row+3)*16u)
+        return HoloRowsResult::kNoShadow;
+    if(!(metadata.writeFrame==s.prefix.frame && metadata.writeSequence && metadata.writeSequence<=s.prefix.sequence+1))
+        return HoloRowsResult::kStale;
+    float raw[3][4]{};
+    if(!s.projection->copyConstants(buffer.Get(),(first+row)*16u,sizeof(raw),raw))return HoloRowsResult::kCopy;
+    std::memset(rows,0,sizeof(rows));
+    std::memcpy(rows,raw,sizeof(raw));
+    return HoloRowsResult::kRead;
+}
+// Said once per pair and result, up to 32 lines: which hologram pairs the layer measures from their own rows, and why any cannot be.
+void noteHoloRows(uint64_t vs, uint64_t ps, HoloRowsResult result, uint32_t slot, uint32_t row) {
+    struct Seen { uint64_t vs, ps; uint8_t result; };
+    static Seen seen[32]; static uint32_t count=0;
+    for(uint32_t i=0;i<count;++i)if(seen[i].vs==vs && seen[i].ps==ps && seen[i].result==static_cast<uint8_t>(result))return;
+    if(count>=32)return;
+    seen[count++]={vs,ps,static_cast<uint8_t>(result)};
+    Log::get().note("flat ui layer: hologram pair vs %016llX ps %016llX has no b1 camera rows; its own clip rows (VS b%u[%u..%u]): %s "
+                    "(said once per pair and result).",
+                    static_cast<unsigned long long>(vs),static_cast<unsigned long long>(ps),slot,row,row+2,holoRowsResultName(result));
+}
 void captureHdrProjectionRows(State& s, uint32_t writer, FlatProjectionStage stage,
                              UINT slot, uint32_t row, uint32_t rows, bool& complete) {
     Ptr<ID3D11Buffer> buffer;UINT first=0,count=0;
@@ -7369,6 +7423,12 @@ FlatRuntimeDrawScope::FlatRuntimeDrawScope(ID3D11DeviceContext* context, uint32_
             ui.upstream = flatCameraInjectUpstreamOwns();
             static_assert(sizeof(ui.rows) <= kFlatCameraBytes, "the camera table's rows hold the six rows");
             if (k.camera) { ui.haveRows = true; std::memcpy(ui.rows, d.camera, sizeof(ui.rows)); }
+            else if (uiHoloGenericHash(k.vs)) {   // the radar's contacts and stalks: their own b2 clip rows (readHoloClipRows)
+                uint32_t holoSlot = 0, holoRow = 0;
+                const HoloRowsResult held = readHoloClipRows(s, k.vs, k.ps, ui.rows, holoSlot, holoRow);
+                ui.haveRows = held == HoloRowsResult::kRead;
+                noteHoloRows(k.vs, k.ps, held, holoSlot, holoRow);
+            }
             ui.phaseX = s.phase.currentX; ui.phaseY = s.phase.currentY;
             ask = flatUiLayerDecide(ctx, ui);   // a cockpit HUD family's draw, or kNotAsked
             }
