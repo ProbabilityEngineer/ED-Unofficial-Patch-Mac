@@ -3409,8 +3409,22 @@ void testFlatOverlayDrawThunkWiring() {
         const std::string signature=std::string("void STDMETHODCALLTYPE ")+t.name+"(";
         const size_t start=code.find(signature);
         const size_t stop=start==std::string::npos?std::string::npos:code.find("if (g_vrWorldInternal)",start);
-        const std::string flat=(start!=std::string::npos && stop!=std::string::npos)
+        std::string flat=(start!=std::string::npos && stop!=std::string::npos)
             ? compact(code.substr(start,stop-start)):std::string();
+        // visual.solid_hud (flat_solid_hud.h, 2026-11-22): a cockpit panel plate is issued once more right before beginActualDraw, darken-only and
+        // read-only. That one line is the only real draw allowed ahead of the game's own; it is pinned once in each of the four direct hooks and
+        // taken out before the order is checked.
+        {
+            const std::string solidOpen="if(solid_hud::g_on&&self==g_state->ownerCtx&&solid_hud::begin(self)){";
+            const std::string solidClose="solid_hud::end(self);}";
+            const size_t s0=flat.find(solidOpen);
+            const bool direct=t.kind=='D'||t.kind=='I'||t.kind=='N'||t.kind=='X';
+            const size_t s1=s0==std::string::npos?std::string::npos:flat.find(solidClose,s0);
+            const bool pinned=s0!=std::string::npos&&s1!=std::string::npos&&flat.find(t.real,s0)<s1&&
+                              flat.find(solidOpen,s0+1)==std::string::npos&&s1<flat.find("if(flatDraw.needsActualDraw())flatDraw.beginActualDraw(");
+            check(direct?pinned:s0==std::string::npos,"visual.solid_hud: one pre-issue in each direct flat hook, before beginActualDraw, none in the others");
+            if(pinned)flat.erase(s0,s1+solidClose.size()-s0);
+        }
         if(!valid(flat,t))std::printf("overlay draw thunk failed: %s\n",t.name);
         check(valid(flat,t),"each flat thunk guards begin -> exact real draw -> end with the shared policy");
         if(!valid(flat,t))continue;
