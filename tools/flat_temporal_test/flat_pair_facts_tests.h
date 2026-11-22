@@ -91,6 +91,9 @@ inline int flatPairFactsTests() {
     }
     // ---- the cockpit holograms (2026-11-21): flat takes the family, the target sphere's verified pairs with it ----
     expect(flatUiLayerTakesFamily(UiLayerFamily::kHoloGeneric), "flat takes the cockpit hologram family");
+    expect(flatUiFamilyOf(0x94D5C556DFD6D705ull, 0x912477AEF6958379ull) == UiLayerFamily::kNone &&
+               flatUiFamilyFor(0x94D5C556DFD6D705ull, 0x912477AEF6958379ull, false, true) == UiLayerFamily::kNone,
+           "flat leaves the star glare pair (94D5C556 / 912477AE) in the scene");
     expect(flatUiFamilyOf(0x5559BD94B6852E83ull, 0xEA02FAC2BD6C643Cull) == UiLayerFamily::kHoloGeneric &&
                flatUiFamilyOf(0x9611A454527F7FEBull, 0x1E1C49DC51C0E509ull) == UiLayerFamily::kHoloGeneric,
            "...the target sphere and a radar contact are named in it");
