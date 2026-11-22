@@ -157,6 +157,11 @@ bool flatUiGlowWanted(bool triggerSrvKnown, bool triggerAmbiguous, uint32_t srvS
 bool flatUiGlowBegin(ID3D11DeviceContext* ctx, uint64_t frame, uint32_t slot, const void* hdr, uint64_t vs, uint64_t ps, uint32_t hdrW,
                      uint32_t hdrH, uint32_t targetW, uint32_t targetH, ID3D11ShaderResourceView** original, UiGlowStar* star = nullptr);
 void flatUiGlowEnd(ID3D11DeviceContext* ctx, uint32_t slot, ID3D11ShaderResourceView* original);
+// The HUD merged into the tone's scene input (2026-11-22; ui_layer.h uiLayerHudMergeBegin): on the HDR route, right before the admitted tone
+// draw's issue. True: S' = S * T + HUD is bound for the game's issue, *original holds the game's view for flatUiLayerMergeEnd, and the re-issue
+// is not to run for this draw. False: the tone and the re-issue go as before.
+bool flatUiLayerMergeBegin(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView** original);
+void flatUiLayerMergeEnd(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* original, bool publish);
 
 // ResizeBuffers on the same device: every per-size reference the layer holds, released (shaders and contexts kept).
 void flatUiLayerRelease();

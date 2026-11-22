@@ -44,7 +44,7 @@ struct Window {
     uint64_t jitterPhase = 0, jitterZero = 0;
     uint64_t writeBacks = 0;
     uint64_t dimIssues = 0;   // the panel backing's darken-only issues (flatUiLayerDimBegin)
-    uint64_t toneCandidates = 0, toneProven = 0, toneAdmitted = 0, toneReissued = 0, toneDeclined = 0, toneByShape = 0;
+    uint64_t toneCandidates = 0, toneProven = 0, toneAdmitted = 0, toneReissued = 0, toneMerged = 0, toneDeclined = 0, toneByShape = 0;
     uint64_t copies = 0, doorsArmed = 0, doorUntreated = 0, doorSize = 0;
     uint64_t composites = 0, compositeNone = 0, bindFailed = 0;
     // The HUD layer's edge smoothing (fix.hud_antialiasing, ui_layer_smaa.h): the layer composites by what they read -- the SMAA output, the raw
@@ -757,6 +757,19 @@ void flatUiGlowEnd(ID3D11DeviceContext* ctx, uint32_t slot, ID3D11ShaderResource
     original->Release();
 }
 
+bool flatUiLayerMergeBegin(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView** original) {
+    if (!ctx || !original || !flatUiLayerOn()) return false;
+    FlatComputeInternalScope internal;
+    const bool merged = uiLayerHudMergeBegin(ctx, original);
+    if (merged) ++g_w.toneMerged;
+    return merged;
+}
+
+void flatUiLayerMergeEnd(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* original, bool publish) {
+    FlatComputeInternalScope internal;
+    uiLayerHudMergeEnd(ctx, original, publish);
+}
+
 void flatUiLayerAtCopy(ID3D11DeviceContext* ctx, uint64_t frame, bool treated, uint32_t outW, uint32_t outH,
                        ID3D11ShaderResourceView** original, bool* replaced) {
     if (!ctx || !original || !replaced || !flatUiLayerOn()) return;
@@ -910,7 +923,7 @@ void flatUiLayerReport(uint64_t windowSeconds) {
     Log::get().note(
         "flat ui layer: window=%llus state=%s copies=%llu door-armed=%llu door-refused-untreated=%llu "
         "door-refused-size=%llu (last copy read %ux%u, display %ux%u) tone-candidates=%llu tone-proven=%llu "
-        "tone-admitted=%llu tone-reissued=%llu "
+        "tone-admitted=%llu tone-reissued=%llu tone-merged=%llu "
         "tone-declined=%llu composites=%llu composite-none=%llu bind-failed=%llu write-backs=%llu darken-only=%llu jitter-phase=%llu "
         "jitter-zero=%llu tone-by-shape=%llu",
         static_cast<unsigned long long>(windowSeconds), flatUiLayerState(), static_cast<unsigned long long>(w.copies),
@@ -918,7 +931,7 @@ void flatUiLayerReport(uint64_t windowSeconds) {
         static_cast<unsigned long long>(w.doorSize), w.inW, w.inH, w.outW, w.outH,
         static_cast<unsigned long long>(w.toneCandidates), static_cast<unsigned long long>(w.toneProven),
         static_cast<unsigned long long>(w.toneAdmitted), static_cast<unsigned long long>(w.toneReissued),
-        static_cast<unsigned long long>(w.toneDeclined), static_cast<unsigned long long>(w.composites),
+        static_cast<unsigned long long>(w.toneMerged), static_cast<unsigned long long>(w.toneDeclined), static_cast<unsigned long long>(w.composites),
         static_cast<unsigned long long>(w.compositeNone), static_cast<unsigned long long>(w.bindFailed),
         static_cast<unsigned long long>(w.writeBacks), static_cast<unsigned long long>(w.dimIssues), static_cast<unsigned long long>(w.jitterPhase),
         static_cast<unsigned long long>(w.jitterZero), static_cast<unsigned long long>(w.toneByShape));

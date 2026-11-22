@@ -6,3 +6,9 @@ static std::vector<Variant> glowFeedVariants() { return {
     {"kUiGlowFeedPsBytecode","ui_glow_feed_ps","main",nullptr,{},false,edvr::kUiGlowFeedPsHlsl,"ps_5_0"},
     {"kStarGlowAddPsBytecode","star_glow_add_ps","main",nullptr,{},false,edvr::kStarGlowAddPsHlsl,"ps_5_0"},
 }; }
+
+// The HUD merged into the tone's scene input (2026-11-22; src/d3d11/fixed_shader_source.h kUiHudMergePsHlsl, ui_layer.cpp uiLayerHudMergeBegin).
+// Its own list, registered LAST, so the indexed contracts of the lists before it keep their places.
+static std::vector<Variant> hudMergeVariants() { return {
+    {"kUiHudMergePsBytecode","ui_hud_merge_ps","main",nullptr,{},false,edvr::kUiHudMergePsHlsl,"ps_5_0"},
+}; }
