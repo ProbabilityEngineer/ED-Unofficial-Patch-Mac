@@ -54,8 +54,20 @@ inline bool flatUiPanelBackingPair(uint64_t vs, uint64_t ps) { return vs == kFla
 // The shared family rule, asked both ways (an HDR eye target, then the post-tonemap one) with no learned surface:
 // ui_layer_math.h's shader-pair recognitions, not a second hash table. Flat adds two pairs of its own ahead of it, the comms panel's glass and the panels' frosted backing.
 // legacyGlass: visual.cockpit_glass is legacy (the caller's one load of cockpitGlassLegacyLive); false names no canopy, so `odyssey` leaves the game's own canopy draw unnamed.
+// THE STAR GLARE STAYS IN THE SCENE (flat only, 2026-11-22). VS 94D5C556DFD6D705 with PS 912477AEF6958379 (holo_families.h's
+// kHoloContactE) is also the game's stock glare train over a star (docs/design-flat-temporal-aa-2026-09-23.md, "the stock glare train").
+// Taken with the hologram family (2026-11-21), the glare was tonemapped alone in the HUD layer and added over the already tonemapped sun:
+// F6's pixel history at the sun (edvr_gfx_20261122_011826, 01:25:39 AA on, 01:25:47 AA off, MetalFX, SS 0.85): the scene before the
+// tone the same both ways (3.28 red), the screen 2.93 with the AA on against 1.63 off, the game's own (the glare added to the scene
+// before the tone, 3.28 -> 3.81, and compressed with it). A VS/PS hash cannot tell the glare from the radar's use of the pair (the
+// corona family's case, R2 in holo_families.h), so flat names neither: the pair is drawn into H in the game's order, as before 2026-11-21.
+constexpr uint64_t kFlatUiGlareVs = 0x94D5C556DFD6D705ull;
+constexpr uint64_t kFlatUiGlarePs = 0x912477AEF6958379ull;
+inline bool flatUiGlarePair(uint64_t vs, uint64_t ps) { return vs == kFlatUiGlareVs && ps == kFlatUiGlarePs; }
+
 inline UiLayerFamily flatUiFamilyOf(uint64_t vs, uint64_t ps, bool legacyGlass = false) {
     if (flatUiPanelGlassPair(vs, ps) || flatUiPanelBackingPair(vs, ps)) return UiLayerFamily::kHolo;
+    if (flatUiGlarePair(vs, ps)) return UiLayerFamily::kNone;
     UiFamilyFacts f;
     f.vs = vs;
     f.ps = ps;
