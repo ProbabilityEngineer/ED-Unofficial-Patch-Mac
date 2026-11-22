@@ -57,6 +57,7 @@
 // totals line counts every case and names each shader pair once.
 #pragma once
 
+#include "ui_layer_hud_aa.h"   // HudAaMode: the HUD edge smoothing's choice (off | light FXAA | sharp SMAA)
 #include <cstdint>
 #include <cstddef>
 
@@ -502,8 +503,12 @@ void uiLayerFlatSetDraw(uint64_t frame, float jx, float jy, uint32_t renderW, ui
 enum class UiLayerEdgeSmoothing : uint8_t { kNone = 0, kRaw, kSmoothed, kFault };
 struct UiLayerEdgeSmoothingResult {
     UiLayerEdgeSmoothing outcome = UiLayerEdgeSmoothing::kNone;
+    HudAaMode applied = HudAaMode::kOff;   // the mode the composite actually ran (off when it read the raw layer)
     uint32_t w = 0, h = 0;
 };
+// The flat adapter's ask for the next composite: off, light (FXAA) or sharp (SMAA). The bool form is kept for the callers that only
+// switch it on or off: on asks for SMAA, the mode the key meant before the choice existed.
+void uiLayerFlatSetEdgeSmoothing(HudAaMode mode);
 void uiLayerFlatSetEdgeSmoothing(bool on);
 UiLayerEdgeSmoothingResult uiLayerFlatEdgeSmoothingResult();
 // The flat profile's tonemap admission (2026-10-09): the game's tone pass recognised by its known pair (flat_mono_frame.h
