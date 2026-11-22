@@ -180,10 +180,14 @@ struct FlatTraceFrameHeader {
 constexpr uint32_t kFlatTraceFrames = 4;
 constexpr uint32_t kFlatTraceEventsPerFrame = 65536;
 constexpr uint64_t kFlatTraceStorageBudgetBytes = 256ull * 1024ull * 1024ull;
-// Outside an armed capture the runtime keeps the pre-v0.18.2 window: every
-// recorded event is a 504-byte store on the render thread, and a settlement
-// frame has ~11k draws. The full window opens only while a capture reads it.
-constexpr uint32_t kFlatTraceIdleEventsPerFrame = 4096;
+// Outside an armed capture the runtime records no trace events: every recorded
+// event is a 504-byte cold-buffer store on the render thread (~2 MB a frame in
+// busy scenes, truncated past the old 4096 anyway). The full window opens
+// whenever a capture, an F10 dump or a deferred failure capture reads the ring
+// (flat_runtime.cpp traceWindow). Taken from upstream 0.23.0 d4c6ced9 (Wave 4);
+// our flight edvr_gfx_20261122_045028 put the trace ring at about 0.7 ms of
+// EDVR render-thread time a frame in a station with AA on.
+constexpr uint32_t kFlatTraceIdleEventsPerFrame = 0;
 struct FlatTraceRing {
     FlatTraceEvent events[kFlatTraceFrames][kFlatTraceEventsPerFrame];
     uint32_t eventLimit = kFlatTraceEventsPerFrame; // the runtime narrows it per frame
