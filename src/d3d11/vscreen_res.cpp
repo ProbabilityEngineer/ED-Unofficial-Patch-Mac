@@ -376,7 +376,8 @@ vscreenfit::RouteFacts routeFactsFromConfig(Config& cfg) {
     f.flatProfile = runtimeFlatProfile();
     f.keyAuto = true;
 
-    const std::string quality = cfg.getString("fix.ui_quality", "100");
+    // Flat reads no fix.ui_quality (2026-11-22): its layer runs at 100 with the anti-aliasing (ui_layer.cpp uiLayerConfigure).
+    const std::string quality = f.flatProfile ? std::string("100") : cfg.getString("fix.ui_quality", "100");
     bool recognized = true;
     const float target = uiQualityParse(quality.c_str(), &recognized, nullptr);
     const bool temporal = temporalModeEnabledFor(cfg.getString("fix.temporal_aa", "off"), f.flatProfile);

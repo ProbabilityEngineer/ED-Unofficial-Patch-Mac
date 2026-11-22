@@ -1457,12 +1457,10 @@ void testVrPanelAaGate() {
 // The flat layer's adapter rules (flat_ui_layer_math.h, 2026-10-09): the families it asks for, the jitter a draw's camera
 // rows carry, the door.
 void testFlatLayerRules() {
-    check(flatUiLayerTakesFamily(UiLayerFamily::kHolo) && flatUiLayerTakesFamily(UiLayerFamily::kFlightHud) &&
-              flatUiLayerTakesFamily(UiLayerFamily::kSprite),
-          "flat layer: the holo panels, the flight HUD and the target sprite are asked for");
-    // The loading screen's ghost (2026-10-09 13:51): one of the hologram's seven pairs taken, six left (no camera rows) --
-    // a family is taken whole or not at all, so the holograms are not asked.
-    check(!flatUiLayerTakesFamily(UiLayerFamily::kHoloGeneric), "flat layer: the holograms family is not asked (taken whole or not at all)");
+    // 2026-11-22: fix.ui_quality removed from the flat edition; the cockpit HUD stays in the game's scene.
+    check(!flatUiLayerTakesFamily(UiLayerFamily::kHolo) && !flatUiLayerTakesFamily(UiLayerFamily::kFlightHud) &&
+              !flatUiLayerTakesFamily(UiLayerFamily::kSprite) && !flatUiLayerTakesFamily(UiLayerFamily::kHoloGeneric),
+          "flat layer: the holo panels, the flight HUD, the target sprite and the holograms are not asked for");
     {
         static const uint64_t kHoloVs[] = {0x94D5C556DFD6D705ull, 0xDF3503CD07F9B10Cull, 0x9B34C331902DC1EDull, 0x9611A454527F7FEBull};
         static const uint64_t kHoloPs[] = {0x912477AEF6958379ull, 0x76BF170A625F18E3ull, 0x9FDA9FAB05B654BDull, 0x5270C41523EAF95Aull};

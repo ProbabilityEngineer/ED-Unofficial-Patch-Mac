@@ -90,7 +90,8 @@ inline int flatPairFactsTests() {
         expect(flatUiFamilyOf(kFlatUiPanelBackingVs, kFlatUiPanelBackingPs) == UiLayerFamily::kHolo, "...named with the holo panels");
     }
     // ---- the cockpit holograms (2026-11-21): flat takes the family, the target sphere's verified pairs with it ----
-    expect(flatUiLayerTakesFamily(UiLayerFamily::kHoloGeneric), "flat takes the cockpit hologram family");
+    expect(!flatUiLayerTakesFamily(UiLayerFamily::kHoloGeneric) && !flatUiLayerTakesFamily(UiLayerFamily::kHolo),
+           "flat no longer takes the cockpit HUD families (fix.ui_quality removed from flat, 2026-11-22)");
     expect(flatUiFamilyOf(0x94D5C556DFD6D705ull, 0x912477AEF6958379ull) == UiLayerFamily::kNone &&
                flatUiFamilyFor(0x94D5C556DFD6D705ull, 0x912477AEF6958379ull, false, true) == UiLayerFamily::kNone,
            "flat leaves the star glare pair (94D5C556 / 912477AE) in the scene");

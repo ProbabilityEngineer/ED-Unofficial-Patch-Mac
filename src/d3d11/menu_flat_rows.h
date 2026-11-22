@@ -34,10 +34,7 @@ struct FlatPageRow {
 inline constexpr FlatPageRow kFlatPageRows[] = {
     {"fix", "temporal_aa",       FlatRowRead::RequestedMode},
     {"fix", "render_sharpness",  FlatRowRead::Allowlist},
-    {"fix", "ui_quality",        FlatRowRead::Allowlist},
-    // HUD Anti-Aliasing (2026-10-24), directly under UI quality: flat only. Its `menu flat_performance` token (tools\gen_settings_schema.py) is a page VR's
-    // menu builds none of, so the row is on this tab and not on VR's Performance page; the generator fails the build for a `flat_performance` row not listed here.
-    {"fix", "hud_antialiasing",  FlatRowRead::Allowlist},
+    // UI quality and HUD Anti-Aliasing were here until 2026-11-22: removed from the flat edition (flat_ui_layer_math.h flatUiLayerTakesFamily).
     {"fix", "optimized_stations", FlatRowRead::Allowlist},
     // Directly under Optimized stations, and dimmed while that is off (menu.cpp): `menu performance`, so VR's Performance page shows it too (VR culls a carrier only for now).
     {"fix", "station_window_distance", FlatRowRead::Allowlist},

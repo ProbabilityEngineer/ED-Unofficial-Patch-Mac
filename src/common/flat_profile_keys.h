@@ -64,9 +64,6 @@ inline bool flatProfileReadsKey(const char* key) {
         // The monitor panel's key (menu.cpp, menu_panel.h's monitor slot): shows and hides the frame-rate gauges in the top right corner. Flat only (see
         // flatProfileOnlyKey). Unlisted, a hotkey key reads empty in flat, which is unbound, and the panel could never be shown.
         std::strcmp(key, "hotkey.monitor_panel") == 0 ||
-        // The interface quality (flat panel row; ui_panel_scale.cpp's flat factor and the flat UI layer). The VR layer reads it
-        // too, but stays inert in flat: it is live only with fix.temporal_aa on through this gate, which refuses that key.
-        std::strcmp(key, "fix.ui_quality") == 0 ||
         // The optimized station (optimized_station.cpp), on in flat as in VR (built v14.34). Unlisted, getString answers "off" here and the station never starts.
         std::strcmp(key, "fix.optimized_stations") == 0 ||
         // How far from a station window the real view takes over from the bake (optimized_station.cpp, the Window 3D distance row).
@@ -107,10 +104,6 @@ inline bool flatProfileReadsKey(const char* key) {
         // TEMPORARY (cockpit_glass_probe.h, docs\cockpit-glass-legacy-port.md): the canopy draw's state and constants, flat and VR alike.
         // Unlisted, getString answers "off" here and the probe never arms in flat. Remove with the probe.
         std::strcmp(key, "experimental.cockpit_glass_probe") == 0 ||
-        // The HUD layer's edge smoothing (flat_ui_layer.cpp, ui_layer_smaa.h): on | off, off by default, read live a frame at a time. The HUD Anti-Aliasing row
-        // of the flat panel's Performance tab, directly under UI quality. Unlisted, getBool answers false here whatever the file says, which reads as off, so the
-        // row could never turn it on, and the 30 s "flat ui layer smaa:" line shows key=off.
-        std::strcmp(key, "fix.hud_antialiasing") == 0 ||
         // HDR output (hdr_output.cpp): on | off, off by default, read once at startup. Flat is the ONLY profile that has it -- the FP16
         // swapchain, the widened post-tone targets and the PQ encode are the flat output chain -- so an unlisted key here is not a
         // degraded feature, it is the whole feature. Unlisted, getString answers exactly "off", which hdrOutputStartup cannot tell
