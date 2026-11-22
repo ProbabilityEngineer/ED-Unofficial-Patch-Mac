@@ -805,7 +805,8 @@ void flatUiLayerAtCopy(ID3D11DeviceContext* ctx, uint64_t frame, bool treated, u
     const float uv[4] = {0.0f, 0.0f, 1.0f, 1.0f};
     // The HUD layer's edge smoothing (fix.hud_antialiasing, off | light FXAA | sharp SMAA, off by default; the F8 panel's HUD Anti-Aliasing row): the key is
     // read here, a frame at a time, so a change is live; the layer decides nothing, it does what the ask says and reports what it did. A key the flat
-    // allow-list does not carry reads off, and the 30 s line shows it.
+    // allow-list does not carry reads off, and the 30 s line shows it. UI quality is not a condition: with it off the layer still carries the bars, dust,
+    // orbit lines, map icons and weapons fire, and the smoothing acts on those (the row's dim rule is only about the anti-aliasing).
     const HudAaMode smooth = hudAaParse(Config::get().getString("fix.hud_antialiasing", "off").c_str());
     g_w.edgeKeyOn = smooth != HudAaMode::kOff;
     g_w.edgeKeyMode = smooth;
