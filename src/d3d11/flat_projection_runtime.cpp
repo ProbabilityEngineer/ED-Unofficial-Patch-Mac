@@ -164,6 +164,9 @@ void FlatProjectionRuntime::reset() {
         entry.mapBytes = nullptr;
     }
     shadows_.reset(); context_.Reset(); owner_ = 0; nextGeneration_ = 1;
+    std::memset(findIndex_, kFindEmpty, sizeof(findIndex_));
+    findIndexReady_ = true;
+    rejectGen_.fetch_add(1, std::memory_order_relaxed);
     coldEnabled_ = false; coldAttempts_ = 0; planCapabilityReady_ = false;
     status_ = {};
     failure_ = {}; attempt_ = {};
@@ -263,9 +266,35 @@ void FlatProjectionRuntime::pollColdReadbacks() {
         clearCold(item);
     }
 }
+void FlatProjectionRuntime::insertFindIndex(uint32_t slot) noexcept {
+    ID3D11Resource* resource = tracked_[slot].buffer.Get();
+    if (!resource) return;
+    uint32_t i = rejectIndex(resource) & (kFindSlots - 1);
+    for (uint32_t n = 0; n < kFindSlots; ++n) {
+        if (findIndex_[i] == kFindEmpty || findIndex_[i] == slot) {
+            findIndex_[i] = static_cast<uint8_t>(slot);
+            return;
+        }
+        i = (i + 1) & (kFindSlots - 1);
+    }
+}
+void FlatProjectionRuntime::rebuildFindIndex() noexcept {
+    std::memset(findIndex_, kFindEmpty, sizeof(findIndex_));
+    findIndexReady_ = true;
+    for (uint32_t s = 0; s < kBuffers; ++s) {
+        if (tracked_[s].buffer) insertFindIndex(s);
+    }
+}
 FlatProjectionRuntime::Tracked* FlatProjectionRuntime::find(ID3D11Resource* resource) {
     if (!resource) return nullptr;
-    for (auto& entry : tracked_) if (entry.buffer.Get() == resource) return &entry;
+    if (!findIndexReady_) rebuildFindIndex();
+    uint32_t i = rejectIndex(resource) & (kFindSlots - 1);
+    for (uint32_t n = 0; n < kFindSlots; ++n) {
+        const uint8_t slot = findIndex_[i];
+        if (slot == kFindEmpty) return nullptr;
+        if (tracked_[slot].buffer.Get() == resource) return &tracked_[slot];
+        i = (i + 1) & (kFindSlots - 1);
+    }
     return nullptr;
 }
 void FlatProjectionRuntime::discard(Tracked& entry) {
@@ -275,6 +304,7 @@ void FlatProjectionRuntime::discard(Tracked& entry) {
     entry.mapped = entry.promoted = entry.privateReady = entry.pending = false;
     entry.mutationSerial = 1; entry.mutationOverflow = false;
     entry.mapBytes = nullptr;
+    rebuildFindIndex();
 }
 FlatProjectionRuntime::Tracked* FlatProjectionRuntime::track(ID3D11Resource* resource) {
     if (Tracked* known = find(resource)) return known;
@@ -314,6 +344,7 @@ FlatProjectionRuntime::Tracked* FlatProjectionRuntime::track(ID3D11Resource* res
         (desc.CPUAccessFlags & D3D11_CPU_ACCESS_WRITE) != 0;
     if (bounceRegistered_) bounceRegistered_(desc);
     free->mutationSerial = 1; free->mutationOverflow = false;
+    insertFindIndex(static_cast<uint32_t>(free - tracked_));
     return free;
 }
 bool FlatProjectionRuntime::observeCreateBuffer(ID3D11Buffer* buffer, const void* initialData) {
@@ -331,9 +362,56 @@ bool FlatProjectionRuntime::observeCreateBuffer(ID3D11Buffer* buffer, const void
     ++status_.initialWrites; ++status_.fullWrites;
     return true;
 }
+uint32_t FlatProjectionRuntime::rejectIndex(ID3D11Resource* resource) noexcept {
+    auto bits = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(resource) >> 4);
+    bits *= 0x9E3779B1u;
+    return bits & (kRejectSlots - 1);
+}
+bool FlatProjectionRuntime::writeRejected(ID3D11Resource* resource) const noexcept {
+    if (!resource) return true;
+    const uint32_t gen = rejectGen_.load(std::memory_order_acquire);
+    uint32_t i = rejectIndex(resource);
+    for (uint32_t n = 0; n < 8; ++n) {
+        const uint32_t g = reject_[i].gen;
+        if (g != gen) return false;
+        if (reject_[i].ptr == reinterpret_cast<uintptr_t>(resource)) {
+            if (reject_[i].gen != gen) return false;
+            return true;
+        }
+        i = (i + 1) & (kRejectSlots - 1);
+    }
+    return false;
+}
+void FlatProjectionRuntime::noteResourceCreated() noexcept {
+    rejectGen_.fetch_add(1, std::memory_order_release);
+}
+void FlatProjectionRuntime::rememberReject(ID3D11Resource* resource) noexcept {
+    if (!resource) return;
+    const uint32_t gen = rejectGen_.load(std::memory_order_relaxed);
+    uint32_t i = rejectIndex(resource);
+    for (uint32_t n = 0; n < 8; ++n) {
+        if (reject_[i].gen != gen || reject_[i].ptr == reinterpret_cast<uintptr_t>(resource)) {
+            reject_[i].ptr = reinterpret_cast<uintptr_t>(resource);
+            reject_[i].gen = gen;
+            return;
+        }
+        i = (i + 1) & (kRejectSlots - 1);
+    }
+}
+FlatProjectionRuntime::Tracked* FlatProjectionRuntime::trackOrReject(ID3D11Resource* resource) {
+    if (!resource) return nullptr;
+    if (Tracked* known = find(resource)) return known;
+    if (writeRejected(resource)) return nullptr;
+    const uint64_t capacityBefore = status_.refusals[static_cast<uint32_t>(FlatProjectionRuntimeRefusal::NoCapacity)];
+    Tracked* entry = track(resource);
+    if (!entry && shadows_.ready() &&
+        status_.refusals[static_cast<uint32_t>(FlatProjectionRuntimeRefusal::NoCapacity)] == capacityBefore)
+        rememberReject(resource);
+    return entry;
+}
 void FlatProjectionRuntime::observeMap(ID3D11Resource* resource, D3D11_MAP type, const void* bytes) {
     if (!owner() || type == D3D11_MAP_READ) return;
-    Tracked* entry = track(resource);
+    Tracked* entry = trackOrReject(resource);
     if (!entry) return;
     if (bounceMapped_) bounceMapped_(type);
     mutate(*entry);
@@ -382,7 +460,7 @@ void FlatProjectionRuntime::observeUnmap(ID3D11Resource* resource, uint64_t fram
 void FlatProjectionRuntime::observeUpdate(ID3D11Resource* resource, const void* bytes,
                                           const D3D11_BOX* box, uint64_t frame, uint32_t sequence) {
     if (!owner()) return;
-    Tracked* entry = track(resource);
+    Tracked* entry = trackOrReject(resource);
     if (!entry) return;
     mutate(*entry);
     entry->privateBuffer.invalidate();

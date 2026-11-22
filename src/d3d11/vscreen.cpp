@@ -3115,7 +3115,7 @@ void STDMETHODCALLTYPE hookedOMSetRenderTargets(ID3D11DeviceContext* self, UINT 
                                                 ID3D11RenderTargetView* const* rtvs,
                                                 ID3D11DepthStencilView* dsv) {
     flatOmSetNote();   // the forward-light watch's output-merger answer is stale (flat_om_generation.h)
-    if (!foreignContext(self)) flatIssueEpochBumpRt();
+    if (!foreignContext(self)) { flatIssueEpochBumpRt(); flatOmNoteUavBound(false); }
     if (g_flatComputeInternal) { g_state->realOMSetRenderTargets(self, n, rtvs, dsv); return; }
     ++g_state->thunkHits[kHitOmSet];
     if (foreignContext(self)) {
@@ -3127,6 +3127,7 @@ void STDMETHODCALLTYPE hookedOMSetRenderTargets(ID3D11DeviceContext* self, UINT 
     if (uiLayerMapRunHeld() && uiLayerMapRunGameSetsOwn(self, n, rtvs, dsv)) return;
     if (uiLayerMapRunHeld() && uiLayerMapRunGameSet(self, n, rtvs, dsv, false)) {
         bindingSet(BindSlot::Rtv0, (n && rtvs) ? rtvs[0] : nullptr);
+        flatOmNoteTargets(n, rtvs);
         bindingSet(BindSlot::Dsv0, dsv);
         if (flatTemporalCapturing()) flatTemporalBind((n && rtvs) ? rtvs[0] : nullptr, dsv);
         if (temporalPassWantsFssChrome()) temporalPassNoteOmSet(n);
@@ -3149,6 +3150,7 @@ void STDMETHODCALLTYPE hookedOMSetRenderTargets(ID3D11DeviceContext* self, UINT 
     // address after a rebind is not evidence of an identical view. bindingSet
     // bumps the generation either way.
     bindingSet(BindSlot::Rtv0, (n && rtvs) ? rtvs[0] : nullptr);
+    flatOmNoteTargets(n, rtvs);
     bindingSet(BindSlot::Dsv0, dsv);
     if (flatTemporalCapturing()) flatTemporalBind((n && rtvs) ? rtvs[0] : nullptr, dsv);
     // The camera-write tags and P3 (the third view): the colour targets bound, after the shadow holds the new views (docs/sky-flicker-2026-10-13.md).
@@ -3165,7 +3167,12 @@ void STDMETHODCALLTYPE hookedOMSetRtvAndUav(ID3D11DeviceContext* self, UINT n,
                                             const UINT* counts) {
     flatOmSetNote();   // UAV-only sets too (flat_om_generation.h)
     // 0xFFFFFFFF keeps the current targets. Anything else can replace the depth view.
-    if (!foreignContext(self) && n != 0xFFFFFFFFu) flatIssueEpochBumpRt();
+    if (!foreignContext(self)) {
+        if (n != 0xFFFFFFFFu) flatIssueEpochBumpRt();
+        else flatIssueEpochBumpOutput();
+        if (uavCount > 0) flatOmNoteUavBound(true);
+        else if (n != 0xFFFFFFFFu) flatOmNoteUavBound(false);
+    }
     if (g_flatComputeInternal) { g_state->realOMSetRtvAndUav(self, n, rtvs, dsv, uavStart, uavCount, uavs, counts); return; }
     // A foreign deferred context cannot write the immediate target yet, but
     // an eventual command list or undocumented cross-context path must not
@@ -3194,6 +3201,7 @@ void STDMETHODCALLTYPE hookedOMSetRtvAndUav(ID3D11DeviceContext* self, UINT n,
             return;
         } else if (uiLayerMapRunGameSet(self, n, rtvs, dsv, uavCount != 0)) {
             bindingSet(BindSlot::Rtv0, (n && rtvs) ? rtvs[0] : nullptr);
+            flatOmNoteTargets(n, rtvs);
             bindingSet(BindSlot::Dsv0, dsv);
             if (flatTemporalCapturing()) flatTemporalBind((n && rtvs) ? rtvs[0] : nullptr, dsv);
             if (temporalPassWantsFssChrome()) temporalPassNoteOmSet(n);
@@ -3207,6 +3215,7 @@ void STDMETHODCALLTYPE hookedOMSetRtvAndUav(ID3D11DeviceContext* self, UINT n,
             depthProbeSample(self, cur);
         }
         bindingSet(BindSlot::Rtv0, (n && rtvs) ? rtvs[0] : nullptr);
+        flatOmNoteTargets(n, rtvs);
         bindingSet(BindSlot::Dsv0, dsv);
         if (flatTemporalCapturing()) flatTemporalBind((n && rtvs) ? rtvs[0] : nullptr, dsv);
         if (temporalPassWantsFssChrome()) temporalPassNoteOmSet(n);
@@ -3359,13 +3368,21 @@ void STDMETHODCALLTYPE hookedSwapDeviceContextState(ID3D11DeviceContext* self, I
 void STDMETHODCALLTYPE hookedOMSetBlendState(ID3D11DeviceContext* self, ID3D11BlendState* state,
                                              const FLOAT factor[4], UINT sampleMask) {
     flatOmSetNote();
-    if (g_flatComputeInternal) { g_state->realOMSetBlendState(self, state, factor, sampleMask); return; }
+    if (!foreignContext(self)) flatIssueEpochBumpOutput();
+    if (g_flatComputeInternal) {
+        g_state->realOMSetBlendState(self, state, factor, sampleMask);
+        // The shadow does not move, but the device blend did. The foreground record has to follow or its check disagrees.
+        if (!foreignContext(self)) flatOmNoteBlend(state, factor, sampleMask);
+        return;
+    }
     if (!foreignContext(self)) {
         // Only engine velocity reads Blend (draw_fast_path.h): not recorded while the AA is off.
         if (bindShadowsSkipped(g_aaOffDraw.load(std::memory_order_relaxed), engineVelocityLiveNow()))
             g_shadowsSkipped.store(true, std::memory_order_relaxed);
-        else
+        else {
             bindingSet(BindSlot::Blend, state);
+            flatOmNoteBlend(state, factor, sampleMask);
+        }
     }
     g_state->realOMSetBlendState(self, state, factor, sampleMask);
 }
@@ -3445,7 +3462,7 @@ void STDMETHODCALLTYPE hookedPSSetShader(ID3D11DeviceContext* self, ID3D11PixelS
     g_state->realPSSetShader(self, ps, ci, n);
 }
 
-void forgetBindings(State*) { bindingForgetAll(); }
+void forgetBindings(State*) { bindingForgetAll(); flatOmForget(); }
 
 // Both of these say so the first time they run.
 //
@@ -3456,6 +3473,7 @@ void forgetBindings(State*) { bindingForgetAll(); }
 void STDMETHODCALLTYPE hookedClearState(ID3D11DeviceContext* self) {
     flatOmSetNote();
     if (!foreignContext(self)) flatIssueEpochRevoke();
+    if (!foreignContext(self)) flatOmNoteUavBound(false);
     if (g_flatComputeInternal) { g_state->realClearState(self); return; }
     gpuFrameCommandIfLive(self);
     State* s = g_state;
@@ -5487,6 +5505,36 @@ static inline bool flatStationSkipsDraw(ID3D11DeviceContext* self) {
     return self == g_state->ownerCtx && optimizedStationSkipsDraw(bindingShaderHash(BindSlot::Vs), bindingShaderHash(BindSlot::Ps));
 }
 
+// advanced.census_skip_offscreen in the flat profile: the offscreen probe beginPanelOverride runs for VR, which flat draws never reach. Every
+// flat scene draw is offscreen (no eye textures), so a spec names a draw shape in a target of that size, and FlatStationSunGate keeps it off
+// the GPU the way it keeps the station's sun off. Owner context only; one load while no spec is set. Counted in censusSkipped, which the
+// frame boundary reports as "census skip: N draw(s) dropped". advanced.census_skip's vs:HASH terms apply here too (a mesh family draws
+// many index counts, so a shape names one level of detail and the vertex shader names them all); its kind:count terms stay VR's.
+static inline bool flatCensusSkipsDraw(ID3D11DeviceContext* self, char kind, uint32_t count) {
+    State* s = g_state;
+    if ((!s->censusSkipOffCount && !s->censusSkipCount) || self != s->ownerCtx) return false;
+    if (s->censusSkipCount) {
+        const uint64_t h = bindingShaderHash(BindSlot::Vs);
+        for (uint32_t i = 0; i < s->censusSkipCount; ++i) {
+            if (s->censusSkip[i].vsHash && s->censusSkip[i].vsHash == h) {
+                ++s->censusSkipped;
+                return true;
+            }
+        }
+    }
+    if (!s->censusSkipOffCount) return false;
+    ResourceInfo info;
+    if (!bindingResolveProbe(bindingGet(BindSlot::Rtv0), &info) || !info.isTexture2D) return false;
+    for (uint32_t i = 0; i < s->censusSkipOffCount; ++i) {
+        const State::OffSkip& o = s->censusSkipOff[i];
+        if (info.a != o.w || info.b != o.h) continue;
+        if (o.kind && (o.kind != kind || o.n != count)) continue;
+        ++s->censusSkipped;
+        return true;
+    }
+    return false;
+}
+
 // The station's skipped sun draw, once the flat runtime's scope has observed it and (when it planned anything) begun. Every flat draw builds one of these
 // between beginActualDraw and the real call; for any draw but a skipped sun draw it does nothing (issues() is true, restore() is a no-op). What the
 // scope does depends on needsActualDraw():
@@ -5501,16 +5549,17 @@ static inline bool flatStationSkipsDraw(ID3D11DeviceContext* self) {
 static edvr::stationmask::Mask g_stationSunMask;
 class FlatStationSunGate {
 public:
-    FlatStationSunGate(ID3D11DeviceContext* self, const FlatRuntimeDrawScope& scope, bool stationSkip) : ctx_(self) {
-        if (!stationSkip) return;
+    // hideSkip: a draw advanced.census_skip_offscreen names (flatCensusSkipsDraw), kept off the GPU the same way but not counted as the sun.
+    FlatStationSunGate(ID3D11DeviceContext* self, const FlatRuntimeDrawScope& scope, bool stationSkip, bool hideSkip = false) : ctx_(self) {
+        if (!stationSkip && !hideSkip) return;
         if (!scope.needsActualDraw()) {
             issue_ = false;
-            optimizedStationNoteSunDraw(SunDrawPath::kNotIssued);
+            if (stationSkip) optimizedStationNoteSunDraw(SunDrawPath::kNotIssued);
             return;
         }
         masked_ = g_stationSunMask.begin(self, &stationMaskSetBlend, &stationMaskSetDepth);
         issue_ = masked_;
-        optimizedStationNoteSunDraw(masked_ ? SunDrawPath::kMasked : SunDrawPath::kNotIssued);
+        if (stationSkip) optimizedStationNoteSunDraw(masked_ ? SunDrawPath::kMasked : SunDrawPath::kNotIssued);
     }
     bool issues() const { return issue_; }
     void restore() {
@@ -5565,6 +5614,7 @@ void STDMETHODCALLTYPE hookedDraw(ID3D11DeviceContext* self, UINT count, UINT st
     if (gpuPassProfileCapturing()) gpuPassProfileNoteDraw(self, 'D', count, 1);
     if (runtimeFlatProfile()) {
         const bool stationSkip = flatStationSkipsDraw(self);
+        bool hideSkip = false;
         // Planet patch motion (celestial_motion.h): the flat profile's capture of a colour-pass patch draw, before the game's own issue.
         if (self == g_state->ownerCtx && celestialMotionLive() && bindingShaderHash(BindSlot::Vs) == kCelestialPatchVs) celestialMotionNoteDraw(self);
         // TEMPORARY (cockpit_glass_probe.h): the canopy draw's state, before anything substitutes a binding; one load while off.
@@ -5577,11 +5627,12 @@ void STDMETHODCALLTYPE hookedDraw(ID3D11DeviceContext* self, UINT count, UINT st
             DrawArgs args;
             args.base = static_cast<int32_t>(start);
             flatCensusDraw(self, 'D', count, 1, args);
+            hideSkip = flatCensusSkipsDraw(self, 'D', count);
         }
         FlatRuntimeDrawScope flatDraw(self, 1, 'D', count, 0, static_cast<int32_t>(start));
         if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw();
         if (flat_pixel_history::g_active) pixelHistoryBefore(self);
-        FlatStationSunGate sun(self, flatDraw, stationSkip);   // built 2026-10-21: only a skipped sun draw is changed (no real call, or a masked one)
+        FlatStationSunGate sun(self, flatDraw, stationSkip, hideSkip);   // built 2026-10-21: only a skipped sun draw is changed (no real call, or a masked one)
         {
             FlatParticleScope particle(self, 'D', count, 1);
             // visual.star_light_colour (flat_star_light.h): the ring dust's light, for its two draws only; one relaxed load while off.
@@ -5596,7 +5647,7 @@ void STDMETHODCALLTYPE hookedDraw(ID3D11DeviceContext* self, UINT count, UINT st
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
         // visual.cockpit_glass = legacy (cockpit_glass.h): over the game's ice or condensation canopy draw, the legacy dirt, drawn again with EDVR's overlay; one relaxed load otherwise
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx && cockpitGlassOverlayBegin(self)) { g_state->realDraw(self, count, start); cockpitGlassOverlayEnd(self); }
-        if (!stationSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDraw(self, count, start); });
+        if (!stationSkip && !hideSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDraw(self, count, start); });
         return;
     }
     if (g_vrWorldInternal) { g_state->realDraw(self, count, start); return; }   // the world route's own draw (vr_world_route.h)
@@ -5679,6 +5730,7 @@ void STDMETHODCALLTYPE hookedDrawIndexed(ID3D11DeviceContext* self, UINT count,
     if (gpuPassProfileCapturing()) gpuPassProfileNoteDraw(self, 'I', count, 1);
     if (runtimeFlatProfile()) {
         const bool stationSkip = flatStationSkipsDraw(self);
+        bool hideSkip = false;
         if (self == g_state->ownerCtx && celestialMotionLive() && bindingShaderHash(BindSlot::Vs) == kCelestialPatchVs) celestialMotionNoteDraw(self);
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx) cockpitGlassBeforeDraw(self); if (cockpitGlassProbeLive() && self == g_state->ownerCtx) cockpitGlassProbeDraw(self, 'I', count, 1);   // TEMPORARY (cockpit_glass_probe.h)
         ++g_state->thunkHits[kHitDrawIndexed];
@@ -5688,11 +5740,12 @@ void STDMETHODCALLTYPE hookedDrawIndexed(ID3D11DeviceContext* self, UINT count,
             args.start = startIndex;
             args.base = baseVertex;
             flatCensusDraw(self, 'I', count, 1, args);
+            hideSkip = flatCensusSkipsDraw(self, 'I', count);
         }
         FlatRuntimeDrawScope flatDraw(self, 1, 'I', count, startIndex, baseVertex);
         if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw();
         if (flat_pixel_history::g_active) pixelHistoryBefore(self);
-        FlatStationSunGate sun(self, flatDraw, stationSkip);
+        FlatStationSunGate sun(self, flatDraw, stationSkip, hideSkip);
         {
             FlatParticleScope particle(self, 'I', count, 1);
             // visual.star_light_colour (flat_star_light.h): the ring dust's light, for its two draws only; one relaxed load while off.
@@ -5709,7 +5762,7 @@ void STDMETHODCALLTYPE hookedDrawIndexed(ID3D11DeviceContext* self, UINT count,
         if (flat_pixel_history::g_active) pixelHistoryAfter(self);
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx && cockpitGlassOverlayBegin(self)) { g_state->realDrawIndexed(self, count, startIndex, baseVertex); cockpitGlassOverlayEnd(self); }
-        if (!stationSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawIndexed(self, count, startIndex, baseVertex); });
+        if (!stationSkip && !hideSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawIndexed(self, count, startIndex, baseVertex); });
         return;
     }
     if (g_vrWorldInternal) { g_state->realDrawIndexed(self, count, startIndex, baseVertex); return; }
@@ -5789,6 +5842,7 @@ void STDMETHODCALLTYPE hookedDrawInstanced(ID3D11DeviceContext* self, UINT perIn
     if (gpuPassProfileCapturing()) gpuPassProfileNoteDraw(self, 'N', perInstance, instances);
     if (runtimeFlatProfile()) {
         const bool stationSkip = flatStationSkipsDraw(self);
+        bool hideSkip = false;
         if (self == g_state->ownerCtx && celestialMotionLive() && bindingShaderHash(BindSlot::Vs) == kCelestialPatchVs) celestialMotionNoteDraw(self);
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx) cockpitGlassBeforeDraw(self); if (cockpitGlassProbeLive() && self == g_state->ownerCtx) cockpitGlassProbeDraw(self, 'N', perInstance, instances);   // TEMPORARY (cockpit_glass_probe.h)
         if (self == g_state->ownerCtx && flatTemporalCapturing())
@@ -5798,12 +5852,13 @@ void STDMETHODCALLTYPE hookedDrawInstanced(ID3D11DeviceContext* self, UINT perIn
             args.base = static_cast<int32_t>(startVertex);
             args.startInstance = startInstance;
             flatCensusDraw(self, 'N', perInstance, instances, args);
+            hideSkip = flatCensusSkipsDraw(self, 'N', perInstance);
         }
         FlatRuntimeDrawScope flatDraw(self, instances, 'N', perInstance, 0,
                                       static_cast<int32_t>(startVertex), startInstance);
         if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw();
         if (flat_pixel_history::g_active) pixelHistoryBefore(self);
-        FlatStationSunGate sun(self, flatDraw, stationSkip);
+        FlatStationSunGate sun(self, flatDraw, stationSkip, hideSkip);
         {
             FlatParticleScope particle(self, 'N', perInstance, instances);
             // visual.star_light_colour (flat_star_light.h): the ring dust's light, for its two draws only; one relaxed load while off.
@@ -5817,7 +5872,7 @@ void STDMETHODCALLTYPE hookedDrawInstanced(ID3D11DeviceContext* self, UINT perIn
         if (flat_pixel_history::g_active) pixelHistoryAfter(self);
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx && cockpitGlassOverlayBegin(self)) { g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance); cockpitGlassOverlayEnd(self); }
-        if (!stationSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance); });
+        if (!stationSkip && !hideSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance); });
         return;
     }
     if (g_vrWorldInternal) { g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance); return; }
@@ -5887,6 +5942,7 @@ void STDMETHODCALLTYPE hookedDrawIndexedInstanced(ID3D11DeviceContext* self,
     if (gpuPassProfileCapturing()) gpuPassProfileNoteDraw(self, 'X', perInstance, instances);
     if (runtimeFlatProfile()) {
         const bool stationSkip = flatStationSkipsDraw(self);
+        bool hideSkip = false;
         if (self == g_state->ownerCtx && celestialMotionLive() && bindingShaderHash(BindSlot::Vs) == kCelestialPatchVs) celestialMotionNoteDraw(self);
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx) cockpitGlassBeforeDraw(self); if (cockpitGlassProbeLive() && self == g_state->ownerCtx) cockpitGlassProbeDraw(self, 'X', perInstance, instances);   // TEMPORARY (cockpit_glass_probe.h)
         if (self == g_state->ownerCtx && flatTemporalCapturing())
@@ -5897,12 +5953,13 @@ void STDMETHODCALLTYPE hookedDrawIndexedInstanced(ID3D11DeviceContext* self,
             args.base = baseVertex;
             args.startInstance = startInstance;
             flatCensusDraw(self, 'X', perInstance, instances, args);
+            hideSkip = flatCensusSkipsDraw(self, 'X', perInstance);
         }
         FlatRuntimeDrawScope flatDraw(self, instances, 'X', perInstance, startIndex,
                                       baseVertex, startInstance);
         if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw();
         if (flat_pixel_history::g_active) pixelHistoryBefore(self);
-        FlatStationSunGate sun(self, flatDraw, stationSkip);
+        FlatStationSunGate sun(self, flatDraw, stationSkip, hideSkip);
         {
             FlatParticleScope particle(self, 'X', perInstance, instances);
             // visual.star_light_colour (flat_star_light.h): the ring dust's light, for its two draws only; one relaxed load while off.
@@ -5922,7 +5979,7 @@ void STDMETHODCALLTYPE hookedDrawIndexedInstanced(ID3D11DeviceContext* self,
         if (flat_pixel_history::g_active) pixelHistoryAfter(self);
         if (flatDraw.needsActualDraw()) flatDraw.endActualDraw();
         if (cockpitGlassLegacyLive() && self == g_state->ownerCtx && cockpitGlassOverlayBegin(self)) { g_state->realDrawIndexedInstanced(self, perInstance, instances, startIndex, baseVertex, startInstance); cockpitGlassOverlayEnd(self); }
-        if (!stationSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawIndexedInstanced(self, perInstance, instances, startIndex, baseVertex, startInstance); });
+        if (!stationSkip && !hideSkip) flatDraw.uiReissue([&] { HdrNitsScope reissueNits(self, self == g_state->ownerCtx && hdrOutputOn()); ReissueClock flatClock(ReissueCaller::FlatUi); g_state->realDrawIndexedInstanced(self, perInstance, instances, startIndex, baseVertex, startInstance); });
         return;
     }
     if (g_vrWorldInternal) { g_state->realDrawIndexedInstanced(self, perInstance, instances, startIndex, baseVertex, startInstance); return; }
@@ -6539,6 +6596,7 @@ void vScreenSetRenderTargetsRaw(ID3D11DeviceContext* ctx, uint32_t n,
     if (!g_state || !g_state->realOMSetRenderTargets || !ctx) return;
     flatOmSetNote();
     flatIssueEpochBumpRt();
+    if (ctx == g_state->ownerCtx) flatOmNoteUavBound(false);
     g_state->realOMSetRenderTargets(ctx, n, rtvs, dsv);
 }
 
@@ -6565,12 +6623,17 @@ void vScreenOMSetBlendStateRaw(ID3D11DeviceContext* ctx, ID3D11BlendState* state
                                const float blendFactor[4], uint32_t sampleMask) {
     if (!g_state || !g_state->realOMSetBlendState || !ctx) return;
     flatOmSetNote();
+    if (ctx == g_state->ownerCtx) flatIssueEpochBumpOutput();
     g_state->realOMSetBlendState(ctx, state, blendFactor, sampleMask);
+    // Past the binding shadow on purpose (engine velocity's derived blend must not look like the game's set).
+    // The foreground record is what OMGet returns, so it follows this set. The blend generation does not.
+    if (ctx == g_state->ownerCtx) flatOmNoteBlend(state, blendFactor, sampleMask);
 }
 
 void vScreenOMSetDepthStencilStateRaw(ID3D11DeviceContext* ctx, ID3D11DepthStencilState* state, uint32_t stencilRef) {
     if (!ctx) return;
     flatOmSetNote();
+    if (g_state && ctx == g_state->ownerCtx) flatIssueEpochBumpDepth();
     if (g_state && g_state->realOMSetDepthStencilState) g_state->realOMSetDepthStencilState(ctx, state, stencilRef);
     else ctx->OMSetDepthStencilState(state, stencilRef);
 }
