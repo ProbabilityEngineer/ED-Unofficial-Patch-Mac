@@ -89,6 +89,11 @@ inline int flatPairFactsTests() {
         expect(!flatPairFactsFresh(kFlatUiPanelBackingVs, 0, true).uiMayAsk, "...by the pair, not by its vertex shader");
         expect(flatUiFamilyOf(kFlatUiPanelBackingVs, kFlatUiPanelBackingPs) == UiLayerFamily::kHolo, "...named with the holo panels");
     }
+    // ---- the cockpit holograms (2026-11-21): flat takes the family, the target sphere's verified pairs with it ----
+    expect(flatUiLayerTakesFamily(UiLayerFamily::kHoloGeneric), "flat takes the cockpit hologram family");
+    expect(flatUiFamilyOf(0x5559BD94B6852E83ull, 0xEA02FAC2BD6C643Cull) == UiLayerFamily::kHoloGeneric &&
+               flatUiFamilyOf(0x9611A454527F7FEBull, 0x1E1C49DC51C0E509ull) == UiLayerFamily::kHoloGeneric,
+           "...the target sphere and a radar contact are named in it");
     // ---- the backing's darken-only issue (2026-11-21): the layer's light times (1 - alpha), its transmittance untouched; over shapes only ----
     {
         UiBlendRt premul;
