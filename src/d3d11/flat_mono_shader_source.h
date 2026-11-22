@@ -59,6 +59,7 @@ Texture2D<float4> SkinE : register(t17);                // prep only, bound when
 // Planet patch motion, flat (celestial_motion.h): one record per body, the engine-motion core's CelestialRecord. Prep only, bound at t18 with
 // debug.w bit 3.
 StructuredBuffer<CelestialRecord> CelestialRecords : register(t18); // prep only, bound with debug.w bit 3
+Texture2D<float> HudMask : register(t19);   // prep only, bound with debug.w bit 64: the cockpit HUD's pixels this frame (flat_hud_mask.h)
 Texture2D<float4> OverlayColor : register(t16);         // HDR finish only, bound in overlay frames: the raw H with the protected late overlays
                                                          // drawn (t0 is then the CLEAN H, the image the backend was handed)
 SamplerState LinearClamp : register(s0);
@@ -546,6 +547,9 @@ void prep(uint3 id:SV_DispatchThreadID) {
             reject=valid?0:1;
         } else if(kind!=2)cls=kClassCamera;
     }
+    // The cockpit HUD (flat_hud_mask.h): its draws write no motion, so their pixels carry the motion of what lies behind them and the
+    // upscaler's history smears the text whenever that moves. A marked pixel keeps no history; the finish gives it the plain picture.
+    if((debug.w&64)!=0 && HudMask.Load(int3(q,0))>0)reject=1;
     if(!foregroundActualMotion) { if(reject!=0)motion=0; }
     if((debug.w&2)!=0 && !foreground)depth*=foregroundDepth.x;
     OutDepth[q]=isfinite(depth)?saturate(depth):0;

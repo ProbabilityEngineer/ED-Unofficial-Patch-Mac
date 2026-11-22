@@ -1,5 +1,6 @@
 #include "flat_origin_capture.h"
 #include "flat_mono_resolve.h"
+#include "flat_hud_mask.h"   // hud_mask::viewFor: the cockpit HUD's marked pixels, refused in prep (t19, debug.w bit 64)
 #include "upscaler_slots.h"
 #include "fsr3_engine.h"
 #include "map_easu.h"
@@ -1461,6 +1462,9 @@ bool flatMonoResolve(ID3D11Device* device,ID3D11DeviceContext* context,const Fla
         constants.vehicleQuat[2]=f.vehicleQuat[1][0];constants.vehicleQuat[3]=f.vehicleQuat[1][1];
         std::memcpy(constants.vehicleSphere,f.vehicleSphere,sizeof(f.vehicleSphere));
     }
+    // The cockpit HUD's history refusal (flat_hud_mask.h): the pixels the HUD draws marked this frame, at t19, refused in prep.
+    ID3D11ShaderResourceView* const hudMask=hud_mask::viewFor(f.renderWidth,f.renderHeight);
+    if(hudMask)constants.debug[3]|=64u;
     if(celestialBound){constants.debug[3]|=8u;std::memcpy(constants.celestialTanNow,f.celestialTanNow,sizeof(f.celestialTanNow));std::memcpy(constants.celestialTanPrev,f.celestialTanPrev,sizeof(f.celestialTanPrev));}
     constants.foregroundDepth[0]=sdkDepthScale;
     // MetalFX colour expansion has its own lane after upstream foreground depth.
@@ -1489,8 +1493,8 @@ bool flatMonoResolve(ID3D11Device* device,ID3D11DeviceContext* context,const Fla
     ID3D11ShaderResourceView* prepViews[]={g.color.srv.Get(),f.depth,f.engine.slots,f.engine.pool,
         nullptr,nullptr,nullptr,nullptr,depthCheck?g.depth[prevDepthIndex].srv.Get():nullptr,firstPersonMap,firstPersonStencil,
         nullptr,nullptr,f.untrustedCameraCoverage,nullptr,foreground?f.foregroundMotion:nullptr,nullptr,skin?f.engine.skin:nullptr,
-        celestialBound?f.celestialRecords:nullptr};
-    const UINT prepViewCount=celestialBound?19:(skin?18:(foreground?16:14));
+        celestialBound?f.celestialRecords:nullptr,hudMask};
+    const UINT prepViewCount=hudMask?20:(celestialBound?19:(skin?18:(foreground?16:14)));
     context->CSSetShaderResources(0,prepViewCount,prepViews);
     // u4 receives the MetalFX colour expansion in prep (backend.x); u5 is the refusal census's class texture.
     ID3D11UnorderedAccessView* prepOutputs[]={g.depth[depthIndex].uav.Get(),g.motion.uav.Get(),g.rejection.uav.Get(),g.expected.uav.Get(),
@@ -1498,7 +1502,7 @@ bool flatMonoResolve(ID3D11Device* device,ID3D11DeviceContext* context,const Fla
     context->CSSetUnorderedAccessViews(0,(needClass||mfx)?6:4,prepOutputs,nullptr);
     context->CSSetShader(g.prep.Get(),nullptr,0);
     context->Dispatch((f.renderWidth+7)/8,(f.renderHeight+7)/8,1);
-    ID3D11UnorderedAccessView* nullUavs[6]={};ID3D11ShaderResourceView* nullViews[19]={};
+    ID3D11UnorderedAccessView* nullUavs[6]={};ID3D11ShaderResourceView* nullViews[20]={};
     context->CSSetUnorderedAccessViews(0,6,nullUavs,nullptr);context->CSSetShaderResources(0,prepViewCount,nullViews);
     if(hdr)++stats.hdrPrepped;
     prepStep.close();

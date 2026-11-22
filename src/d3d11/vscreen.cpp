@@ -82,6 +82,7 @@
 #include "celestial_motion.h"   // the planet patch constants' CPU shadow: the write tees, the draw capture, the boundary tick
 #include "cockpit_glass_probe.h"   // TEMPORARY: the canopy draw's state and constants, for the legacy-glass port
 #include "flat_solid_hud.h"        // visual.solid_hud: a cockpit panel plate is issued once more, darken-only and read-only, before the game's own issue
+#include "flat_hud_mask.h"
 #include "cockpit_glass.h"         // visual.cockpit_glass: the legacy canopy shader, handed to the real PSSetShader at bind time
 #include "orbital_width.h"      // fix.ui_quality: the orbit lines' half-width, scaled in the game's own draw of their shader
 #include "supercruise_bars.h"   // fix.ui_quality: the supercruise bars' private geometry-shader pass, bound around the layered issue
@@ -5581,6 +5582,7 @@ void STDMETHODCALLTYPE hookedDraw(ID3D11DeviceContext* self, UINT count, UINT st
         }
         FlatRuntimeDrawScope flatDraw(self, 1, 'D', count, 0, static_cast<int32_t>(start));
         if (solid_hud::g_on && self == g_state->ownerCtx && solid_hud::begin(self)) { g_state->realDraw(self, count, start); solid_hud::end(self); }
+        if (hud_mask::g_on && self == g_state->ownerCtx && hud_mask::begin(self)) { g_state->realDraw(self, count, start); hud_mask::end(self); }
         if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw();
         if (flat_pixel_history::g_active) pixelHistoryBefore(self);
         FlatStationSunGate sun(self, flatDraw, stationSkip);   // built 2026-10-21: only a skipped sun draw is changed (no real call, or a masked one)
@@ -5693,6 +5695,7 @@ void STDMETHODCALLTYPE hookedDrawIndexed(ID3D11DeviceContext* self, UINT count,
         }
         FlatRuntimeDrawScope flatDraw(self, 1, 'I', count, startIndex, baseVertex);
         if (solid_hud::g_on && self == g_state->ownerCtx && solid_hud::begin(self)) { g_state->realDrawIndexed(self, count, startIndex, baseVertex); solid_hud::end(self); }
+        if (hud_mask::g_on && self == g_state->ownerCtx && hud_mask::begin(self)) { g_state->realDrawIndexed(self, count, startIndex, baseVertex); hud_mask::end(self); }
         if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw();
         if (flat_pixel_history::g_active) pixelHistoryBefore(self);
         FlatStationSunGate sun(self, flatDraw, stationSkip);
@@ -5805,6 +5808,7 @@ void STDMETHODCALLTYPE hookedDrawInstanced(ID3D11DeviceContext* self, UINT perIn
         FlatRuntimeDrawScope flatDraw(self, instances, 'N', perInstance, 0,
                                       static_cast<int32_t>(startVertex), startInstance);
         if (solid_hud::g_on && self == g_state->ownerCtx && solid_hud::begin(self)) { g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance); solid_hud::end(self); }
+        if (hud_mask::g_on && self == g_state->ownerCtx && hud_mask::begin(self)) { g_state->realDrawInstanced(self, perInstance, instances, startVertex, startInstance); hud_mask::end(self); }
         if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw();
         if (flat_pixel_history::g_active) pixelHistoryBefore(self);
         FlatStationSunGate sun(self, flatDraw, stationSkip);
@@ -5905,6 +5909,7 @@ void STDMETHODCALLTYPE hookedDrawIndexedInstanced(ID3D11DeviceContext* self,
         FlatRuntimeDrawScope flatDraw(self, instances, 'X', perInstance, startIndex,
                                       baseVertex, startInstance);
         if (solid_hud::g_on && self == g_state->ownerCtx && solid_hud::begin(self)) { g_state->realDrawIndexedInstanced(self, perInstance, instances, startIndex, baseVertex, startInstance); solid_hud::end(self); }
+        if (hud_mask::g_on && self == g_state->ownerCtx && hud_mask::begin(self)) { g_state->realDrawIndexedInstanced(self, perInstance, instances, startIndex, baseVertex, startInstance); hud_mask::end(self); }
         if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw();
         if (flat_pixel_history::g_active) pixelHistoryBefore(self);
         FlatStationSunGate sun(self, flatDraw, stationSkip);
@@ -6988,6 +6993,7 @@ void vScreenFrameBoundary() {
         // visual.cockpit_glass (cockpit_glass.h): the key (live) and, while it is legacy, the 30 s window line. Odyssey, a generation compare.
         tkCockpitGlass.run([&] { cockpitGlassFrameBoundary(g_state->ownerCtx); });
         solid_hud::frameBoundary();   // visual.solid_hud, when the configuration changed
+        hud_mask::frameBoundary();    // the cockpit HUD's history refusal (flat_hud_mask.h): the frame count and the key
         // The sharpening's warm compile and missing-hook note, once a frame,
         // unconditionally -- not nested under any other feature's gate.
         tkSharpenTick.run([&] { sharpenPassTick(g_state->ownerCtx); });
