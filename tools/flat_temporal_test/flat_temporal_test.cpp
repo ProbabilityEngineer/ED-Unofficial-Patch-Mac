@@ -817,7 +817,7 @@ void testMonoFrameSelection() {
         "HDR must contain at least one observed matching camera");
     reject([](auto& f) {
         for (uint32_t i = 0; i < 7; ++i) f.world[i].key.ps = 0;
-        f.world[8].key.ps = 0xA6070F9DD1CFB601ull;  // Captured DE54 PS still unqualified.
+        f.world[8].key.ps = 0xE364F5637AB0261Cull;  // Captured DE54 PS still unqualified (A6070F9D was keyed 2026-11-20).
     }, FlatMonoReason::NoSupportedSource,
         "VS families with unsupported PSs cannot name a motion source");
     reject([](auto& f) { f.input.supportedPair = nullptr; }, FlatMonoReason::InvalidInput,
@@ -848,7 +848,7 @@ void testMonoFrameSelection() {
         f.world[21].draws = 1; }, FlatMonoReason::BrokenLineage,
         "an intervening write to tone output breaks the observed handoff");
     check(!engine_velocity_family::supportedPair(0xEB5234DB6ADB491Dull, 0xB7D50283329322C3ull) &&
-          !engine_velocity_family::supportedPair(0xDE545DC8EE4FBB87ull, 0xA6070F9DD1CFB601ull) &&
+          !engine_velocity_family::supportedPair(0xDE545DC8EE4FBB87ull, 0xE364F5637AB0261Cull) &&
           engine_velocity_family::supportedPair(0xDE545DC8EE4FBB87ull, 0x91F8937EDA723663ull),
           "flat metadata admits PS91 but keeps unqualified captured pairs excluded");
 
@@ -2912,13 +2912,14 @@ void testFlatCpuWiring() {
     // The span from beginActualDraw to endActualDraw is a proximity bound, not a ceiling on useful work: since 2026-11-03 the four instanced/indexed/plain
     // hooks hold a FlatParticleScope block around the game's issue (fix.particle_billboard), the longest span being DrawIndexedInstanced's at 447 characters. Since 2026-11-05 the ConcoursePaneScope line (concourse_pane.h) adds about 80 more to each of the indexed hooks. Since 2026-11-06 each of the four indexed hooks also issues the mirror draw (beginMirror), up to 260 more, so the bound was 850.
     // Since 2026-11-15 the hooks also hold the station sun gate, the star light's haze scope and the HDR nits scope (FlatStationSunGate, StarLightHazeScope,
-    // HdrNitsScope), the longest span being 1358 characters, so the bound is 1500.
+    // HdrNitsScope), the longest span being 1358 characters, so the bound is 1500. Since 2026-11-22 (upstream 5069af3a's hideSkip on the sun gate
+    // and the UI re-issue, after the solid HUD pre-issue) DrawIndexedInstanced's span is 1503 characters, so the bound is 1600.
     for(unsigned i=0;i<7;++i) {
         const auto before=vscreenCpp.find("if (flatDraw.needsActualDraw()) flatDraw.beginActualDraw",hookAt);
         const auto draw=before==std::string::npos?std::string::npos:vscreenCpp.find("g_state->realDraw",before);
         const auto after=before==std::string::npos?std::string::npos:vscreenCpp.find("if (flatDraw.needsActualDraw()) flatDraw.endActualDraw",before);
         drawOutsideCallbacks=drawOutsideCallbacks&&before!=std::string::npos&&draw!=std::string::npos&&
-            after!=std::string::npos&&before<draw&&draw<after&&after-before<1500;
+            after!=std::string::npos&&before<draw&&draw<after&&after-before<1600;
         hookAt=after==std::string::npos?vscreenCpp.size():after+1;
     }
     check(beginBody.find("if(!ctx)return;")<beginBody.find("flatcpu::Scope callbacks(flatcpu::kIssueCallbacks);")&&
@@ -3984,7 +3985,7 @@ void testFlatQueryCutWiring() {
     }
     // The coverage classification no longer reads the context for what the shadow knows.
     const size_t coverageFrom = runtimeCpp.find("flatcpu::Scope coverage(flatcpu::kCoverage);");
-    const size_t coverageTo = coverageFrom == std::string::npos ? std::string::npos : runtimeCpp.find("if (continuesRun) {", coverageFrom);
+    const size_t coverageTo = coverageFrom == std::string::npos ? std::string::npos : runtimeCpp.find("if (continuesRun || motionOnlyRun) {", coverageFrom);
     check(coverageFrom != std::string::npos && coverageTo != std::string::npos && coverageFrom < coverageTo,
           "the coverage classification can be delimited");
     if (coverageFrom != std::string::npos && coverageTo != std::string::npos && coverageFrom < coverageTo) {
