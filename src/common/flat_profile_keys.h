@@ -53,6 +53,8 @@ inline bool flatProfileReadsKey(const char* key) {
         // The legacy glass's dirt level (visual.cockpit_glass_dirt, cockpit_glass.cpp): percent, 0 to 300, read live with the look, in both profiles. The row under it.
         // Unlisted, getIntInRange answers 0 here whatever the file says, which is a clean pane, and the row could never raise it.
         std::strcmp(key, "visual.cockpit_glass_dirt") == 0 ||
+        // The solid HUD (flat_solid_hud.h, 2026-11-22): on | off, off by default, live. Unlisted, getBool answers false here and it could never turn on.
+        std::strcmp(key, "visual.solid_hud") == 0 ||
         // Which lights reach that dirt (visual.cockpit_glass_lights, cockpit_glass_core.h lightsLevelOf): off | station, read live with the look, in both profiles. The row under that.
         // Unlisted, getString answers "off" here whatever the file says, and the row could never turn them on.
         std::strcmp(key, "visual.cockpit_glass_lights") == 0 ||
