@@ -1,4 +1,12 @@
-// visual.solid_hud (flat, 2026-11-22): the cockpit panels' frosted plates let less of the scene through.
+// visual.solid_hud (flat, 2026-11-22): the cockpit's holo panels let less of the scene through.
+//
+// REVISED THE SAME DAY: the first cut darkened the frosted plates (vs 2CECEC30 ps A4D03619) once more. Flown (edvr_gfx_20261122_043503):
+// patchy, shadow-like, strongest where the scene behind is lighter -- the plate's coverage follows the blurred scene it samples, so
+// squaring it squares that pattern -- and nothing behind DISEMBARK, where F6 showed the plate changing 64 of 256 texels and the holo panel
+// draw (vs 81216C77 ps A2965EC2) taking the scene from 0.336 to 0.109. The removed fix.ui_quality never squared the plate (it stayed in
+// the scene); its gamma blend raised the HOLO PANELS' transmittance to about the 2.2th power. So the draws darkened twice are the holo
+// panel family (flat_ui_layer_math.h flatUiFamilyOf == kHolo: the panels and the comms panel's glass), not the plate. The paragraphs
+// below were written for the plate; the mechanism is the same.
 //
 // WHY. The plates behind the cockpit's panel text (the station's launch menu, the comms panel, the other panels' label plates) are
 // one draw each, vs 2CECEC3065EF0D4A ps A4D03619D631B186 (flat_ui_layer_math.h kFlatUiPanelBacking*): premultiplied over, so the scene
@@ -100,6 +108,16 @@ inline ID3D11BlendState* dimBlend(ID3D11Device* dev) {
 
 // Once a frame (vscreen.cpp's frame boundary): the key, when the configuration changed. Flat only.
 inline void frameBoundary() {
+    // The cost, while on: the extra draws issued, every 900 frames.
+    static uint32_t frames = 0;
+    static uint64_t issuedAtWindow = 0;
+    if (g_on && ++frames >= 900) {
+        Log::get().note("solid hud: %llu extra panel draws in the last %u frames (%.1f a frame).",
+                        static_cast<unsigned long long>(detail::g_issued - issuedAtWindow), frames,
+                        static_cast<double>(detail::g_issued - issuedAtWindow) / frames);
+        frames = 0;
+        issuedAtWindow = detail::g_issued;
+    }
     Config& cfg = Config::get();
     const uint32_t generation = cfg.generation();   // read before the value (config.h)
     if (detail::g_read && generation == detail::g_generation) return;
@@ -107,17 +125,29 @@ inline void frameBoundary() {
     detail::g_generation = generation;
     const bool on = runtimeFlatProfile() && cfg.getBool("visual.solid_hud", false);
     if (on != g_on)
-        Log::get().note("solid hud: %s -- the cockpit panels' plates (vs %016llX ps %016llX) %s.", on ? "on" : "off",
-                        static_cast<unsigned long long>(kFlatUiPanelBackingVs), static_cast<unsigned long long>(kFlatUiPanelBackingPs),
+        Log::get().note("solid hud: %s -- the cockpit's holo panels %s.", on ? "on" : "off",
                         on ? "are darkened once more before the game draws them, so the scene behind keeps (1 - a)^2 of its light"
                            : "are drawn as the game draws them");
     g_on = on;
 }
 
 // Before the game's issue: true when this draw is a plate and the darken-only state is bound (the caller issues the draw once, then end()).
+// The family test, memoised by pair (a draw's family is a function of its two hashes; flatUiFamilyOf walks the shared rule).
+inline bool panelPair(uint64_t vs, uint64_t ps) {
+    struct Memo { uint64_t vs = 0, ps = 0; bool panel = false; bool set = false; };
+    static Memo memo[256];
+    Memo& m = memo[(vs ^ (ps * 0x9E3779B97F4A7C15ull)) >> 56];
+    if (m.set && m.vs == vs && m.ps == ps) return m.panel;
+    m.vs = vs;
+    m.ps = ps;
+    m.set = true;
+    m.panel = !flatUiPanelBackingPair(vs, ps) && flatUiFamilyOf(vs, ps) == UiLayerFamily::kHolo;
+    return m.panel;
+}
+
 inline bool begin(ID3D11DeviceContext* ctx) {
     using namespace detail;
-    if (bindingShaderHash(BindSlot::Vs) != kFlatUiPanelBackingVs || bindingShaderHash(BindSlot::Ps) != kFlatUiPanelBackingPs) return false;
+    if (!panelPair(bindingShaderHash(BindSlot::Vs), bindingShaderHash(BindSlot::Ps))) return false;
     ID3D11RenderTargetView* rtvs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
     ctx->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtvs, nullptr);
     uint32_t bound = 0;
@@ -147,8 +177,9 @@ inline bool begin(ID3D11DeviceContext* ctx) {
     ++g_issued;
     if (!g_firstNoted) {
         g_firstNoted = true;
-        Log::get().note("solid hud: the first plate darkened once more (depth-stencil state %p made read-only); said once.",
-                        static_cast<void*>(g_savedDs));
+        Log::get().note("solid hud: the first holo panel draw darkened once more (vs %016llX ps %016llX, depth-stencil state %p made read-only); "
+                        "said once.", static_cast<unsigned long long>(bindingShaderHash(BindSlot::Vs)),
+                        static_cast<unsigned long long>(bindingShaderHash(BindSlot::Ps)), static_cast<void*>(g_savedDs));
     }
     return true;
 }
