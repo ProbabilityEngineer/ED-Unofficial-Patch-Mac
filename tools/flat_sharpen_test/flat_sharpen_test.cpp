@@ -483,12 +483,12 @@ void panelTable(const std::string& root, const std::string& gen) {
           "the flat panel has exactly three tabs: Performance, Visual, then Debug last");
     {
         const char* const order[][2] = {{"fix", "temporal_aa"}, {"fix", "render_sharpness"}, {"fix", "ui_quality"},
-                                        {"fix", "hud_antialiasing"}, {"fix", "optimized_stations"}, {"fix", "station_window_distance"}, {"fix", "skip_rooms_behind_doors"},
+                                        {"fix", "hud_antialiasing"}, {"fix", "steady_panels"}, {"fix", "optimized_stations"}, {"fix", "station_window_distance"}, {"fix", "skip_rooms_behind_doors"},
                                         {"menu", "fps_overlay"}, {"menu", "fps_overlay_lock"}};
-        bool same = kFlatPageRowCount == 9;
-        for (size_t i = 0; same && i < 9; ++i)
+        bool same = kFlatPageRowCount == 10;
+        for (size_t i = 0; same && i < 10; ++i)
             same = std::strcmp(kFlatPageRows[i].section, order[i][0]) == 0 && std::strcmp(kFlatPageRows[i].key, order[i][1]) == 0;
-        check(same, "the Performance tab has the flat page's nine rows in their order (HUD Anti-Aliasing directly under UI quality, "
+        check(same, "the Performance tab has the flat page's ten rows in their order (HUD Anti-Aliasing directly under UI quality, Steady cockpit panels under that, "
                     "Window 3D distance directly under Optimized stations, Skip closed rooms under that, then the two frame-rate readout rows)");
     }
     check(kFlatVisualRowCount == 10 && std::strcmp(kFlatVisualRows[0].section, "visual") == 0 && std::strcmp(kFlatVisualRows[0].key, "intro_video") == 0 &&

@@ -44,6 +44,16 @@ struct Layer {
 };
 Layer g_layer;
 
+// S: H as the tone draw read it (the copy route only), H's own format and size.
+struct Snapshot {
+    Ptr<ID3D11Texture2D> tex;
+    Ptr<ID3D11ShaderResourceView> srv;
+    uint32_t w = 0, h = 0;
+    DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+};
+Snapshot g_snapshot;
+bool g_snapped = false;   // this frame's S was taken
+
 // This frame: P cleared (its first mark), P handed to the prep (later marks are late), P could not be made (not asked again this frame).
 bool g_marked = false, g_consumed = false, g_layerFailed = false;
 // The tick of the HDR route's last ask (flatPanelSteadyView), for flatPanelSteadyRouteLive.
@@ -54,6 +64,7 @@ struct Window {
     uint64_t frames = 0, markedFrames = 0, draws = 0;
     uint64_t refusedShape = 0, refusedLayer = 0, refusedDepth = 0, refusedLate = 0, refusedSize = 0, refusedFault = 0, refusedTarget = 0;
     uint64_t resolvesBound = 0, resolvesRefused = 0, viewNone = 0, viewSize = 0;
+    uint64_t copyBound = 0, copyRefused = 0, snapshots = 0, snapUnmarked = 0, snapRefused = 0;
     uint32_t w = 0, h = 0;
 };
 Window g_win;
@@ -233,13 +244,16 @@ bool beginReplay(ID3D11DeviceContext* ctx, uint32_t w, uint32_t h, Why& why) {
 void logWindow() {
     const Window& w = g_win;
     Log::get().note("flat steady panels: frames=%llu marked-frames=%llu draws=%llu refused shape=%llu layer=%llu depth=%llu target=%llu late=%llu "
-                    "size=%llu fault=%llu; resolves bound=%llu refused=%llu (none=%llu size=%llu); layer %ux%u. A bound resolve gave the panels' "
-                    "pixels zero motion (fix.steady_panels).",
+                    "size=%llu fault=%llu; resolves bound=%llu refused=%llu (none=%llu size=%llu), of them below SS 1.0 (the copy route) bound=%llu "
+                    "refused=%llu; tone snapshots=%llu unmarked=%llu refused=%llu; layer %ux%u. A bound resolve gave the panels' pixels zero motion "
+                    "(fix.steady_panels).",
                     (unsigned long long)w.frames, (unsigned long long)w.markedFrames, (unsigned long long)w.draws,
                     (unsigned long long)w.refusedShape, (unsigned long long)w.refusedLayer, (unsigned long long)w.refusedDepth,
                     (unsigned long long)w.refusedTarget, (unsigned long long)w.refusedLate, (unsigned long long)w.refusedSize,
                     (unsigned long long)w.refusedFault, (unsigned long long)w.resolvesBound, (unsigned long long)w.resolvesRefused,
-                    (unsigned long long)w.viewNone, (unsigned long long)w.viewSize, w.w, w.h);
+                    (unsigned long long)w.viewNone, (unsigned long long)w.viewSize, (unsigned long long)w.copyBound,
+                    (unsigned long long)w.copyRefused, (unsigned long long)w.snapshots, (unsigned long long)w.snapUnmarked,
+                    (unsigned long long)w.snapRefused, w.w, w.h);
 }
 
 }  // namespace
@@ -269,11 +283,12 @@ void flatPanelSteadyFrame() {
         Log::get().note("flat steady panels: on (fix.steady_panels): the cockpit panels stay in the scene, and the upscaler is handed zero motion for "
                         "their pixels.");
     } else if (!on && g_wasOn) {
-        Log::get().note("flat steady panels: off (fix.steady_panels); its layer is released.");
+        Log::get().note("flat steady panels: off (fix.steady_panels); its layer and snapshot are released.");
         g_layer = Layer{};
+        g_snapshot = Snapshot{};
     }
     g_wasOn = on;
-    g_marked = g_consumed = g_layerFailed = false;
+    g_marked = g_consumed = g_layerFailed = g_snapped = false;
     if (!on) {
         g_routeTick = 0;
         return;
@@ -342,9 +357,69 @@ ID3D11ShaderResourceView* flatPanelSteadyView(uint32_t width, uint32_t height) {
     return g_layer.srv.Get();
 }
 
-void flatPanelSteadyNoteResolve(bool bound) {
+void flatPanelSteadyNoteResolve(bool bound, bool copyRoute) {
     if (bound) ++g_win.resolvesBound;
     else ++g_win.resolvesRefused;
+    if (copyRoute) {
+        if (bound) ++g_win.copyBound;
+        else ++g_win.copyRefused;
+    }
+}
+
+bool flatPanelSteadySnapshot(ID3D11DeviceContext* ctx, void* scene) {
+    if (!ctx || !scene || !flatPanelSteadyOn() || g_snapped || g_consumed) return false;
+    if (!g_marked || !g_layer.tex) {
+        ++g_win.snapUnmarked;
+        return false;
+    }
+    FlatComputeInternalScope internal;
+    bool ok = false;
+    const bool ran = guarded("panelSteady.snapshot", [&] {
+        Ptr<ID3D11Texture2D> h;
+        if (FAILED(static_cast<ID3D11Resource*>(scene)->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(h.GetAddressOf()))) || !h) return;
+        D3D11_TEXTURE2D_DESC d{};
+        h->GetDesc(&d);
+        // P's size, one plain typed level: the prep reads S at P's texel.
+        if (d.Width != g_layer.w || d.Height != g_layer.h || d.MipLevels != 1 || d.ArraySize != 1 || d.SampleDesc.Count != 1 ||
+            (d.Format != DXGI_FORMAT_R11G11B10_FLOAT && d.Format != DXGI_FORMAT_R16G16B16A16_FLOAT))
+            return;
+        if (!g_snapshot.tex || g_snapshot.w != d.Width || g_snapshot.h != d.Height || g_snapshot.format != d.Format) {
+            g_snapshot = Snapshot{};
+            Ptr<ID3D11Device> dev;
+            ctx->GetDevice(&dev);
+            D3D11_TEXTURE2D_DESC m{};
+            m.Width = d.Width;
+            m.Height = d.Height;
+            m.MipLevels = 1;
+            m.ArraySize = 1;
+            m.Format = d.Format;
+            m.SampleDesc.Count = 1;
+            m.Usage = D3D11_USAGE_DEFAULT;
+            m.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            Snapshot made;
+            if (!dev || FAILED(dev->CreateTexture2D(&m, nullptr, &made.tex)) || !made.tex ||
+                FAILED(dev->CreateShaderResourceView(made.tex.Get(), nullptr, &made.srv)) || !made.srv)
+                return;
+            made.w = d.Width;
+            made.h = d.Height;
+            made.format = d.Format;
+            g_snapshot = made;
+        }
+        vScreenCopyResourceRaw(ctx, g_snapshot.tex.Get(), h.Get());
+        ok = true;
+    });
+    if (!ran || !ok) {
+        ++g_win.snapRefused;
+        return false;
+    }
+    g_snapped = true;
+    ++g_win.snapshots;
+    return true;
+}
+
+ID3D11ShaderResourceView* flatPanelSteadySceneView(uint32_t width, uint32_t height) {
+    if (!flatPanelSteadyOn() || !g_snapped || !g_snapshot.srv || g_snapshot.w != width || g_snapshot.h != height) return nullptr;
+    return g_snapshot.srv.Get();
 }
 
 }  // namespace edvr
