@@ -38,6 +38,8 @@ inline constexpr FlatPageRow kFlatPageRows[] = {
     // HUD Anti-Aliasing (2026-10-24), directly under UI quality: flat only. Its `menu flat_performance` token (tools\gen_settings_schema.py) is a page VR's
     // menu builds none of, so the row is on this tab and not on VR's Performance page; the generator fails the build for a `flat_performance` row not listed here.
     {"fix", "hud_antialiasing",  FlatRowRead::Allowlist},
+    // Steady cockpit panels (fix.steady_panels, 2026-11-23, flat_panel_steady.h), directly under HUD Anti-Aliasing: `menu flat_performance`, flat only.
+    {"fix", "steady_panels",     FlatRowRead::Allowlist},
     {"fix", "optimized_stations", FlatRowRead::Allowlist},
     // Directly under Optimized stations, and dimmed while that is off (menu.cpp): `menu performance`, so VR's Performance page shows it too (VR culls a carrier only for now).
     {"fix", "station_window_distance", FlatRowRead::Allowlist},

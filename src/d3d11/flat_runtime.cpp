@@ -4525,6 +4525,7 @@ void flatRuntimePresent(IDXGISwapChain* swap, uint64_t frame, HRESULT hr, UINT f
     // visual.star_glow: the setting (live), the new frame's state and the 5 s line, before any early return below -- a setting above 100 whose scope
     // never ran still prints its line, with every count zero.
     flatStarGlowFrame(frame + 1, s.frameLive);
+    flatPanelSteadyFrame();   // fix.steady_panels: the key (live), the frame's state and its 30 s line
     flatDofBlurFrame(frame + 1);
     s.untrusted.pollMask(s.context.Get());
     if(frame && frame%300==0 &&
@@ -7493,6 +7494,24 @@ FlatRuntimeDrawScope::FlatRuntimeDrawScope(ID3D11DeviceContext* context, uint32_
     const bool trailDraw = (count == 3 && instances == 1 && (kind == 'D' || kind == 'N')) || tone ||
                            pairFact.sourceTone || pairFact.mapToneSlot != ~0u;
     if (trailDraw) flatUiTrailNoteDraw(s.prefix.frame, k.vs, k.ps, kind, count, flatUiLayerOn(), hdrTrigger, s.hdrTreated);
+    // fix.steady_panels (flat_panel_steady.h): a cockpit-panel draw into the scene's HDR target stays there as the game drew it and is issued once
+    // more into the panels' mask (uiReissue), which the resolve's prep reads to give the panels' pixels zero motion. The UI layer is not asked for
+    // these families while the key is on (flatUiLayerDecide). Not the panels' frosted backing (it is not ink), and nothing another plan holds.
+    if (flatPanelSteadyOn() && flatPanelSteadyRouteLive() && !copy && pairFact.uiMayAsk && !flatUiPanelBackingPair(k.vs, k.ps)) {
+        const bool mapOpen = flatRuntimeMapOpenFrame();
+        uint32_t sceneRw = 0, sceneRh = 0, sceneOw = 0, sceneOh = 0;
+        flatRuntimeSceneSizes(&sceneRw, &sceneRh, &sceneOw, &sceneOh);
+        const bool hdrTarget = flatUiTargetClass(k.color && k.color == s.prefix.output, k.width, k.height, k.format,
+                                                 s.prefix.width, s.prefix.height, sceneRw, sceneRh) == FlatUiTarget::kHdr;
+        const bool otherWork = producer || (projection && projection->active()) || drawCaptureStarted || drawPacket ||
+                               overlayPlanned || foregroundPlanned || untrustedPlanned || domainPlanned ||
+                               weaponFootprintStarted || d.overlayProtected || d.alternateHdr;
+        if (hdrTarget && !otherWork && k.width && k.height && flatPanelSteadyFamily(flatUiFamilyFor(k.vs, k.ps, mapOpen, true))) {
+            uiSteady = true;
+            uiSteadyW = k.width;
+            uiSteadyH = k.height;
+        }
+    }
     if (flatUiLayerOn()) {
         FlatUiLayerAsk ask = FlatUiLayerAsk::kNotAsked;
         if (copy) {
@@ -8138,6 +8157,8 @@ void FlatRuntimeDrawScope::treatHdr(const FlatMonoFrame& selected, uint32_t srvS
     f.frame = s.prefix.frame; f.mode = effectiveMode;
     f.jitterCycle=s.phase.phaseCount;
     nativeScale.store(true, std::memory_order_release);   // the route's gate is R >= D
+    // fix.steady_panels: the panels' mask, when this frame's panel draws marked it at the render size (null otherwise, and the prep is as it was).
+    f.steadyPanels = flatPanelSteadyView(selected.renderWidth, selected.renderHeight);
     f.configuredDlssPreset = s.preset;
     f.staticScene = flatFrameThroughMenuCopy(s.prefix, selected.hdr);
     if (f.staticScene) ++s.staticSceneFrames;

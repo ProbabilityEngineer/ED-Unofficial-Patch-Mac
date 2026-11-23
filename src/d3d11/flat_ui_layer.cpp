@@ -7,6 +7,7 @@
 #include "flat_camera_phase.h"     // flatCameraMeasureRowShift: the jitter a draw's camera rows carry
 #include "flat_compute_readback.h" // FlatComputeInternalScope
 #include "flat_ui_layer_math.h"
+#include "flat_panel_steady.h"     // fix.steady_panels: the panel families stay in the scene
 #include "exposure_fix.h"         // lookupShaderHash: compare the physical shaders with the draw's cached pair
 #include "supercruise_bars.h"     // the bars' strip pass, bracketed in the flat issue path (flatUiLayerBarsBegin) and its 30 s line
 #include "tonemap_admit.h"        // read-only structural description of the actual game's tone-shaped draw
@@ -289,6 +290,9 @@ FlatUiLayerAsk flatUiLayerDecide(ID3D11DeviceContext* ctx, const FlatUiLayerDraw
     // EDVR's shader actually bound (a refused replacement leaves the game's own canopy, which the additive layer would get wrong): `odyssey` names nothing here.
     const UiLayerFamily family = flatUiFamilyFor(d.vs, d.ps, d.mapOpen, d.hdrTarget, cockpitGlassLegacyLive() && cockpitGlassSwapActive());
     if (!flatUiLayerTakesFamily(family)) return g_lastAsk;
+    // fix.steady_panels (flat_panel_steady.h): the cockpit panels stay in the scene, made steady for the upscaler there, whatever UI quality says, while the
+    // HDR route (SS 1.0 and above) runs. Not asked, so not counted; the overlay extras (bars, dust, orbit lines, weapons fire, the maps) are asked as before.
+    if (flatPanelSteadyOn() && flatPanelSteadyRouteLive() && flatPanelSteadyFamily(family)) return g_lastAsk;
     // The half of the shared layer that governs this family must be live: with fix.ui_quality off and the weapons fire on, the layer runs for the weapons alone
     // and the HUD stays in the game's frame (not asked, so not counted); the converse for the weapons.
     if (!flatUiFamilyLive(family, uiLayerQualityLive(), uiLayerWeaponsLive(), uiLayerRippleLive())) return g_lastAsk;

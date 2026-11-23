@@ -117,6 +117,9 @@ inline bool flatProfileReadsKey(const char* key) {
         // of the flat panel's Performance tab, directly under UI quality. Unlisted, getBool answers false here whatever the file says, which reads as off, so the
         // row could never turn it on, and the 30 s "flat ui layer smaa:" line shows key=off.
         std::strcmp(key, "fix.hud_antialiasing") == 0 ||
+        // The cockpit panels kept in the scene and steadied for the upscaler (flat_panel_steady.cpp): on | off, off by default, live. The Steady cockpit
+        // panels row of the flat Performance tab. Unlisted, getBool answers false whatever the file says.
+        std::strcmp(key, "fix.steady_panels") == 0 ||
         // HDR output (hdr_output.cpp): on | off, off by default, read once at startup. Flat is the ONLY profile that has it -- the FP16
         // swapchain, the widened post-tone targets and the PQ encode are the flat output chain -- so an unlisted key here is not a
         // degraded feature, it is the whole feature. Unlisted, getString answers exactly "off", which hdrOutputStartup cannot tell

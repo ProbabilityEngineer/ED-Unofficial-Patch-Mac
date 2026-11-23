@@ -27,7 +27,8 @@ cbuffer Mono : register(b0) {
                  // t18 and the celestial tangents below are set (celestialBefore; the VR world route never sets it). Bit 4 (value 16): a stale slot's pixel
                  // asks the record under it first (staleRecordBefore; flat only). Bit 5 (value 32): the vehicle frame is set (flat, in a vehicle, with the
                  // steady-detail depth check): the player vehicle's cockpit rig root, its pose this frame and last and its sphere, below; a near pixel inside the
-                 // sphere with no motion of its own rides it (vehicleBefore). Zero leaves the old shader path unchanged.
+                 // sphere with no motion of its own rides it (vehicleBefore). Bit 6 (value 64): fix.steady_panels' mask is bound at t19 (and the
+                 // colour at t0): a pixel the cockpit panels own has zero motion (flat HDR route only). Zero leaves the old shader path unchanged.
     float4 foregroundDepth; // SDK common-near/world-near scale, only read with debug.w bit 1
     float4 celestialTanNow; float4 celestialTanPrev; // the planet records' tangents (l, r, b, t) now and last frame: only read with debug.w bit 3
     float4 vehiclePosNow; float4 vehiclePosPrev; // the vehicle's cockpit rig root position (xyz, world, as the pool holds it) at this frame's emit and last frame's
@@ -59,6 +60,9 @@ Texture2D<float4> SkinE : register(t17);                // prep only, bound when
 // Planet patch motion, flat (celestial_motion.h): one record per body, the engine-motion core's CelestialRecord. Prep only, bound at t18 with
 // debug.w bit 3.
 StructuredBuffer<CelestialRecord> CelestialRecords : register(t18); // prep only, bound with debug.w bit 3
+// fix.steady_panels (flat_panel_steady.h): the cockpit panels' own premultiplied light (rgb) and transmittance (alpha), drawn by the panels' draws
+// issued once more, at the render size and the frame's jitter. Prep only, bound at t19 with debug.w value 64 (HDR route: t0 is then H's copy).
+Texture2D<float4> SteadyPanels : register(t19);
 Texture2D<float4> OverlayColor : register(t16);         // HDR finish only, bound in overlay frames: the raw H with the protected late overlays
                                                          // drawn (t0 is then the CLEAN H, the image the backend was handed)
 SamplerState LinearClamp : register(s0);
@@ -559,6 +563,18 @@ void prep(uint3 id:SV_DispatchThreadID) {
             }
             reject=valid?0:1;
         } else if(kind!=2)cls=kClassCamera;
+    }
+    // fix.steady_panels (debug.w value 64): a pixel the cockpit panels own rides the cockpit, not what lies behind them. Owned: the panels' light
+    // is at least half the pixel's (the text and its glow over any background), or the panels hide three quarters or more of the background.
+    // Such a pixel has zero motion and keeps its history; every other pixel keeps what the checks above gave it.
+    if((debug.w&64)!=0) {
+        const float4 panel=SteadyPanels.Load(int3(q,0));
+        const float3 luma=float3(.2126,.7152,.0722);
+        const float panelLight=dot(max(panel.rgb,0),luma);
+        const float sceneLight=dot(max(Color.Load(int3(q,0)).rgb,0),luma);
+        if((panelLight>0 && panelLight>=.5*sceneLight) || panel.a<=.25) {
+            motion=0; reject=0; expected=depth; foregroundActualMotion=false;
+        }
     }
     if(!foregroundActualMotion) { if(reject!=0)motion=0; }
     if((debug.w&2)!=0 && !foreground)depth*=foregroundDepth.x;

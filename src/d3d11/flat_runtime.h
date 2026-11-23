@@ -12,6 +12,7 @@
 #include "animated_history_writes.h"
 #include "flat_ui_layer.h"   // fix.ui_quality's flat layer: the draw scope's second issues (uiReissue)
 #include "flat_star_glow.h"  // visual.star_glow: a star pass issued once more into the star layer (uiReissue)
+#include "flat_panel_steady.h"  // fix.steady_panels: a panel draw issued once more into the panels' mask (uiReissue)
 #include <optional>
 namespace edvr {
 struct FlatMapBounceD3DDriver {
@@ -166,6 +167,10 @@ struct FlatRuntimeDrawScope {
     // The panels' frosted backing (flat_ui_layer.h flatUiLayerDecidedDim): decided, but issued into the game's frame as it is, and once more
     // into the HUD layer darken-only after that (uiReissue).
     bool uiDim=false;
+    // fix.steady_panels (flat_panel_steady.h): a cockpit-panel draw into H, issued into H as the game drew it and once more into the panels' mask
+    // after that (uiReissue), at H's size (uiSteadyW x uiSteadyH).
+    bool uiSteady=false;
+    uint32_t uiSteadyW=0,uiSteadyH=0;
     // The game's output copy (pairFact.copyPair into the frame's output) or its tone draw (pairFact.toneSlot): fix.hdr's live nits read the
     // draw's bound pixel shader from the context (hdr_output.h HdrNitsScope), since the resolve above may leave the binding shadow not naming it.
     bool outputCopy=false;
@@ -226,6 +231,8 @@ struct FlatRuntimeDrawScope {
         if (uiTaken && flatUiLayerWriteBackBegin(ctx)) { issue(); flatUiLayerWriteBackEnd(ctx); }
         // The panel backing, darken-only into the HUD layer after the game's own issue into H (uiLayerDimBlend).
         if (uiDim && flatUiLayerDimBegin(ctx)) { issue(); flatUiLayerEnd(ctx); }
+        // fix.steady_panels: a panel draw the game just issued into H, once more into the panels' mask with the UI layer's blend conversion.
+        if (uiSteady && flatPanelSteadyBegin(ctx, uiSteadyW, uiSteadyH)) { issue(); flatPanelSteadyEnd(ctx); }
         // visual.star_glow: a star pass the game just issued into H is issued once more into the star layer, with the game's own state (the hook's real call).
         if (starReplay && flatStarGlowReplayBegin(ctx, starRole, starW, starH)) { issue(); flatStarGlowReplayEnd(ctx); }
         // The weapons' light is re-issued through the same draw before the HUD's (the weapons fire: the layer binds each step's source and blend and says when

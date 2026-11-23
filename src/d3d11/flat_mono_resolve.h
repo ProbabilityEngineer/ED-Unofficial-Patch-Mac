@@ -234,6 +234,11 @@ struct FlatMonoResolveFrame {
     // require the qualified final-owner motion/depth contract below.
     // Null keeps the existing resolver path unchanged.
     ID3D11ShaderResourceView* untrustedCameraCoverage = nullptr;
+    // fix.steady_panels (flat_panel_steady.h): the cockpit panels' own light (rgb) and transmittance (alpha), R16G16B16A16_FLOAT at the render
+    // size, drawn by the panels' draws issued once more this frame. HDR route only (the prep compares the panels' light with H's). A pixel whose
+    // light is at least half the panels', or whose background they hide by three quarters, has zero motion and keeps its history. Null leaves
+    // the prep as it was.
+    ID3D11ShaderResourceView* steadyPanels = nullptr;
     // Flat SDK input contract. The adapter certifies final camera ownership
     // and supplies actual animated foreground motion on the render grid.
     // RGBA32_FLOAT: xy = previous-current pixels with both raster phases out,
