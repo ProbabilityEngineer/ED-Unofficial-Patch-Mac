@@ -420,7 +420,9 @@ inline void frameStart(bool censusFrame0, bool censusArmed) {
     g_targets = 0;
     g_dropped = g_skippedShape = g_stencilReads = 0;
     g_cur = -1;
-    // The point: the cursor over the foreground window's client area, as a fraction of it.
+    // The point: the cursor over the foreground window's client area, as a fraction of it -- while the cursor is SHOWN. In flight the game hides
+    // it, and the hidden cursor still has a position (Wine keeps the last one, 2026-11-23: two F6s aimed at the centred sun read (0.41, 0.44) and
+    // (0.22, 0.40)), so a hidden cursor names the screen's centre, which is where a target is put to be read.
     const char* where = "the screen's centre (the cursor is not over the game window's client area)";
     g_nx = g_ny = 0.5f;
     g_clientAspect = 0.0f;
@@ -429,7 +431,11 @@ inline void frameStart(bool censusFrame0, bool censusArmed) {
     HWND fg = GetForegroundWindow();
     if (fg && GetClientRect(fg, &rc) && rc.right > 0 && rc.bottom > 0) {
         g_clientAspect = static_cast<float>(rc.right) / static_cast<float>(rc.bottom);
-        if (GetCursorPos(&pt) && ScreenToClient(fg, &pt) && pt.x >= 0 && pt.y >= 0 && pt.x < rc.right && pt.y < rc.bottom) {
+        CURSORINFO ci{};
+        ci.cbSize = sizeof(ci);
+        const bool shown = GetCursorInfo(&ci) && (ci.flags & CURSOR_SHOWING) != 0;
+        if (!shown) where = "the screen's centre (the cursor is hidden)";
+        if (shown && GetCursorPos(&pt) && ScreenToClient(fg, &pt) && pt.x >= 0 && pt.y >= 0 && pt.x < rc.right && pt.y < rc.bottom) {
             g_nx = (static_cast<float>(pt.x) + 0.5f) / static_cast<float>(rc.right);
             g_ny = (static_cast<float>(pt.y) + 0.5f) / static_cast<float>(rc.bottom);
             where = "the cursor";

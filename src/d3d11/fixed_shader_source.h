@@ -367,9 +367,15 @@ float4 main(float4 p : SV_POSITION) : SV_Target {
 // the HUD being tonemapped alone and blended over the tonemapped picture (which no blend gets right: a faint line over a dark scene came out
 // brighter added as encoded values, darker added as light). The footprint loop is kUiGlowFeedPsHlsl's, carrying T as well. The scene's alpha
 // is kept; non-finite HUD texels read as nothing (zero light, T 1).
+// Since 2026-11-23 the weapons fire's layer (t2, the same size as the HUD layer) is merged too when it holds weapons fire alone: S' = (S + W) * T +
+// HUD, the weapons' light added to the scene as the game draws it (the re-issue's plan tonemaps it with the scene as well, lit minus base) and,
+// being world light, behind the HUD's transmittance. Without it the merge stood aside for every firing frame and the HUD switched to the layer's
+// own tonemap and blend for those frames (the owner's flight 2026-11-23: the panels and holograms popped brighter while firing). Unbound, t2
+// reads zero and the pass is the one above.
 constexpr char kUiHudMergePsHlsl[] = R"HLSL(
 Texture2D<float4> HudLayer : register(t0);
 Texture2D<float4> Scene : register(t1);
+Texture2D<float4> Weapons : register(t2);
 float4 main(float4 p : SV_POSITION) : SV_Target {
     uint sw, sh, lw, lh;
     Scene.GetDimensions(sw, sh);
@@ -381,6 +387,7 @@ float4 main(float4 p : SV_POSITION) : SV_Target {
     int2 k0 = max(int2(floor(x0)), int2(0, 0));
     int2 k1 = min(int2(ceil(x1)) - 1, int2(lw - 1, lh - 1));
     float4 acc = float4(0, 0, 0, 0);
+    float3 wacc = float3(0, 0, 0);
     float wsum = 0;
     [loop] for (int j = k0.y; j <= min(k1.y, k0.y + 4); ++j) {
         float wy = min(x1.y, (float)j + 1.0) - max(x0.y, (float)j);
@@ -390,13 +397,17 @@ float4 main(float4 p : SV_POSITION) : SV_Target {
             if (wx <= 0) continue;
             float4 c = HudLayer.Load(int3(i, j, 0));
             c = all(isfinite(c)) ? float4(max(c.rgb, float3(0, 0, 0)), saturate(c.a)) : float4(0, 0, 0, 1);
+            float3 w = Weapons.Load(int3(i, j, 0)).rgb;
+            w = all(isfinite(w)) ? max(w, float3(0, 0, 0)) : float3(0, 0, 0);
             acc += c * (wx * wy);
+            wacc += w * (wx * wy);
             wsum += wx * wy;
         }
     }
     float4 hud = wsum > 0 ? acc / wsum : float4(0, 0, 0, 1);
+    float3 weapons = wsum > 0 ? wacc / wsum : float3(0, 0, 0);
     float4 s = Scene.Load(int3(p.xy, 0));
-    float3 o = s.rgb * hud.a + hud.rgb;
+    float3 o = (s.rgb + weapons) * hud.a + hud.rgb;
     return float4(min(o, float3(60000, 60000, 60000)), s.a);
 }
 )HLSL";

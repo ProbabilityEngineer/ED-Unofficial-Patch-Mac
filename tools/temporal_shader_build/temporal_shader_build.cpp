@@ -1002,7 +1002,8 @@ static void selfTest() {
 
     // The HUD merge pass (src/d3d11/fixed_shader_source.h kUiHudMergePsHlsl; 2026-11-22): new, held to its own contract like the bloom feed it
     // follows -- the symbol, source name, entry, profile and flags, the text it compiles, and the pixel stage ui_layer.cpp binds it with: the HUD
-    // layer at t0 and the scene at t1, no constant buffer and no sampler. Registered last (hudMergeVariants), so it is the final variant.
+    // layer at t0, the scene at t1 and (since 2026-11-23) the weapons fire's layer at t2, no constant buffer and no sampler. Registered last
+    // (hudMergeVariants), so it is the final variant.
     {
         auto& shader = coreFixed.back();
         check(!std::strcmp(shader.symbol, "kUiHudMergePsBytecode") && !std::strcmp(shader.sourceName, "ui_hud_merge_ps") &&
@@ -1018,11 +1019,12 @@ static void selfTest() {
                                        reinterpret_cast<void**>(reflection.GetAddressOf()));
             bool ok = SUCCEEDED(hr) && reflection && SUCCEEDED(reflection->GetDesc(&desc)) &&
                       D3D11_SHVER_GET_TYPE(desc.Version) == D3D11_SHVER_PIXEL_SHADER && D3D11_SHVER_GET_MAJOR(desc.Version) == 5 &&
-                      desc.ConstantBuffers == 0 && desc.BoundResources == 2;
-            D3D11_SHADER_INPUT_BIND_DESC layer{}, scene{};
+                      desc.ConstantBuffers == 0 && desc.BoundResources == 3;
+            D3D11_SHADER_INPUT_BIND_DESC layer{}, scene{}, weapons{};
             ok = ok && SUCCEEDED(reflection->GetResourceBindingDescByName("HudLayer", &layer)) && layer.Type == D3D_SIT_TEXTURE && layer.BindPoint == 0 &&
-                 SUCCEEDED(reflection->GetResourceBindingDescByName("Scene", &scene)) && scene.Type == D3D_SIT_TEXTURE && scene.BindPoint == 1;
-            check(ok, "the HUD merge pass: the pixel shader reads the HUD layer at t0 and the scene at t1, with no constant buffer or sampler");
+                 SUCCEEDED(reflection->GetResourceBindingDescByName("Scene", &scene)) && scene.Type == D3D_SIT_TEXTURE && scene.BindPoint == 1 &&
+                 SUCCEEDED(reflection->GetResourceBindingDescByName("Weapons", &weapons)) && weapons.Type == D3D_SIT_TEXTURE && weapons.BindPoint == 2;
+            check(ok, "the HUD merge pass: the pixel shader reads the HUD layer at t0, the scene at t1 and the weapons layer at t2, with no constant buffer or sampler");
         }
     }
 

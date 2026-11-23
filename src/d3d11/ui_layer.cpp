@@ -5825,6 +5825,7 @@ static bool g_mergePsTried = false;
 static FaultBudget g_mergeBudget("uiLayer.hudMerge", 4);
 struct HudMergeSave {
     bool active = false;
+    bool weapons = false;   // the weapons fire's layer went into the merge too (published by uiLayerHudMergeEnd, as the re-issue would)
     int slot = -1;
     uint64_t seq = 0;
     const void* rtvRes = nullptr;
@@ -5842,7 +5843,9 @@ static const char* hudMergeTry(ID3D11DeviceContext* ctx, ID3D11ShaderResourceVie
     const bool hudC = e.hdrSeq == p.seq && e.hdrDraws && e.hdrSrv;
     const bool wpnC = e.wSeq == p.seq && e.wDraws && e.wSrv;
     if (!hudC) return "no HUD light this frame";
-    if (wpnC) return "the weapons' light is in the layer too";
+    // The weapons fire's light is merged with the scene too (kUiHudMergePsHlsl, t2). A frame whose weapons layer also holds the scope's gunsight
+    // mark or the legacy canopy glass keeps the layer's own tonemap and blend: those are not world light added to the scene.
+    if (wpnC && (e.wMarks || e.wGlass)) return "the weapons layer holds the gunsight mark or the legacy glass this frame";
     if (e.seq == p.seq && e.draws) return "the 8-bit layer is already drawn this frame";
     if (e.hdrToneSeq == p.seq) return "a second tonemap this frame";
     if (!ensureLayerFor(ctx, 0) || !e.rtv) return "the 8-bit layer is unavailable";
@@ -5902,15 +5905,15 @@ static const char* hudMergeTry(ID3D11DeviceContext* ctx, ID3D11ShaderResourceVie
     dc->IASetInputLayout(nullptr);
     dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     dc->VSSetShader(g_covVs, nullptr, 0);
-    ID3D11ShaderResourceView* in[2] = {e.hdrSrv.Get(), scene.Get()};
+    ID3D11ShaderResourceView* in[3] = {e.hdrSrv.Get(), scene.Get(), wpnC ? e.wSrv.Get() : nullptr};
     dc->PSSetShader(g_mergePs, nullptr, 0);
-    dc->PSSetShaderResources(0, 2, in);
+    dc->PSSetShaderResources(0, 3, in);
     dc->OMSetRenderTargets(1, &target, nullptr);
     dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
     dc->RSSetViewports(1, &vp);
     dc->Draw(3, 0);
-    ID3D11ShaderResourceView* none[2] = {};
-    dc->PSSetShaderResources(0, 2, none);
+    ID3D11ShaderResourceView* none[3] = {};
+    dc->PSSetShaderResources(0, 3, none);
     Ptr<ID3D11CommandList> list;
     if (FAILED(dc->FinishCommandList(FALSE, &list)) || !list) return "the merge pass's command list failed";
     vScreenExecuteCommandListRaw(ctx, list.Get(), 1);
@@ -5921,6 +5924,7 @@ static const char* hudMergeTry(ID3D11DeviceContext* ctx, ID3D11ShaderResourceVie
     ID3D11ShaderResourceView* merged = g_merge.srv.Get();
     vScreenPSSetShaderResourcesRaw(ctx, static_cast<uint32_t>(p.hdrSlot), 1, &merged);
     g_mergeSave.active = true;
+    g_mergeSave.weapons = wpnC;
     g_mergeSave.slot = p.hdrSlot;
     g_mergeSave.seq = p.seq;
     g_mergeSave.rtvRes = p.rtvRes;
@@ -5982,6 +5986,13 @@ void uiLayerHudMergeEnd(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* orig
     e.wToneSeq = save.seq;
     flatUiTrailNoteReissue(save.seq, FlatUiTrailReissue::kPublished, 0, save.seq);
     e.hdrMissStreak = 0;
+    if (save.weapons) {
+        // The weapons fire's content reached a tonemap (the merge), as the re-issue's bracket stamps it: the drop test and the missing-consumer
+        // streak see it carried, so the weapons layer is not stood down for frames the merge served.
+        e.wPubSeq = save.seq;
+        e.wPubMatched = false;
+        if (e.wFires) e.wMissStreak = 0;
+    }
     g_lastRedirectSeq = save.seq;
     detail::g_uiLayerWatching = true;
 }

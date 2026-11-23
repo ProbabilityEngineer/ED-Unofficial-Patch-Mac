@@ -824,12 +824,13 @@ void flatUiLayerAtCopy(ID3D11DeviceContext* ctx, uint64_t frame, bool treated, u
     g_w.edgeKeyMode = smooth;
     uiLayerFlatSetEdgeSmoothing(smooth);
     // On the HDR route (SS >= 1.0) the HUD goes into the tone pass's scene input (flatUiLayerMergeBegin) and never reaches this layer, so the
-    // smoothing acts on what is still here: the bars, dust, orbit lines, map icons and weapons fire. Said once; the F8 row's hint says it too.
+    // smoothing acts on what is still here: the bars, dust, orbit lines and map icons (the weapons fire is merged with the HUD since 2026-11-23,
+    // unless its layer also holds the gunsight mark or the legacy glass). Said once; the F8 row's hint says it too.
     static bool mergedAaNoted = false;
     if (!mergedAaNoted && smooth != HudAaMode::kOff && flatUiLayerHudToneMergedRecently()) {
         mergedAaNoted = true;
         Log::get().note("flat ui layer aa: HUD Anti-Aliasing is %s, but at SS 1.0 and above the HUD is tonemapped with the scene and is not "
-                        "smoothed; it smooths the bars, dust, orbit lines, map icons and weapons fire only (said once).", hudAaWord(smooth));
+                        "smoothed; it smooths the bars, dust, orbit lines and map icons only (said once).", hudAaWord(smooth));
     }
     // When modifying `picture` in place via CS UAV, clear PS t0 first so D3D11 never sees the same
     // resource bound as both PS SRV and CS UAV simultaneously.
