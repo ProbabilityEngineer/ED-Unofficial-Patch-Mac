@@ -17,7 +17,7 @@ checks from game results.
 | Repository | Pushes | Never |
 |---|---|---|
 | `ProbabilityEngineer/ED-Unofficial-Patch-Mac` (this one, formerly `ed-metalfx`; local `~/git/ports/ED-UP-Mac`) | `origin`, when asked | — |
-| `characterecho-sean/ed-unofficial-patch` (formerly `edvr-unofficial-patch`) | — | push, PR, issue, comment, by any route (URL, alias, API). There is no upstream remote; keep it that way. Read-only refs under `refs/up/` are local. |
+| `characterecho-sean/ed-unofficial-patch` (formerly `edvr-unofficial-patch`) | an issue, only when the owner asks for that issue (filed with `gh` under the owner's account; show the text first) | push, PR, or a comment or issue the owner did not ask for, by any route (URL, alias, API). There is no upstream remote; keep it that way. Read-only refs under `refs/up/` are local. |
 | `ProbabilityEngineer/dxmt` (`~/git/forks/dxmt`) | `origin`, when asked | `3Shain/dxmt`: no push, PR, issue or comment (no-AI policy). Its `upstream` push URL is `/dev/null`. |
 
 - **Other people's code stays local** unless the owner says otherwise, even on
