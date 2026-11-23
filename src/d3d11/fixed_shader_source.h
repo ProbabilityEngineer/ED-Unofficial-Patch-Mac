@@ -361,6 +361,57 @@ float4 main(float4 p : SV_POSITION) : SV_Target {
 }
 )HLSL";
 
+// The HUD merged into the tone's scene input (flat fix.ui_quality on the HDR route, 2026-11-22): S' = S * T + HUD, where S is the scene the
+// game's tone pass reads (H, or its plain copy, already resolved at the output size or above) and the HUD layer holds premultiplied radiance
+// with the transmittance T in alpha. The game's own tonemap then tonemaps the HUD WITH the scene, as it does with the AA off, instead of
+// the HUD being tonemapped alone and blended over the tonemapped picture (which no blend gets right: a faint line over a dark scene came out
+// brighter added as encoded values, darker added as light). The footprint loop is kUiGlowFeedPsHlsl's, carrying T as well. The scene's alpha
+// is kept; non-finite HUD texels read as nothing (zero light, T 1).
+// Since 2026-11-23 the weapons fire's layer (t2, the same size as the HUD layer) is merged too when it holds weapons fire alone: S' = (S + W) * T +
+// HUD, the weapons' light added to the scene as the game draws it (the re-issue's plan tonemaps it with the scene as well, lit minus base) and,
+// being world light, behind the HUD's transmittance. Without it the merge stood aside for every firing frame and the HUD switched to the layer's
+// own tonemap and blend for those frames (the owner's flight 2026-11-23: the panels and holograms popped brighter while firing). Unbound, t2
+// reads zero and the pass is the one above.
+constexpr char kUiHudMergePsHlsl[] = R"HLSL(
+Texture2D<float4> HudLayer : register(t0);
+Texture2D<float4> Scene : register(t1);
+Texture2D<float4> Weapons : register(t2);
+float4 main(float4 p : SV_POSITION) : SV_Target {
+    uint sw, sh, lw, lh;
+    Scene.GetDimensions(sw, sh);
+    HudLayer.GetDimensions(lw, lh);
+    float2 span = float2(lw, lh) / float2(sw, sh);
+    float2 cut = max(span - 4.0, float2(0, 0)) * 0.5;
+    float2 x0 = (p.xy - 0.5) * span + cut;
+    float2 x1 = x0 + span - 2.0 * cut;
+    int2 k0 = max(int2(floor(x0)), int2(0, 0));
+    int2 k1 = min(int2(ceil(x1)) - 1, int2(lw - 1, lh - 1));
+    float4 acc = float4(0, 0, 0, 0);
+    float3 wacc = float3(0, 0, 0);
+    float wsum = 0;
+    [loop] for (int j = k0.y; j <= min(k1.y, k0.y + 4); ++j) {
+        float wy = min(x1.y, (float)j + 1.0) - max(x0.y, (float)j);
+        if (wy <= 0) continue;
+        [loop] for (int i = k0.x; i <= min(k1.x, k0.x + 4); ++i) {
+            float wx = min(x1.x, (float)i + 1.0) - max(x0.x, (float)i);
+            if (wx <= 0) continue;
+            float4 c = HudLayer.Load(int3(i, j, 0));
+            c = all(isfinite(c)) ? float4(max(c.rgb, float3(0, 0, 0)), saturate(c.a)) : float4(0, 0, 0, 1);
+            float3 w = Weapons.Load(int3(i, j, 0)).rgb;
+            w = all(isfinite(w)) ? max(w, float3(0, 0, 0)) : float3(0, 0, 0);
+            acc += c * (wx * wy);
+            wacc += w * (wx * wy);
+            wsum += wx * wy;
+        }
+    }
+    float4 hud = wsum > 0 ? acc / wsum : float4(0, 0, 0, 1);
+    float3 weapons = wsum > 0 ? wacc / wsum : float3(0, 0, 0);
+    float4 s = Scene.Load(int3(p.xy, 0));
+    float3 o = (s.rgb + weapons) * hud.a + hud.rgb;
+    return float4(min(o, float3(60000, 60000, 60000)), s.a);
+}
+)HLSL";
+
 // The star light for the game's bloom (visual.star_glow): one fullscreen pass that reads the star layer S (the star draws alone, replayed as the game
 // issued them) and writes it as it is. It is blended into H' with a blend factor of (m, m, m, 0) -- source BLEND_FACTOR, destination ONE, ADD -- so
 // H' = H [+ HUD] + m * S with m the setting's k - 1; the weight is the blend's, not a constant buffer's, so the shader has one texture and nothing
@@ -371,6 +422,119 @@ float4 main(float4 p : SV_POSITION) : SV_Target {
     float3 c = Star.Load(int3(p.xy, 0)).rgb;
     c = all(isfinite(c)) ? max(c, float3(0, 0, 0)) : float3(0, 0, 0);
     return float4(min(c, float3(60000, 60000, 60000)), 0.0);
+}
+)HLSL";
+
+// The HUD layer's edge smoothing, FX (fix.hud_antialiasing = light; ui_layer_fxaa.h): single-pass FXAA 3.11 over the finished 8-bit layer, premultiplied
+// alpha aware. Its luma weighs the coverage (1 - alpha) beside the colour, so a dark opaque panel edge differs from the clear layer around it, and a
+// texel that is empty (0, 0, 0, 1) exits at once. t0 the layer, s0 linear clamp, u0 the output, b0 (1/w, 1/h, w, h).
+constexpr char kUiLayerFxaaHlsl[] = R"HLSL(
+Texture2D<float4> Src : register(t0);
+SamplerState LinearClamp : register(s0);
+RWTexture2D<float4> Out : register(u0);
+cbuffer Metrics : register(b0) {
+    float4 metrics; // 1/w, 1/h, w, h
+};
+
+float hudLuma(float4 c) {
+    return dot(c.rgb, float3(0.299, 0.587, 0.114)) + (1.0 - c.a);
+}
+
+[numthreads(32, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID) {
+    int2 p = int2(id.xy);
+    int2 dim = int2(metrics.zw);
+    if (p.x >= dim.x || p.y >= dim.y) return;
+
+    float4 cM = Src.Load(int3(p, 0));
+    float lM = hudLuma(cM);
+    int xW = max(p.x - 1, 0);
+    int xE = min(p.x + 1, dim.x - 1);
+    int yN = max(p.y - 1, 0);
+    int yS = min(p.y + 1, dim.y - 1);
+
+    float lN = hudLuma(Src.Load(int3(p.x, yN, 0)));
+    float lS = hudLuma(Src.Load(int3(p.x, yS, 0)));
+    float lW = hudLuma(Src.Load(int3(xW, p.y, 0)));
+    float lE = hudLuma(Src.Load(int3(xE, p.y, 0)));
+
+    float lMin = min(lM, min(min(lN, lS), min(lW, lE)));
+    float lMax = max(lM, max(max(lN, lS), max(lW, lE)));
+    float lRange = lMax - lMin;
+    if (lRange < max(0.0312, lMax * 0.125)) {
+        Out[p] = cM;
+        return;
+    }
+
+    float lNW = hudLuma(Src.Load(int3(xW, yN, 0)));
+    float lNE = hudLuma(Src.Load(int3(xE, yN, 0)));
+    float lSW = hudLuma(Src.Load(int3(xW, yS, 0)));
+    float lSE = hudLuma(Src.Load(int3(xE, yS, 0)));
+
+    float edgeH = abs(-2.0 * lW + lNW + lSW) + abs(-2.0 * lM + lN + lS) * 2.0 + abs(-2.0 * lE + lNE + lSE);
+    float edgeV = abs(-2.0 * lN + lNW + lNE) + abs(-2.0 * lM + lW + lE) * 2.0 + abs(-2.0 * lS + lSW + lSE);
+    bool horz = edgeH >= edgeV;
+
+    float lAvg = (2.0 * (lN + lS + lW + lE) + (lNW + lNE + lSW + lSE)) / 12.0;
+    float subpix = saturate(abs(lAvg - lM) / lRange);
+    subpix = (-2.0 * subpix + 3.0) * subpix * subpix;
+    float subpixBlend = subpix * subpix * 0.75;
+
+    float l1 = horz ? lN : lW;
+    float l2 = horz ? lS : lE;
+    float g1 = abs(l1 - lM);
+    float g2 = abs(l2 - lM);
+    bool steep1 = g1 >= g2;
+    float gradScaled = 0.25 * max(g1, g2);
+    float stepLen = horz ? metrics.y : metrics.x;
+    float lLocalAvg = steep1 ? 0.5 * (l1 + lM) : 0.5 * (l2 + lM);
+    if (steep1) stepLen = -stepLen;
+
+    float2 uv = (float2(p) + 0.5) * metrics.xy;
+    float2 edgeUv = uv;
+    if (horz) edgeUv.y += stepLen * 0.5;
+    else edgeUv.x += stepLen * 0.5;
+
+    float2 off = horz ? float2(metrics.x, 0.0) : float2(0.0, metrics.y);
+    static const float kSteps[8] = { 1.0, 1.5, 2.0, 2.0, 2.0, 4.0, 4.0, 8.0 };
+
+    float2 uv1 = edgeUv - off;
+    float2 uv2 = edgeUv + off;
+    float e1 = hudLuma(Src.SampleLevel(LinearClamp, uv1, 0)) - lLocalAvg;
+    float e2 = hudLuma(Src.SampleLevel(LinearClamp, uv2, 0)) - lLocalAvg;
+    bool d1 = abs(e1) >= gradScaled;
+    bool d2 = abs(e2) >= gradScaled;
+
+    [unroll] for (int i = 1; i < 8; ++i) {
+        if (d1 && d2) break;
+        float s = kSteps[i];
+        if (!d1) {
+            uv1 -= off * s;
+            e1 = hudLuma(Src.SampleLevel(LinearClamp, uv1, 0)) - lLocalAvg;
+            d1 = abs(e1) >= gradScaled;
+        }
+        if (!d2) {
+            uv2 += off * s;
+            e2 = hudLuma(Src.SampleLevel(LinearClamp, uv2, 0)) - lLocalAvg;
+            d2 = abs(e2) >= gradScaled;
+        }
+    }
+
+    float dist1 = horz ? (uv.x - uv1.x) : (uv.y - uv1.y);
+    float dist2 = horz ? (uv2.x - uv.x) : (uv2.y - uv.y);
+    bool nearer1 = dist1 < dist2;
+    float distMin = min(dist1, dist2);
+    float span = max(dist1 + dist2, 1e-6);
+    bool centerSmaller = lM < lLocalAvg;
+    bool goodSpan = ((nearer1 ? e1 : e2) < 0.0) != centerSmaller;
+    float edgeBlend = goodSpan ? (0.5 - distMin / span) : 0.0;
+    float finalBlend = max(edgeBlend, subpixBlend);
+
+    float2 finalUv = uv;
+    if (horz) finalUv.y += finalBlend * stepLen;
+    else finalUv.x += finalBlend * stepLen;
+
+    Out[p] = Src.SampleLevel(LinearClamp, finalUv, 0);
 }
 )HLSL";
 

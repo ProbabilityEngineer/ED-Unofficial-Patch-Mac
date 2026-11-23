@@ -1434,11 +1434,13 @@ bool hdrOutputNitsBind(ID3D11DeviceContext* ctx, ID3D11Buffer** saved, bool outp
     // The game's output copy (the flat runtime says which draw it is, once a frame): the shader actually bound decides, not the
     // shadow. With flat AA on, the copy's draw scope resolves before the game's issue and the shadow stopped naming the copy's
     // pixel shader (flight 2026-11-18 03:45: 0 final-copy binds with AA on, one per tone draw with it off).
-    if (outputCopy && ps != g.copyPs) {
+    // The tone draw as well (2026-11-23): with flat AA on its draw scope runs the resolve and the HUD merge first, and the shadow did not name
+    // the tone replacement on most frames, which then drew with the nits compiled at attach (28% darker with AA on at the live auto white).
+    if (outputCopy && ps != g.copyPs && ps != g.tonePs && ps != g.toneNoBloomPs) {
         ID3D11PixelShader* bound = nullptr;
         ctx->PSGetShader(&bound, nullptr, nullptr);
         if (bound) bound->Release();   // identity only; the context keeps its own reference
-        if (bound == g.copyPs) {
+        if (bound == g.copyPs || bound == g.tonePs || bound == g.toneNoBloomPs) {
             ps = bound;
             ++g_nitsBinds.copyByContext;
         } else {

@@ -31,7 +31,9 @@
 #include "ui_layer_seed.h"  // the Seeder: the game's depth-stencil at the layer's size
 #include "ui_layer_seed_census.h"
 #include "ui_layer_seed_timing.h"
-#include "ui_layer_smaa.h"  // the flat profile's HUD edge smoothing: SMAA 1x over the layer before the composite
+#include "ui_layer_smaa.h"  // the HUD edge smoothing: SMAA 1x over the layer before the composite (fix.hud_antialiasing = sharp)
+#include "ui_layer_fxaa.h"  // ...and FXAA, one pass, for light (ui_layer_hud_aa.h parses the choice)
+#include "ui_layer_hud_aa.h"  // hudAaParse: off | light (FXAA) | sharp (SMAA), the one reading the menu and the layer share
 #include "shield_ripple_shaders.h"  // the shield ripple's door pass
 #include "scope_zoom.h"  // the scope lens: right after the ripple at the door
 #include "sharp_weapons.h"  // the weapons layer's source pass, blend states and step bindings
@@ -561,9 +563,10 @@ struct Eye {
     Ptr<ID3D11ShaderResourceView> copySrv;
     uint32_t copyW = 0, copyH = 0;
     DXGI_FORMAT copyFmt = DXGI_FORMAT_UNKNOWN;
-    // The HUD edge smoothing (fix.hud_antialiasing, both profiles): SMAA 1x on the layer at the layer's size, its output read in the layer's place (ui_layer_smaa.h).
-    // Made at the first composite that asks, released with the layer and when the ask stops.
+    // The HUD edge smoothing (fix.hud_antialiasing, both profiles): SMAA 1x (sharp) or FXAA (light) on the layer at the layer's size, its output read in the
+    // layer's place (ui_layer_smaa.h, ui_layer_fxaa.h). Made at the first composite that asks, released with the layer and when the ask stops or switches.
     UiLayerSmaa smaa;
+    UiLayerFxaa fxaa;
 };
 Eye g_eye[2];
 
@@ -790,6 +793,7 @@ struct Window {
     // them; the flat profile keeps its own (flat_ui_layer.cpp) and skips logTotals.
     uint64_t hudSmoothed = 0, hudRawKeyOff = 0, hudRawFault = 0;
     bool hudKeyOn = false;
+    HudAaMode hudKeyMode = HudAaMode::kOff;   // off | light | sharp, as the last composite read it
     uint32_t hudW = 0, hudH = 0;
     // afterWrites' own breakdown: taken into the layer after the UI (kept
     // over it), left as a post pass (an eye-sized input), or refused at
@@ -1816,8 +1820,9 @@ bool releaseLayers() {
     bool any = false;
     for (Eye& e : g_eye) {
         any = any || e.tex || e.mTex || e.maskTex || e.mapDepthTex || e.ds.tex || e.dsCopy || e.dsDirect[0].depth || e.dsDirect[1].depth || e.out || e.copy || e.frameSrv || e.frameUav ||
-              e.hdrTex || e.hdrDs.tex || e.wTex || e.gTex || e.gDs.tex || e.smaa.ready();
+              e.hdrTex || e.hdrDs.tex || e.wTex || e.gTex || e.gDs.tex || e.smaa.ready() || e.fxaa.ready();
         e.smaa.releaseTargets();
+        e.fxaa.releaseTargets();
         e.coverage.reset();
         e.tex.Reset();
         e.rtv.Reset();
@@ -3323,16 +3328,17 @@ bool g_loadChecked[2] = {}, g_loadOk[2] = {};
 unsigned g_inPlaceDeclinedNoted = 0;   // bit per reason, said once
 bool g_inPlaceNoted = false;
 // The HUD layer's edge smoothing (ui_layer.h, uiLayerFlatSetEdgeSmoothing): the flat adapter's ask for the next composite, taken and cleared on entry to
-// uiLayerComposite, and what that composite did with it. The VR profile never sets the ask; its own key is g_hudSmoothVr below.
+// uiLayerComposite, and what that composite did with it. The VR profile never sets the ask; its own key is g_hudAaVr below.
 struct FlatEdgeSmoothing {
     bool ask = false;
+    HudAaMode mode = HudAaMode::kOff;   // the mode the last ask named (off when the ask is only "on", as a bool ask reads as SMAA)
     UiLayerEdgeSmoothingResult result;
 };
 FlatEdgeSmoothing g_flatEdge;
 // VR's half of fix.hud_antialiasing (2026-11-03: one key for both profiles, off by default, live): read by uiLayerConfigure, on every reconfigure, and used only
 // while the profile is not flat (the flat adapter reads the same key itself, a frame at a time, and asks per composite through g_flatEdge). uiLayerComposite smooths
-// an eye's HUD layer when either asks.
-bool g_hudSmoothVr = false;
+// an eye's HUD layer when either asks. The mode (off | light FXAA | sharp SMAA) is the same for both halves since 2026-11-23.
+HudAaMode g_hudAaVr = HudAaMode::kOff;
 
 void compileOnce(ID3D11DeviceContext* ctx) {
     if (g_cs || g_csTried || !ctx) return;
@@ -3439,9 +3445,31 @@ UiLayerSmaa* edgeSmoothingFor(Eye& e, uint32_t eye, ID3D11Device* dev) {
     return nullptr;
 }
 
+// The HUD edge smoothing's resources for this composite: FXAA's, or SMAA's (edgeSmoothingFor), or none. The other mode's
+// targets are released at once, so a switch keeps only what it uses. Same lifecycle and stand-down contract as SMAA's.
+UiLayerFxaa* fxaaSmoothingFor(Eye& e, uint32_t eye, ID3D11Device* dev) {
+    UiLayerSmaaFail fail;
+    const char* who = runtimeFlatProfile() ? "flat ui layer fxaa" : eye == 0 ? "ui layer fxaa (left eye)" : "ui layer fxaa (right eye)";
+    switch (uiLayerFxaaEnsure(e.fxaa, dev, e.w, e.h, &fail, e.layerFormat)) {
+        case UiLayerSmaaState::kMade:
+            Log::get().note("%s: ready at %ux%u -- output %s (the layer's format), %.1f MB", who, e.w, e.h, viewName(e.layerFormat),
+                            uiLayerMB(uiLayerBytes(e.w, e.h, e.layerFormat == DXGI_FORMAT_R16G16B16A16_FLOAT ? 8u : 4u)));
+            return &e.fxaa;
+        case UiLayerSmaaState::kReady:
+            return &e.fxaa;
+        case UiLayerSmaaState::kFailed:
+            Log::get().note("%s: stood down at %ux%u -- %s hr=0x%08X", who, e.w, e.h, fail.what ? fail.what : "a creation failed",
+                            static_cast<unsigned>(fail.hr));
+            return nullptr;
+        case UiLayerSmaaState::kStoodDown:
+            return nullptr;
+    }
+    return nullptr;
+}
+
 ID3D11Texture2D* compositeInner(Eye& e, uint32_t eye, ID3D11Texture2D* frame,
                                 const uint32_t region[4], const float layerUv[4], bool useMult,
-                                bool ownedFrame, const char** why, bool smooth) {
+                                bool ownedFrame, const char** why, HudAaMode aaMode) {
     D3D11_TEXTURE2D_DESC fd{};
     frame->GetDesc(&fd);
     const DXGI_FORMAT view = uiLayerFrameView(fd.Format, runtimeFlatProfile());
@@ -3587,10 +3615,17 @@ ID3D11Texture2D* compositeInner(Eye& e, uint32_t eye, ID3D11Texture2D* frame,
     // The HUD layer's edge smoothing (fix.hud_antialiasing; both profiles since 2026-11-03): the SMAA resources for the layer's size are made here (per eye) and the
     // passes run inside the timed span below, so VR's "ui quality: layer" price line includes their cost. Not asked for, nothing is kept.
     UiLayerSmaa* smaa = nullptr;
-    if (smooth)
+    UiLayerFxaa* fxaa = nullptr;
+    if (aaMode == HudAaMode::kSmaa) {
+        if (e.fxaa.ready()) e.fxaa.releaseTargets();
         smaa = edgeSmoothingFor(e, eye, dev.Get());
-    else if (e.smaa.ready())
-        e.smaa.releaseTargets();
+    } else if (aaMode == HudAaMode::kFxaa) {
+        if (e.smaa.ready()) e.smaa.releaseTargets();
+        fxaa = fxaaSmoothingFor(e, eye, dev.Get());
+    } else {
+        if (e.smaa.ready()) e.smaa.releaseTargets();
+        if (e.fxaa.ready()) e.fxaa.releaseTargets();
+    }
 
     UiLayerCompositeParams p{};
     if (viaCopy) {
@@ -3640,6 +3675,11 @@ ID3D11Texture2D* compositeInner(Eye& e, uint32_t eye, ID3D11Texture2D* frame,
             layerSrv = output;
             smoothed = true;
         }
+    } else if (fxaa) {
+        if (ID3D11ShaderResourceView* output = uiLayerFxaaRun(*fxaa, ctx.Get(), e.srv.Get())) {
+            layerSrv = output;
+            smoothed = true;
+        }
     }
     ID3D11ShaderResourceView* nullSrv[3] = {};
     ID3D11UnorderedAccessView* nullUav = nullptr;
@@ -3672,15 +3712,18 @@ ID3D11Texture2D* compositeInner(Eye& e, uint32_t eye, ID3D11Texture2D* frame,
     if (savedCb) savedCb->Release();
 
     ++g_win.composites;
-    g_flatEdge.result.outcome = !smooth ? UiLayerEdgeSmoothing::kRaw : (smoothed ? UiLayerEdgeSmoothing::kSmoothed : UiLayerEdgeSmoothing::kFault);
+    g_flatEdge.result.outcome = aaMode == HudAaMode::kOff ? UiLayerEdgeSmoothing::kRaw
+                                                         : (smoothed ? UiLayerEdgeSmoothing::kSmoothed : UiLayerEdgeSmoothing::kFault);
+    g_flatEdge.result.applied = smoothed ? aaMode : HudAaMode::kOff;
     g_flatEdge.result.w = e.w;
     g_flatEdge.result.h = e.h;
     // VR's window (the flat profile counts the same outcome in its own, from uiLayerFlatEdgeSmoothingResult): both eyes' composites.
     if (!runtimeFlatProfile()) {
-        if (!smooth) ++g_win.hudRawKeyOff;
+        if (aaMode == HudAaMode::kOff) ++g_win.hudRawKeyOff;
         else if (smoothed) ++g_win.hudSmoothed;
         else ++g_win.hudRawFault;
-        g_win.hudKeyOn = smooth;
+        g_win.hudKeyOn = aaMode != HudAaMode::kOff;
+        g_win.hudKeyMode = aaMode;
         g_win.hudW = e.w;
         g_win.hudH = e.h;
     }
@@ -4315,7 +4358,7 @@ void logTotals(double seconds) {
     // layer's size then. A window with composites and all three counts zero says the composite never reached the smoothing. The passes run inside the composite's timed
     // span, so the "ui quality: layer" price line below includes their cost.
     if (g_win.composites || g_win.hudSmoothed || g_win.hudRawKeyOff || g_win.hudRawFault)
-        Log::get().note("ui quality: hud smaa: key=%s smoothed=%llu raw-key-off=%llu raw-fault=%llu size=%ux%u", g_win.hudKeyOn ? "on" : "off",
+        Log::get().note("ui quality: hud aa: key=%s smoothed=%llu raw-key-off=%llu raw-fault=%llu size=%ux%u", hudAaWord(g_win.hudKeyMode),
                         static_cast<unsigned long long>(g_win.hudSmoothed), static_cast<unsigned long long>(g_win.hudRawKeyOff),
                         static_cast<unsigned long long>(g_win.hudRawFault), g_win.hudW, g_win.hudH);
     uiSurfacesLogAtlas();  // the glyph atlas instrument's write counts, when one is watched
@@ -4588,7 +4631,7 @@ void uiLayerConfigure(Config& cfg) {
     // VR's half of the HUD edge smoothing (fix.hud_antialiasing, off by default, live; 2026-11-03): read on every configure and used by uiLayerComposite only while the
     // profile is not flat (the flat adapter reads the key itself, a frame at a time). The layer's composite runs only while fix.ui_quality is not off and a temporal
     // mode is on, so the key does nothing before then.
-    g_hudSmoothVr = !runtimeFlatProfile() && cfg.getBool("fix.hud_antialiasing", false);
+    g_hudAaVr = runtimeFlatProfile() ? HudAaMode::kOff : hudAaParse(cfg.getString("fix.hud_antialiasing", "off").c_str());
     // The flat profile reads its mode around the gate (fix.temporal_aa reads off there): its half of the layer -- the cockpit
     // HUD families through the mono adapter, flat_ui_layer.cpp -- and its panel factor arm with the flat anti-aliasing.
     const bool flatAa = runtimeFlatProfile() && temporalModeEnabledFor(cfg.requestedTemporalMode(), true);
@@ -5759,6 +5802,203 @@ ID3D11ShaderResourceView* uiLayerGlowFeed(ID3D11DeviceContext* ctx, uint64_t fra
     if (verdict) *verdict = static_cast<int>(v);
     return out;
 }
+
+// THE HUD MERGED INTO THE TONE'S SCENE INPUT (flat, the HDR route; 2026-11-22). On the HDR route the scene the game's tone pass reads is
+// already resolved at the output size or above, so the HUD layer's light can go back into it BEFORE the tonemap: S' = S * T + HUD
+// (kUiHudMergePsHlsl), bound at the tone's HDR slot for the game's own issue. The game then tonemaps the HUD with the scene, as with the
+// AA off, and the re-issue over the 8-bit layer is not run: that layer is cleared and published empty, so the door composites nothing of the
+// HUD (the post-tone draws and the multiply still land on it in game order). Why: the HUD tonemapped alone and blended over the tonemapped
+// picture has no right blend -- added as encoded values the pedestal lines read brighter than the game's, added as light darker (the tone's
+// toe dims a faint line alone; with the scene under it the line lands where the curve is steeper). Only a frame with the HUD's light alone
+// (no weapons light, the 8-bit layer not yet drawn) merges; any other keeps the re-issue, and any failure here leaves the game's draw and
+// the re-issue exactly as before. The pending admission (crispArm) is consumed by a merge, so the re-issue cannot also run.
+struct HudMergeTexture {
+    Ptr<ID3D11Texture2D> tex;
+    Ptr<ID3D11RenderTargetView> rtv;
+    Ptr<ID3D11ShaderResourceView> srv;
+    uint32_t w = 0, h = 0;
+    DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN, view = DXGI_FORMAT_UNKNOWN;
+};
+static HudMergeTexture g_merge;
+static ID3D11PixelShader* g_mergePs = nullptr;
+static bool g_mergePsTried = false;
+static FaultBudget g_mergeBudget("uiLayer.hudMerge", 4);
+struct HudMergeSave {
+    bool active = false;
+    bool weapons = false;   // the weapons fire's layer went into the merge too (published by uiLayerHudMergeEnd, as the re-issue would)
+    int slot = -1;
+    uint64_t seq = 0;
+    const void* rtvRes = nullptr;
+};
+static HudMergeSave g_mergeSave;
+static bool g_mergeNoted = false;
+static uint64_t g_mergeCount = 0, g_mergeDeclines = 0;
+
+static const char* hudMergeTry(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView** original) {
+    if (!runtimeFlatProfile()) return "not the flat profile";
+    if (!g_crispPending.pending) return "no tone admitted";
+    const CrispTonePending p = g_crispPending;
+    if (p.eye != 0 || p.hdrSlot < 0 || p.hdrSlot > 3) return "not eye 0's tone";
+    Eye& e = g_eye[0];
+    const bool hudC = e.hdrSeq == p.seq && e.hdrDraws && e.hdrSrv;
+    const bool wpnC = e.wSeq == p.seq && e.wDraws && e.wSrv;
+    if (!hudC) return "no HUD light this frame";
+    // The weapons fire's light is merged with the scene too (kUiHudMergePsHlsl, t2). A frame whose weapons layer also holds the scope's gunsight
+    // mark or the legacy canopy glass keeps the layer's own tonemap and blend: those are not world light added to the scene.
+    if (wpnC && (e.wMarks || e.wGlass)) return "the weapons layer holds the gunsight mark or the legacy glass this frame";
+    if (e.seq == p.seq && e.draws) return "the 8-bit layer is already drawn this frame";
+    if (e.hdrToneSeq == p.seq) return "a second tonemap this frame";
+    if (!ensureLayerFor(ctx, 0) || !e.rtv) return "the 8-bit layer is unavailable";
+    Ptr<ID3D11RenderTargetView> rtvNow;
+    ctx->OMGetRenderTargets(1, &rtvNow, nullptr);
+    Ptr<ID3D11Resource> outNow;
+    if (rtvNow) rtvNow->GetResource(&outNow);
+    Ptr<ID3D11ShaderResourceView> scene;
+    ctx->PSGetShaderResources(static_cast<UINT>(p.hdrSlot), 1, &scene);
+    Ptr<ID3D11Resource> sceneRes;
+    if (scene) scene->GetResource(&sceneRes);
+    if (!outNow || outNow.Get() != p.rtvRes || !sceneRes || sceneRes.Get() != p.hdrRes) return "the bindings are not the admitted draw's";
+    D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
+    scene->GetDesc(&sd);
+    Ptr<ID3D11Texture2D> sTex;
+    if (sd.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D || sd.Texture2D.MostDetailedMip != 0 || FAILED(sceneRes.As(&sTex)))
+        return "the scene input is not a plain 2D view";
+    D3D11_TEXTURE2D_DESC td{};
+    sTex->GetDesc(&td);
+    if (td.SampleDesc.Count != 1 || td.ArraySize != 1) return "the scene input is multisampled or an array";
+    if (sd.Format != DXGI_FORMAT_R11G11B10_FLOAT && sd.Format != DXGI_FORMAT_R16G16B16A16_FLOAT)
+        return "the scene input's format is not R11G11B10 or FP16";
+    compileCoverageOnce(ctx);  // the shared fullscreen vertex shader
+    if (!g_mergePs && !g_mergePsTried) {
+        g_mergePsTried = true;
+        g_mergePs = shaderSwapCreatePs(ctx, kUiHudMergePsBytecode, sizeof(kUiHudMergePsBytecode), "ui_hud_merge_ps", "crisp hud");
+    }
+    if (!g_covVs || !g_mergePs || !crispCoverageContextReady(ctx) || !g_crispDeferred) return "the merge pass's shaders are unavailable";
+    if (!g_merge.tex || g_merge.w != td.Width || g_merge.h != td.Height || g_merge.view != sd.Format) {
+        g_merge = HudMergeTexture{};
+        Ptr<ID3D11Device> dev;
+        ctx->GetDevice(&dev);
+        D3D11_TEXTURE2D_DESC d{};
+        d.Width = td.Width;
+        d.Height = td.Height;
+        d.MipLevels = 1;
+        d.ArraySize = 1;
+        d.Format = sd.Format;
+        d.SampleDesc.Count = 1;
+        d.Usage = D3D11_USAGE_DEFAULT;
+        d.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        HudMergeTexture made;
+        if (!dev || FAILED(dev->CreateTexture2D(&d, nullptr, &made.tex)) || !made.tex ||
+            FAILED(dev->CreateRenderTargetView(made.tex.Get(), nullptr, &made.rtv)) || !made.rtv ||
+            FAILED(dev->CreateShaderResourceView(made.tex.Get(), nullptr, &made.srv)) || !made.srv)
+            return "the merged scene's texture could not be made";
+        made.w = td.Width;
+        made.h = td.Height;
+        made.format = made.view = sd.Format;
+        g_merge = made;
+        Log::get().note("flat ui layer: the merged scene's texture is %ux%u (format %u, %.1f MB).", td.Width, td.Height,
+                        static_cast<unsigned>(sd.Format), (sd.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ? 8.0 : 4.0) * td.Width * td.Height / 1048576.0);
+    }
+    ID3D11DeviceContext* dc = g_crispDeferred.Get();
+    ID3D11RenderTargetView* target = g_merge.rtv.Get();
+    const D3D11_VIEWPORT vp{0.0f, 0.0f, static_cast<float>(td.Width), static_cast<float>(td.Height), 0.0f, 1.0f};
+    dc->IASetInputLayout(nullptr);
+    dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    dc->VSSetShader(g_covVs, nullptr, 0);
+    ID3D11ShaderResourceView* in[3] = {e.hdrSrv.Get(), scene.Get(), wpnC ? e.wSrv.Get() : nullptr};
+    dc->PSSetShader(g_mergePs, nullptr, 0);
+    dc->PSSetShaderResources(0, 3, in);
+    dc->OMSetRenderTargets(1, &target, nullptr);
+    dc->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFFu);
+    dc->RSSetViewports(1, &vp);
+    dc->Draw(3, 0);
+    ID3D11ShaderResourceView* none[3] = {};
+    dc->PSSetShaderResources(0, 3, none);
+    Ptr<ID3D11CommandList> list;
+    if (FAILED(dc->FinishCommandList(FALSE, &list)) || !list) return "the merge pass's command list failed";
+    vScreenExecuteCommandListRaw(ctx, list.Get(), 1);
+    // The admission is the merge's now: the re-issue does not run for this tone.
+    g_crispPending = CrispTonePending{};
+    detail::g_uiLayerCrispPending = false;
+    *original = scene.Detach();  // one reference, released by uiLayerHudMergeEnd
+    ID3D11ShaderResourceView* merged = g_merge.srv.Get();
+    vScreenPSSetShaderResourcesRaw(ctx, static_cast<uint32_t>(p.hdrSlot), 1, &merged);
+    g_mergeSave.active = true;
+    g_mergeSave.weapons = wpnC;
+    g_mergeSave.slot = p.hdrSlot;
+    g_mergeSave.seq = p.seq;
+    g_mergeSave.rtvRes = p.rtvRes;
+    return nullptr;
+}
+
+bool uiLayerHudMergeBegin(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView** original) {
+    if (!ctx || !original) return false;
+    *original = nullptr;
+    if (g_mergeSave.active) return false;
+    const char* why = "a fault in the merge pass";
+    if (!guardedBudget(g_mergeBudget, [&] { why = hudMergeTry(ctx, original); })) why = "a fault in the merge pass";
+    if (!why && *original) {
+        ++g_mergeCount;
+        if (!g_mergeNoted) {
+            g_mergeNoted = true;
+            Log::get().note("flat ui layer: the HUD's light goes into the tone's scene input (frame %llu, slot t%d, %ux%u): the game's tonemap "
+                            "takes the HUD with the scene, and the layer's own tonemap and blend stand aside for such frames; said once.",
+                            static_cast<unsigned long long>(g_mergeSave.seq), g_mergeSave.slot, g_merge.w, g_merge.h);
+        }
+        return true;
+    }
+    if (*original) {
+        (*original)->Release();
+        *original = nullptr;
+    }
+    ++g_mergeDeclines;
+    static const char* said[16] = {};
+    static uint32_t saidCount = 0;
+    bool seen = false;
+    for (uint32_t i = 0; i < saidCount; ++i)
+        if (said[i] == why) seen = true;
+    if (!seen && saidCount < 16) {
+        said[saidCount++] = why;
+        Log::get().note("flat ui layer: the HUD is not merged into the tone's scene (%s): the layer's tonemap and blend serve the frame; "
+                        "said once per reason.", why ? why : "?");
+    }
+    return false;
+}
+
+void uiLayerHudMergeEnd(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* original, bool publish) {
+    const HudMergeSave save = g_mergeSave;
+    g_mergeSave = HudMergeSave{};
+    if (ctx && save.active && save.slot >= 0) {
+        ID3D11ShaderResourceView* game = original;
+        vScreenPSSetShaderResourcesRaw(ctx, static_cast<uint32_t>(save.slot), 1, &game);
+    }
+    if (original) original->Release();
+    if (!ctx || !save.active || !publish) return;
+    // Published empty: the HUD is in the picture through the game's own tonemap, so the 8-bit layer carries nothing of it. The fields are
+    // uiLayerCrispToneEnd's publication, so the door, the post-tone draws and the missed-tonemap deadline see a tone that ran.
+    Eye& e = g_eye[0];
+    if (e.rtv) vScreenClearRenderTargetViewRaw(ctx, e.rtv.Get(), kUiLayerClear);
+    e.seq = save.seq;
+    e.draws = 1;
+    e.target = save.rtvRes;
+    e.chainOpen = true;
+    e.hdrToneSeq = save.seq;
+    e.wToneSeq = save.seq;
+    flatUiTrailNoteReissue(save.seq, FlatUiTrailReissue::kPublished, 0, save.seq);
+    e.hdrMissStreak = 0;
+    if (save.weapons) {
+        // The weapons fire's content reached a tonemap (the merge), as the re-issue's bracket stamps it: the drop test and the missing-consumer
+        // streak see it carried, so the weapons layer is not stood down for frames the merge served.
+        e.wPubSeq = save.seq;
+        e.wPubMatched = false;
+        if (e.wFires) e.wMissStreak = 0;
+    }
+    g_lastRedirectSeq = save.seq;
+    detail::g_uiLayerWatching = true;
+}
+
+uint64_t uiLayerHudMerges() { return g_mergeCount; }
+uint64_t uiLayerHudMergeDeclines() { return g_mergeDeclines; }
 
 // The HUD's light for the headset's bloom (ui_layer.h UiHeadsetGlow). An eye's first level reads that eye's H; the HUD the layer took out of H is in the
 // eye's HDR HUD layer, whose `hdrTarget` is that very H (the tonemap admission finds the eye the same way, by the resource its HDR slot reads). So the
@@ -7792,7 +8032,8 @@ constexpr uint32_t kEyeRearmWindow = 2000, kEyeSwapPersist = 30;
 ID3D11Texture2D* uiLayerComposite(uint64_t sequence, uint32_t eye, ID3D11Texture2D* frame,
                                   const uint32_t region[4], const float layerUv[4], bool ownedFrame, bool resolved) {
     // The flat adapter's ask for this composite (uiLayerFlatSetEdgeSmoothing), taken whatever happens below so it never carries to another call.
-    const bool smooth = g_flatEdge.ask || (!runtimeFlatProfile() && g_hudSmoothVr);  // VR: the key's, both eyes
+    const HudAaMode aaMode = !runtimeFlatProfile() ? g_hudAaVr   // VR: the key's, both eyes
+                                                    : (g_flatEdge.ask ? g_flatEdge.mode : HudAaMode::kOff);
     g_flatEdge.ask = false;
     g_flatEdge.result = UiLayerEdgeSmoothingResult{};
     if (eye > 1 || !frame || !region || !layerUv) return nullptr;
@@ -7927,7 +8168,7 @@ ID3D11Texture2D* uiLayerComposite(uint64_t sequence, uint32_t eye, ID3D11Texture
     ID3D11Texture2D* result = nullptr;
     const char* why = nullptr;
     const bool ran = guardedBudget(g_compositeBudget, [&] {
-        result = compositeInner(e, eye, frame, region, layerUv, useMult, ownedFrame, &why, smooth);
+        result = compositeInner(e, eye, frame, region, layerUv, useMult, ownedFrame, &why, aaMode);
     });
     markFrame.composited = result != nullptr;
     if (!result) {
@@ -8165,7 +8406,8 @@ void uiLayerFlatSetDraw(uint64_t frame, float jx, float jy, uint32_t renderW, ui
     g_flatDraw.renderH = renderH;
 }
 
-void uiLayerFlatSetEdgeSmoothing(bool on) { g_flatEdge.ask = on; }
+void uiLayerFlatSetEdgeSmoothing(bool on) { g_flatEdge.ask = on; g_flatEdge.mode = on ? HudAaMode::kSmaa : HudAaMode::kOff; }
+void uiLayerFlatSetEdgeSmoothing(HudAaMode mode) { g_flatEdge.ask = mode != HudAaMode::kOff; g_flatEdge.mode = mode; }
 UiLayerEdgeSmoothingResult uiLayerFlatEdgeSmoothingResult() { return g_flatEdge.result; }
 
 int uiLayerLastDecision() { return g_lastDecision; }
@@ -8220,7 +8462,7 @@ void releaseDeviceObjects() {
     g_hdrSeedActive = 0;
     releaseLayers();
     // releaseLayers let go of the SMAA targets; the passes, samplers, lookup textures and the remembered failure belong to the device.
-    for (Eye& e : g_eye) e.smaa.releaseAll();
+    for (Eye& e : g_eye) { e.smaa.releaseAll(); e.fxaa.releaseAll(); }
     for (RouteSlot& s : g_route) {
         s.timer.reset();
         s.inUse = false;
@@ -8273,6 +8515,13 @@ void releaseDeviceObjects() {
         g_glowPs = nullptr;
     }
     g_glowPsTried = false;
+    g_merge = HudMergeTexture{};
+    g_mergeSave = HudMergeSave{};
+    if (g_mergePs) {
+        g_mergePs->Release();
+        g_mergePs = nullptr;
+    }
+    g_mergePsTried = false;
     if (g_starAddPs) {
         g_starAddPs->Release();
         g_starAddPs = nullptr;

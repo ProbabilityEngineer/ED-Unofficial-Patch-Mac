@@ -70,6 +70,8 @@
 #include "temporal_pass.h"
 #include "terrain_checkerboard.h"   // Elite's terrain checkerboard rendering in VR: the worker's tick and the word it publishes
 #include "ui_layer_math.h"  // uiQualityParse: the HUD Anti-Aliasing row dims while fix.ui_quality is off (or the anti-aliasing is), UI quality read as the layer reads it
+#include "flat_ui_layer.h"   // flatUiLayerHudToneMergedRecently: the HUD Anti-Aliasing row's hint at SS >= 1.0
+#include "ui_layer_hud_aa.h"  // hudAaParse/hudAaWord: the HUD Anti-Aliasing row shows and steps off | light | sharp
 #include "vscreen.h"        // vScreenRenderBelowEye: Elite's Supersampling below 1, from the sizes
 #include "concourse_pane.h"     // concoursePaneTakeToast: the concourse window mode's toast (TEMPORARY, docs\concourse-cull-2026-11-05.md)
 #include "hdr_output.h"         // hdrOutputOn: whether HDR is running, for the HDR white rows
@@ -514,13 +516,14 @@ bool sharpenRowDisabled() {
 }
 
 // fix.hud_antialiasing (the HUD Anti-Aliasing row, 2026-10-24 on the flat panel; on VR's Performance page too since 2026-11-03). It smooths the UI layer, which is
-// live only while fix.ui_quality is not off AND the profile's own anti-aliasing is on (flat_ui_layer.cpp for flat, ui_layer.cpp's uiLayerConfigure for VR), so with
-// either off the row stays on the page, dimmed, and stops responding. UI quality is read as the layer reads it (uiQualityParse, the shipped 100 for a missing line)
-// and the anti-aliasing as the running profile reads it (flat: the flat mode, requestedTemporalMode; VR: fix.temporal_aa), live, every time the page is drawn or a
-// row is touched. The hint and the refused step name the cause that applies: UI quality first when it is off, else the anti-aliasing.
+// live only while the profile's own anti-aliasing is on (flat_ui_layer.cpp for flat, ui_layer.cpp's uiLayerConfigure for VR), so with it off the row stays on the
+// page, dimmed, and stops responding. UI quality does not gate it (2026-11-23): off, the layer still carries the supercruise bars, dust, orbit lines, map icons and
+// weapons fire at the display's size. The anti-aliasing is read as the running profile reads it (flat: the flat mode, requestedTemporalMode; VR: fix.temporal_aa),
+// live, every time the page is drawn or a row is touched. UI quality is read for the row's own display (hudAntiAliasingUiQualityOn).
 bool isHudAntiAliasingRow(const MenuRowDef& d) {
     return strcmp(d.section, "fix") == 0 && strcmp(d.key, "hud_antialiasing") == 0;
 }
+
 
 bool hudAntiAliasingUiQualityOn() {
     const std::string quality = Config::get().getString("fix.ui_quality", "100");
@@ -537,12 +540,17 @@ bool hudAntiAliasingRowDisabled() {
 }
 
 const char* hudAntiAliasingHint() {
-    return hudAntiAliasingUiQualityOn() ? "Needs anti-aliasing: turn it on to use this." : "Needs UI quality: turn it on to use this.";
+    return "Needs anti-aliasing: turn it on to use this.";
+}
+
+// The row is live at SS 1.0 and above, but there the HUD is tonemapped with the scene (flatUiLayerMergeBegin) before the layer is smoothed, so the
+// smoothing reaches only the bars, dust, orbit lines, map icons and weapons fire. Said on the row's hint line while it is highlighted, nowhere else.
+const char* hudAntiAliasingMergedHint() {
+    return "At SS 1.0+ this smooths bars, dust and icons; the HUD itself is not smoothed.";
 }
 
 const char* hudAntiAliasingRefusal() {
-    return hudAntiAliasingUiQualityOn() ? "HUD Anti-Aliasing is inactive: turn anti-aliasing on first."
-                                        : "HUD Anti-Aliasing is inactive: turn UI quality on above first.";
+    return "HUD Anti-Aliasing is inactive: turn anti-aliasing on first.";
 }
 
 // fix.xess_frame_generation and fix.xess_generated_frames (the XeSS Frame Generation and XeSS-FG frames rows, flat Performance tab only, 2026-11-12). Both are
@@ -1274,6 +1282,13 @@ std::string displayValue(const MenuRowDef& d, const std::string& v) {
         case MenuKind::Choice: {
             if (isFpsOverlayRow(d)) {
                 const char* word = fpsOverlayWord(parseFpsOverlay(v.c_str()));
+                for (const ChoiceItem& c : choicesOf(d)) {
+                    if (_stricmp(c.value.c_str(), word) == 0) return c.label;
+                }
+            }
+            // An older HUD Anti-Aliasing spelling (on, smaa, fxaa) shown as the choice it now means (sharp, light).
+            if (isHudAntiAliasingRow(d)) {
+                const char* word = hudAaWord(hudAaParse(v.c_str()));
                 for (const ChoiceItem& c : choicesOf(d)) {
                     if (_stricmp(c.value.c_str(), word) == 0) return c.label;
                 }
@@ -3085,6 +3100,8 @@ void buildContent(MenuContent& c) {
                                   : kMenuRow;
             if (hi && dim && hudAaRow)
                 snprintf(c.hint, sizeof(c.hint), "%s", hudAntiAliasingHint());
+            else if (hi && hudAaRow && runtimeFlatProfile() && flatUiLayerHudToneMergedRecently())
+                snprintf(c.hint, sizeof(c.hint), "%s", hudAntiAliasingMergedHint());
             else if (hi && dim && glassDirtRow)
                 snprintf(c.hint, sizeof(c.hint), "%s", cockpitGlassDirtHint());
             else if (hi && dim && (windowDistanceRow || doorsRow))
@@ -3744,7 +3761,9 @@ void stepRow(int defIndex, int dir, int mult) {
             const std::vector<ChoiceItem> items = choicesOf(d);
             if (items.empty()) return;
             int at = -1;
-            const std::string curWord = isFpsOverlayRow(d) ? std::string(fpsOverlayWord(parseFpsOverlay(cur.c_str()))) : cur;
+            // The HUD Anti-Aliasing row steps from the word a mode means, so an older spelling (on, smaa, fxaa) steps to a real choice.
+            const std::string curWord = isFpsOverlayRow(d) ? std::string(fpsOverlayWord(parseFpsOverlay(cur.c_str())))
+                                      : isHudAntiAliasingRow(d) ? std::string(hudAaWord(hudAaParse(cur.c_str()))) : cur;
             for (size_t i = 0; i < items.size(); ++i) {
                 if (_stricmp(items[i].value.c_str(), curWord.c_str()) == 0) at = static_cast<int>(i);
             }

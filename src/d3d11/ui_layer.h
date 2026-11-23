@@ -57,6 +57,7 @@
 // totals line counts every case and names each shader pair once.
 #pragma once
 
+#include "ui_layer_hud_aa.h"   // HudAaMode: the HUD edge smoothing's choice (off | light FXAA | sharp SMAA)
 #include <cstdint>
 #include <cstddef>
 
@@ -502,8 +503,12 @@ void uiLayerFlatSetDraw(uint64_t frame, float jx, float jy, uint32_t renderW, ui
 enum class UiLayerEdgeSmoothing : uint8_t { kNone = 0, kRaw, kSmoothed, kFault };
 struct UiLayerEdgeSmoothingResult {
     UiLayerEdgeSmoothing outcome = UiLayerEdgeSmoothing::kNone;
+    HudAaMode applied = HudAaMode::kOff;   // the mode the composite actually ran (off when it read the raw layer)
     uint32_t w = 0, h = 0;
 };
+// The flat adapter's ask for the next composite: off, light (FXAA) or sharp (SMAA). The bool form is kept for the callers that only
+// switch it on or off: on asks for SMAA, the mode the key meant before the choice existed.
+void uiLayerFlatSetEdgeSmoothing(HudAaMode mode);
 void uiLayerFlatSetEdgeSmoothing(bool on);
 UiLayerEdgeSmoothingResult uiLayerFlatEdgeSmoothingResult();
 // The flat profile's tonemap admission (2026-10-09): the game's tone pass recognised by its known pair (flat_mono_frame.h
@@ -536,6 +541,14 @@ struct UiGlowStar {
 };
 ID3D11ShaderResourceView* uiLayerGlowFeed(ID3D11DeviceContext* ctx, uint64_t frame, uint32_t slot, const void* hdr, int* verdict,
                                           UiGlowStar* star = nullptr);
+// The HUD merged into the tone's scene input (flat, the HDR route; ui_layer.cpp "THE HUD MERGED INTO THE TONE'S SCENE INPUT"). Called right
+// before the game's issue of an admitted tone draw: true binds S' = S * T + HUD at the tone's HDR slot (*original holds the game's view, one
+// reference) and consumes the admission, so the re-issue does not run; false leaves everything as it was (the reason said once).
+// uiLayerHudMergeEnd, right after the issue: the game's view back and, with `publish`, the 8-bit layer published empty for the frame.
+bool uiLayerHudMergeBegin(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView** original);
+void uiLayerHudMergeEnd(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* original, bool publish);
+uint64_t uiLayerHudMerges();
+uint64_t uiLayerHudMergeDeclines();
 // The headset's first level (vr_star_glow.h; visual.star_glow's H' = H + m * S, and the HUD's bloom below). The flat feed above is gated on the flat profile and eye 0's HUD layer.
 // The HUD's bloom in the headset (docs/cockpit-hud-layer-design-2026-09-27.md, "2026-10-28: the HUD's bloom in the headset"). fix.ui_quality takes the cockpit's holo
 // panels, flight HUD and target sprite out of an eye's H into that eye's HDR HUD layer, and the bloom chain reads H: the HUD lost its halo in the headset exactly as

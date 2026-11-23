@@ -191,9 +191,15 @@ bool sourceGatesHudAaRow(const std::string& menuCpp) {
            mode.find("runtimeFlatProfile() ?") != std::string::npos &&
            mode.find("temporalModeEnabledFor(Config::get().getString(\"fix.temporal_aa\", \"off\"), false)") != std::string::npos &&
            disabled.find("hudAntiAliasingRowDim(hudAntiAliasingUiQualityOn(), hudAntiAliasingModeOn())") != std::string::npos &&
-           hint.find("hudAntiAliasingUiQualityOn() ? \"Needs anti-aliasing: turn it on to use this.\" : \"Needs UI quality: turn it on to use this.\"") != std::string::npos &&
-           refusal.find("hudAntiAliasingUiQualityOn() ? \"HUD Anti-Aliasing is inactive: turn anti-aliasing on first.\"") != std::string::npos &&
-           refusal.find("\"HUD Anti-Aliasing is inactive: turn UI quality on above first.\"") != std::string::npos &&
+           // Since 2026-11-23 the row dims for the anti-aliasing alone (UI quality off still leaves the layer the bars, dust, orbit lines, map icons and
+           // weapons fire), so the hint and the refused step name the anti-aliasing and never UI quality.
+           hint.find("return \"Needs anti-aliasing: turn it on to use this.\";") != std::string::npos && hint.find("UI quality") == std::string::npos &&
+           refusal.find("return \"HUD Anti-Aliasing is inactive: turn anti-aliasing on first.\";") != std::string::npos &&
+           refusal.find("UI quality") == std::string::npos &&
+           // At SS 1.0 and above the HUD is tonemapped with the scene and the smoothing does not reach it: the live row's hint says so while a merge runs.
+           functionBody(menuCpp, "const char* hudAntiAliasingMergedHint() {").find("the HUD itself is not smoothed") != std::string::npos &&
+           menuCpp.find("else if (hi && hudAaRow && runtimeFlatProfile() && flatUiLayerHudToneMergedRecently())") != std::string::npos &&
+           menuCpp.find("snprintf(c.hint, sizeof(c.hint), \"%s\", hudAntiAliasingMergedHint());") != std::string::npos &&
            menuCpp.find("(hudAaRow && hudAntiAliasingRowDisabled())") != std::string::npos &&
            menuCpp.find("snprintf(c.hint, sizeof(c.hint), \"%s\", hudAntiAliasingHint());") != std::string::npos &&
            menuCpp.find("if (isHudAntiAliasingRow(d) && hudAntiAliasingRowDisabled()) {") != std::string::npos &&
@@ -274,7 +280,7 @@ bool schemaHudRowIsOnBothMenus(const std::string& schema) {
     if (quality == std::string::npos || hud == std::string::npos || schema.find("{\"fix\", \"hud_antialiasing\",", hud + 1) != std::string::npos) return false;
     const size_t afterQuality = schema.find("\n    {\"", quality + 1);
     return afterQuality != std::string::npos && afterQuality + 5 == hud && row.find("\"HUD Anti-Aliasing\"") != std::string::npos &&
-           row.find("MenuKind::Choice, \"off\", \"\", \"\", 0, \"on|off\", false, false, 1,") != std::string::npos &&
+           row.find("MenuKind::Choice, \"off\", \"\", \"\", 2, \"off|light=FXAA|sharp=SMAA\", false, false, 1,") != std::string::npos &&
            row.find("MenuTier::Fix, \"performance\",") != std::string::npos && row.find("MenuTier::Fix, \"flat_performance\",") == std::string::npos;
 }
 
@@ -436,10 +442,10 @@ void panelTable(const std::string& root, const std::string& gen) {
                                               "temporalModeEnabledFor(Config::get().getString(\"fix.temporal_aa\", \"off\"), true)");
     const std::string hudModeVrFlatGate = mutated("temporalModeEnabledFor(Config::get().getString(\"fix.temporal_aa\", \"off\"), false)",
                                                   "temporalModeEnabledFor(Config::get().requestedTemporalMode(), true)");
-    const std::string hudHintOneCause = mutated("hudAntiAliasingUiQualityOn() ? \"Needs anti-aliasing: turn it on to use this.\" : \"Needs UI quality: turn it on to use this.\"",
-                                                "\"Needs UI quality: turn it on to use this.\"");
-    const std::string hudRefusalOneCause = mutated("hudAntiAliasingUiQualityOn() ? \"HUD Anti-Aliasing is inactive: turn anti-aliasing on first.\"",
-                                                   "true ? \"HUD Anti-Aliasing is inactive: turn anti-aliasing on first.\"");
+    const std::string hudHintOneCause = mutated("return \"Needs anti-aliasing: turn it on to use this.\";", "return \"Needs UI quality: turn it on to use this.\";");
+    const std::string hudRefusalOneCause = mutated("return \"HUD Anti-Aliasing is inactive: turn anti-aliasing on first.\";",
+                                                   "return \"HUD Anti-Aliasing is inactive: turn UI quality on above first.\";");
+    const std::string hudMergedHintGone = mutated("else if (hi && hudAaRow && runtimeFlatProfile() && flatUiLayerHudToneMergedRecently())", "else if (false)");
     check(!hudNoDraw.empty() && !sourceGatesHudAaRow(hudNoDraw), "control: a HUD Anti-Aliasing row that never dims when drawn is caught");
     check(!hudNoStep.empty() && !sourceGatesHudAaRow(hudNoStep), "control: a dimmed HUD Anti-Aliasing row that still takes a step is caught");
     check(!hudInverted.empty() && !sourceGatesHudAaRow(hudInverted), "control: a row that dims with UI quality on is caught");
@@ -449,8 +455,9 @@ void panelTable(const std::string& root, const std::string& gen) {
           "control: a row that reads the mode through the flat gate's fix.temporal_aa (it reads off there) is caught");
     check(!hudModeVrFlatGate.empty() && !sourceGatesHudAaRow(hudModeVrFlatGate),
           "control: a VR row that reads the flat mode (VR's own is fix.temporal_aa, as uiLayerConfigure reads it) is caught");
-    check(!hudHintOneCause.empty() && !sourceGatesHudAaRow(hudHintOneCause), "control: a hint that always blames UI quality is caught");
+    check(!hudHintOneCause.empty() && !sourceGatesHudAaRow(hudHintOneCause), "control: a hint that blames UI quality is caught");
     check(!hudRefusalOneCause.empty() && !sourceGatesHudAaRow(hudRefusalOneCause), "control: a refused step that does not name the anti-aliasing is caught");
+    check(!hudMergedHintGone.empty() && !sourceGatesHudAaRow(hudMergedHintGone), "control: a row that never says the merged HUD is not smoothed is caught");
 
     // THE FLAT-ONLY PLACEMENT (2026-10-24). The flat Performance tab ignores the page token; VR's Performance page is exactly the rows whose token is `menu performance`.
     check(sourceFlatTabIgnoresPageToken(menuCpp), "menu.cpp builds the flat Performance tab from flatPageHasRow alone, whatever page a row's token names");
@@ -633,7 +640,7 @@ void panelTable(const std::string& root, const std::string& gen) {
     }
     // The HUD Anti-Aliasing row as generated (2026-11-03): on the page `performance`, which VR's Performance page is built from, and the flat Performance tab lists it
     // (kFlatPageRows; the tab ignores the page token), so the one key has a row on both menus (VR's smoothing is ui_layer.cpp's uiLayerConfigure; flat's is the adapter's).
-    check(schemaHudRowIsOnBothMenus(schema), "the generated HUD Anti-Aliasing row is a Fix-tier on/off choice, shipped off, live, on the page 'performance' (VR's Performance page), directly under UI quality");
+    check(schemaHudRowIsOnBothMenus(schema), "the generated HUD Anti-Aliasing row is a Fix-tier off | light (FXAA) | sharp (SMAA) choice, shipped off, live, on the page 'performance' (VR's Performance page), directly under UI quality");
     check(flatPageHasRow("fix", "hud_antialiasing") && schemaRow(schema, "fix", "hud_antialiasing").find("MenuTier::Fix, \"performance\",") != std::string::npos,
           "the flat Performance tab has the HUD Anti-Aliasing row and so has VR's Performance page (page 'performance')");
     {
@@ -688,7 +695,8 @@ void sharpenRowDim() {
 // The HUD Anti-Aliasing row (2026-10-24): dimmed unless both fix.ui_quality is on and the flat anti-aliasing is on (the layer it smooths is live only then).
 int hudAaTruthTableMisses(bool (*dim)(bool, bool)) {
     struct Case { bool uiQualityOn, antiAliasingOn, want; };
-    const Case cases[] = {{false, false, true}, {false, true, true}, {true, false, true}, {true, true, false}};
+    // 2026-11-23: UI quality no longer gates the row (the layer runs for the bars, dust, lines, maps and weapons with it off); the anti-aliasing does.
+    const Case cases[] = {{false, false, true}, {false, true, false}, {true, false, true}, {true, true, false}};
     int wrong = 0;
     for (const Case& c : cases) wrong += dim(c.uiQualityOn, c.antiAliasingOn) != c.want;
     return wrong;
@@ -696,11 +704,10 @@ int hudAaTruthTableMisses(bool (*dim)(bool, bool)) {
 
 void hudAntiAliasingRowDimTable() {
     check(hudAaTruthTableMisses(edvr::hudAntiAliasingRowDim) == 0,
-          "the HUD Anti-Aliasing row dims with UI quality off or the anti-aliasing off, and with both on does not");
+          "the HUD Anti-Aliasing row dims with the anti-aliasing off (whatever UI quality says), and with it on does not");
     check(hudAaTruthTableMisses([](bool, bool) { return false; }) > 0, "control: a row that never dims is caught");
     check(hudAaTruthTableMisses([](bool, bool) { return true; }) > 0, "control: a row that always dims is caught");
     check(hudAaTruthTableMisses([](bool uiQualityOn, bool) { return !uiQualityOn; }) > 0, "control: a row that ignores the anti-aliasing being off is caught");
-    check(hudAaTruthTableMisses([](bool, bool antiAliasingOn) { return !antiAliasingOn; }) > 0, "control: a row that ignores UI quality being off is caught");
     check(hudAaTruthTableMisses([](bool uiQualityOn, bool antiAliasingOn) { return uiQualityOn && antiAliasingOn; }) > 0, "control: a row that dims with both on is caught");
 }
 

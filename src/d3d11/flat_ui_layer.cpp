@@ -11,6 +11,7 @@
 #include "supercruise_bars.h"     // the bars' strip pass, bracketed in the flat issue path (flatUiLayerBarsBegin) and its 30 s line
 #include "tonemap_admit.h"        // read-only structural description of the actual game's tone-shaped draw
 #include "ui_layer.h"
+#include "ui_layer_hud_aa.h"     // hudAaParse/hudAaWord: the HUD Anti-Aliasing row's off | light | sharp
 #include "vscreen.h"            // vScreenPSSetShaderResourcesRaw: the bloom feed binds past the shadow
 
 #include "../common/config.h"
@@ -21,6 +22,7 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -44,13 +46,14 @@ struct Window {
     uint64_t jitterPhase = 0, jitterZero = 0;
     uint64_t writeBacks = 0;
     uint64_t dimIssues = 0;   // the panel backing's darken-only issues (flatUiLayerDimBegin)
-    uint64_t toneCandidates = 0, toneProven = 0, toneAdmitted = 0, toneReissued = 0, toneDeclined = 0, toneByShape = 0;
+    uint64_t toneCandidates = 0, toneProven = 0, toneAdmitted = 0, toneReissued = 0, toneMerged = 0, toneDeclined = 0, toneByShape = 0;
     uint64_t copies = 0, doorsArmed = 0, doorUntreated = 0, doorSize = 0;
     uint64_t composites = 0, compositeNone = 0, bindFailed = 0;
     // The HUD layer's edge smoothing (fix.hud_antialiasing, ui_layer_smaa.h): the layer composites by what they read -- the SMAA output, the raw
     // layer because the key was off, the raw layer because the passes could not be had -- the key as the last composite read it, and the layer's size then.
     uint64_t edgeSmoothed = 0, edgeRawKeyOff = 0, edgeRawFault = 0;
     bool edgeKeyOn = false;
+    HudAaMode edgeKeyMode = HudAaMode::kOff;   // off | light | sharp, as the last composite read it
     uint32_t edgeW = 0, edgeH = 0;
     uint32_t inW = 0, inH = 0, outW = 0, outH = 0;  // the last copy's picture and the display
     double otherX = 0.0, otherY = 0.0;              // the last other-shift draw's measured shift, render pixels
@@ -757,6 +760,30 @@ void flatUiGlowEnd(ID3D11DeviceContext* ctx, uint32_t slot, ID3D11ShaderResource
     original->Release();
 }
 
+// When the HUD was last merged into the tone pass (GetTickCount64 ms): the F8 menu's HUD Anti-Aliasing hint reads it from its own thread.
+std::atomic<uint64_t> g_lastToneMergeMs{0};
+
+bool flatUiLayerMergeBegin(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView** original) {
+    if (!ctx || !original || !flatUiLayerOn()) return false;
+    FlatComputeInternalScope internal;
+    const bool merged = uiLayerHudMergeBegin(ctx, original);
+    if (merged) {
+        ++g_w.toneMerged;
+        g_lastToneMergeMs.store(GetTickCount64(), std::memory_order_relaxed);
+    }
+    return merged;
+}
+
+bool flatUiLayerHudToneMergedRecently() {
+    const uint64_t last = g_lastToneMergeMs.load(std::memory_order_relaxed);
+    return last != 0 && GetTickCount64() - last < 1000;
+}
+
+void flatUiLayerMergeEnd(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* original, bool publish) {
+    FlatComputeInternalScope internal;
+    uiLayerHudMergeEnd(ctx, original, publish);
+}
+
 void flatUiLayerAtCopy(ID3D11DeviceContext* ctx, uint64_t frame, bool treated, uint32_t outW, uint32_t outH,
                        ID3D11ShaderResourceView** original, bool* replaced, bool ownedFrame) {
     if (!ctx || !original || !replaced || !flatUiLayerOn()) return;
@@ -788,12 +815,23 @@ void flatUiLayerAtCopy(ID3D11DeviceContext* ctx, uint64_t frame, bool treated, u
     // The composite: this frame's HUD over the picture the copy reads (the resolve's, or the game's own after a refusal).
     const uint32_t region[4] = {0, 0, td.Width, td.Height};
     const float uv[4] = {0.0f, 0.0f, 1.0f, 1.0f};
-    // The HUD layer's edge smoothing (fix.hud_antialiasing, off by default; the F8 panel's HUD Anti-Aliasing row): the key is read here, a frame at a time, so a
-    // change is live; the layer decides nothing, it does what the ask says and reports what it did. A key the flat allow-list does not carry reads off, and the
-    // 30 s line shows it.
-    const bool smooth = Config::get().getBool("fix.hud_antialiasing", false);
-    g_w.edgeKeyOn = smooth;
+    // The HUD layer's edge smoothing (fix.hud_antialiasing, off | light FXAA | sharp SMAA, off by default; the F8 panel's HUD Anti-Aliasing row): the key is
+    // read here, a frame at a time, so a change is live; the layer decides nothing, it does what the ask says and reports what it did. A key the flat
+    // allow-list does not carry reads off, and the 30 s line shows it. UI quality is not a condition: with it off the layer still carries the bars, dust,
+    // orbit lines, map icons and weapons fire, and the smoothing acts on those (the row's dim rule is only about the anti-aliasing).
+    const HudAaMode smooth = hudAaParse(Config::get().getString("fix.hud_antialiasing", "off").c_str());
+    g_w.edgeKeyOn = smooth != HudAaMode::kOff;
+    g_w.edgeKeyMode = smooth;
     uiLayerFlatSetEdgeSmoothing(smooth);
+    // On the HDR route (SS >= 1.0) the HUD goes into the tone pass's scene input (flatUiLayerMergeBegin) and never reaches this layer, so the
+    // smoothing acts on what is still here: the bars, dust, orbit lines and map icons (the weapons fire is merged with the HUD since 2026-11-23,
+    // unless its layer also holds the gunsight mark or the legacy glass). Said once; the F8 row's hint says it too.
+    static bool mergedAaNoted = false;
+    if (!mergedAaNoted && smooth != HudAaMode::kOff && flatUiLayerHudToneMergedRecently()) {
+        mergedAaNoted = true;
+        Log::get().note("flat ui layer aa: HUD Anti-Aliasing is %s, but at SS 1.0 and above the HUD is tonemapped with the scene and is not "
+                        "smoothed; it smooths the bars, dust, orbit lines and map icons only (said once).", hudAaWord(smooth));
+    }
     // When modifying `picture` in place via CS UAV, clear PS t0 first so D3D11 never sees the same
     // resource bound as both PS SRV and CS UAV simultaneously.
     if (ownedFrame) {
@@ -937,7 +975,7 @@ void flatUiLayerReport(uint64_t windowSeconds) {
     Log::get().note(
         "flat ui layer: window=%llus state=%s copies=%llu door-armed=%llu door-refused-untreated=%llu "
         "door-refused-size=%llu (last copy read %ux%u, display %ux%u) tone-candidates=%llu tone-proven=%llu "
-        "tone-admitted=%llu tone-reissued=%llu "
+        "tone-admitted=%llu tone-reissued=%llu tone-merged=%llu "
         "tone-declined=%llu composites=%llu composite-none=%llu bind-failed=%llu write-backs=%llu darken-only=%llu jitter-phase=%llu "
         "jitter-zero=%llu tone-by-shape=%llu",
         static_cast<unsigned long long>(windowSeconds), flatUiLayerState(), static_cast<unsigned long long>(w.copies),
@@ -945,7 +983,7 @@ void flatUiLayerReport(uint64_t windowSeconds) {
         static_cast<unsigned long long>(w.doorSize), w.inW, w.inH, w.outW, w.outH,
         static_cast<unsigned long long>(w.toneCandidates), static_cast<unsigned long long>(w.toneProven),
         static_cast<unsigned long long>(w.toneAdmitted), static_cast<unsigned long long>(w.toneReissued),
-        static_cast<unsigned long long>(w.toneDeclined), static_cast<unsigned long long>(w.composites),
+        static_cast<unsigned long long>(w.toneMerged), static_cast<unsigned long long>(w.toneDeclined), static_cast<unsigned long long>(w.composites),
         static_cast<unsigned long long>(w.compositeNone), static_cast<unsigned long long>(w.bindFailed),
         static_cast<unsigned long long>(w.writeBacks), static_cast<unsigned long long>(w.dimIssues), static_cast<unsigned long long>(w.jitterPhase),
         static_cast<unsigned long long>(w.jitterZero), static_cast<unsigned long long>(w.toneByShape));
@@ -953,7 +991,7 @@ void flatUiLayerReport(uint64_t windowSeconds) {
     // output, those that read the raw layer because the key was off, those that fell back to it because the passes could not be had, the key as the last
     // composite read it and the layer's size. A window with composites and all three counts zero says the composite never reached the smoothing.
     if (w.composites || w.edgeSmoothed || w.edgeRawKeyOff || w.edgeRawFault)
-        Log::get().note("flat ui layer smaa: key=%s smoothed=%llu raw-key-off=%llu raw-fault=%llu size=%ux%u", w.edgeKeyOn ? "on" : "off",
+        Log::get().note("flat ui layer aa: key=%s smoothed=%llu raw-key-off=%llu raw-fault=%llu size=%ux%u", hudAaWord(w.edgeKeyMode),
                         static_cast<unsigned long long>(w.edgeSmoothed), static_cast<unsigned long long>(w.edgeRawKeyOff),
                         static_cast<unsigned long long>(w.edgeRawFault), w.edgeW, w.edgeH);
     const UiLayerFamily families[4] = {UiLayerFamily::kHolo, UiLayerFamily::kFlightHud, UiLayerFamily::kSprite,

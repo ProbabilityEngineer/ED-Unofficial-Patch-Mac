@@ -343,6 +343,10 @@ static std::vector<Variant> fixedVariants(const std::string& core) {
     variants.insert(variants.end(), galaxyMap.begin(), galaxyMap.end());
     const auto cockpitGlass = cockpitGlassVariants();
     variants.insert(variants.end(), cockpitGlass.begin(), cockpitGlass.end());
+    const auto hudAaFxaa = hudAaFxaaVariants();
+    variants.insert(variants.end(), hudAaFxaa.begin(), hudAaFxaa.end());
+    const auto hudMerge = hudMergeVariants();
+    variants.insert(variants.end(), hudMerge.begin(), hudMerge.end());
     return variants;
 }
 
@@ -611,8 +615,8 @@ static void selfTest() {
     coreLegacy.insert(coreLegacy.end(), originalCore.begin(), originalCore.end());
     coreLegacy.insert(coreLegacy.end(), originalExtra.begin(), originalExtra.end());
     auto coreFixed = fixedVariants(extractCore(edvr::kTemporalCsHlsl));
-    check(originalCore.size() == 28 && originalExtra.size() == 12 && coreFixed.size() == 102 && coreLegacy.size() + 55 == coreFixed.size(),
-          "all original fixed shader contracts, three bounded diagnostics, six flat foreground shaders, the supercruise bars' geometry shader, the foreground map's four sibling-pass compute shaders (donor, fit and the shadow's two), the sky ring's compute shader, the UI layer's in-place composite, the explosion billboards' five facing transcriptions the sharp weapons' two source-pass shaders, the shield ripple's door pass, the HUD bloom feed pass, the star light pass, the visor's axis-centred vertex shader, the desktop window's two draw shaders, the scope lens's three compute passes, the SRV turret HUD's eleven geometry shaders, the VR maps' twelve (five transcribed vertex shaders, the probe's vertex and pixel shader, the sprites' depth issue's two pixel shaders, the System Map's marker vertex shader and the cut-out's vertex and pixel shader) and the legacy cockpit glass's three pixel shaders (intact, ice overlay, condensation overlay) are registered");
+    check(originalCore.size() == 28 && originalExtra.size() == 12 && coreFixed.size() == 104 && coreLegacy.size() + 57 == coreFixed.size(),
+          "all original fixed shader contracts, three bounded diagnostics, six flat foreground shaders, the supercruise bars' geometry shader, the foreground map's four sibling-pass compute shaders (donor, fit and the shadow's two), the sky ring's compute shader, the UI layer's in-place composite, the explosion billboards' five facing transcriptions the sharp weapons' two source-pass shaders, the shield ripple's door pass, the HUD bloom feed pass, the star light pass, the visor's axis-centred vertex shader, the desktop window's two draw shaders, the scope lens's three compute passes, the SRV turret HUD's eleven geometry shaders, the VR maps' twelve (five transcribed vertex shaders, the probe's vertex and pixel shader, the sprites' depth issue's two pixel shaders, the System Map's marker vertex shader and the cut-out's vertex and pixel shader) the legacy cockpit glass's three pixel shaders (intact, ice overlay, condensation overlay), the HUD layer's FXAA and the HUD merge pass are registered");
     for(size_t i=0;i<coreFixed.size();++i)for(size_t j=0;j<i;++j)
         check(std::strcmp(coreFixed[i].symbol,coreFixed[j].symbol)!=0,"generated shader symbols do not collide");
     using ReflectFn = HRESULT(WINAPI*)(LPCVOID, SIZE_T, REFIID, void**);
@@ -993,6 +997,34 @@ static void selfTest() {
             ok = ok && SUCCEEDED(reflection->GetResourceBindingDescByName("HudLayer", &layer)) && layer.Type == D3D_SIT_TEXTURE && layer.BindPoint == 0 &&
                  SUCCEEDED(reflection->GetResourceBindingDescByName("Scene", &scene)) && scene.Type == D3D_SIT_TEXTURE && scene.BindPoint == 1;
             check(ok, "the HUD bloom feed pass: the pixel shader reads the HUD layer at t0 and the scene at t1, with no constant buffer or sampler");
+        }
+    }
+
+    // The HUD merge pass (src/d3d11/fixed_shader_source.h kUiHudMergePsHlsl; 2026-11-22): new, held to its own contract like the bloom feed it
+    // follows -- the symbol, source name, entry, profile and flags, the text it compiles, and the pixel stage ui_layer.cpp binds it with: the HUD
+    // layer at t0, the scene at t1 and (since 2026-11-23) the weapons fire's layer at t2, no constant buffer and no sampler. Registered last
+    // (hudMergeVariants), so it is the final variant.
+    {
+        auto& shader = coreFixed.back();
+        check(!std::strcmp(shader.symbol, "kUiHudMergePsBytecode") && !std::strcmp(shader.sourceName, "ui_hud_merge_ps") &&
+              !std::strcmp(shader.entry, "main") && !std::strcmp(shader.profile, "ps_5_0") && shader.alternate == edvr::kUiHudMergePsHlsl &&
+              shader.macros == nullptr && !shader.flags1 && !shader.flags2,
+              "the HUD merge pass has its distinct symbol and exact source/stage contract");
+        check(compile(compiler.fn, shader.alternate, shader, true) && shader.bytes.size() > 4 && !std::memcmp(shader.bytes.data(), "DXBC", 4),
+              "the HUD merge pass compiles to fixed DXBC");
+        if (reflect && !shader.bytes.empty()) {
+            ComPtr<ID3D11ShaderReflection> reflection;
+            D3D11_SHADER_DESC desc{};
+            const HRESULT hr = reflect(shader.bytes.data(), shader.bytes.size(), __uuidof(ID3D11ShaderReflection),
+                                       reinterpret_cast<void**>(reflection.GetAddressOf()));
+            bool ok = SUCCEEDED(hr) && reflection && SUCCEEDED(reflection->GetDesc(&desc)) &&
+                      D3D11_SHVER_GET_TYPE(desc.Version) == D3D11_SHVER_PIXEL_SHADER && D3D11_SHVER_GET_MAJOR(desc.Version) == 5 &&
+                      desc.ConstantBuffers == 0 && desc.BoundResources == 3;
+            D3D11_SHADER_INPUT_BIND_DESC layer{}, scene{}, weapons{};
+            ok = ok && SUCCEEDED(reflection->GetResourceBindingDescByName("HudLayer", &layer)) && layer.Type == D3D_SIT_TEXTURE && layer.BindPoint == 0 &&
+                 SUCCEEDED(reflection->GetResourceBindingDescByName("Scene", &scene)) && scene.Type == D3D_SIT_TEXTURE && scene.BindPoint == 1 &&
+                 SUCCEEDED(reflection->GetResourceBindingDescByName("Weapons", &weapons)) && weapons.Type == D3D_SIT_TEXTURE && weapons.BindPoint == 2;
+            check(ok, "the HUD merge pass: the pixel shader reads the HUD layer at t0, the scene at t1 and the weapons layer at t2, with no constant buffer or sampler");
         }
     }
 
