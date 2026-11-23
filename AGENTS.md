@@ -16,7 +16,7 @@ checks from game results.
 
 | Repository | Pushes | Never |
 |---|---|---|
-| `ProbabilityEngineer/ED-Unofficial-Patch-Mac` (this one, formerly `ed-metalfx`; local `~/git/ports/ED-Unofficial-Patch-Mac`) | `origin`, when asked | — |
+| `ProbabilityEngineer/ED-Unofficial-Patch-Mac` (this one, formerly `ed-metalfx`; local `~/git/ports/ED-UP-Mac`) | `origin`, when asked | — |
 | `characterecho-sean/ed-unofficial-patch` (formerly `edvr-unofficial-patch`) | — | push, PR, issue, comment, by any route (URL, alias, API). There is no upstream remote; keep it that way. Read-only refs under `refs/up/` are local. |
 | `ProbabilityEngineer/dxmt` (`~/git/forks/dxmt`) | `origin`, when asked | `3Shain/dxmt`: no push, PR, issue or comment (no-AI policy). Its `upstream` push URL is `/dev/null`. |
 
