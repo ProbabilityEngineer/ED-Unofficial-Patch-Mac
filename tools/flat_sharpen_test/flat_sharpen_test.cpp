@@ -196,8 +196,8 @@ bool sourceGatesHudAaRow(const std::string& menuCpp) {
            hint.find("return \"Needs anti-aliasing: turn it on to use this.\";") != std::string::npos && hint.find("UI quality") == std::string::npos &&
            refusal.find("return \"HUD Anti-Aliasing is inactive: turn anti-aliasing on first.\";") != std::string::npos &&
            refusal.find("UI quality") == std::string::npos &&
-           // At SS 1.0 and above the HUD is tonemapped with the scene and the smoothing does not reach it: the live row's hint says so while a merge runs.
-           functionBody(menuCpp, "const char* hudAntiAliasingMergedHint() {").find("the HUD itself is not smoothed") != std::string::npos &&
+           // At SS 1.0 and above the cockpit panels are tonemapped with the scene and the smoothing does not reach them: the live row's hint says so while a merge runs.
+           functionBody(menuCpp, "const char* hudAntiAliasingMergedHint() {").find("cockpit panels are not smoothed") != std::string::npos &&
            menuCpp.find("else if (hi && hudAaRow && runtimeFlatProfile() && flatUiLayerHudToneMergedRecently())") != std::string::npos &&
            menuCpp.find("snprintf(c.hint, sizeof(c.hint), \"%s\", hudAntiAliasingMergedHint());") != std::string::npos &&
            menuCpp.find("(hudAaRow && hudAntiAliasingRowDisabled())") != std::string::npos &&

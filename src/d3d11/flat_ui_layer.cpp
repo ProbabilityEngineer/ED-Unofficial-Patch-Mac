@@ -829,8 +829,9 @@ void flatUiLayerAtCopy(ID3D11DeviceContext* ctx, uint64_t frame, bool treated, u
     static bool mergedAaNoted = false;
     if (!mergedAaNoted && smooth != HudAaMode::kOff && flatUiLayerHudToneMergedRecently()) {
         mergedAaNoted = true;
-        Log::get().note("flat ui layer aa: HUD Anti-Aliasing is %s, but at SS 1.0 and above the HUD is tonemapped with the scene and is not "
-                        "smoothed; it smooths the bars, dust, orbit lines and map icons only (said once).", hudAaWord(smooth));
+        Log::get().note("flat ui layer aa: HUD Anti-Aliasing is %s, but at SS 1.0 and above the cockpit panels (side panels, flight HUD, target, "
+                        "radar) are tonemapped with the scene and are not smoothed; it smooths the bars, dust, orbit lines and map icons only (said once).",
+                        hudAaWord(smooth));
     }
     // When modifying `picture` in place via CS UAV, clear PS t0 first so D3D11 never sees the same
     // resource bound as both PS SRV and CS UAV simultaneously.
