@@ -578,6 +578,9 @@ void prep(uint3 id:SV_DispatchThreadID) {
         const float sceneLight=dot(max(scene,0),luma);
         if((panelLight>0 && panelLight>=.5*sceneLight) || panel.a<=.25) {
             motion=0; reject=0; expected=depth; foregroundActualMotion=false;
+            // For the refusal view only: class none with reason bits 7 (never written otherwise: the reason is a refused first-person pixel's),
+            // painted violet. Not refused, so the census counts nothing for it.
+            cls=kClassNone|0x70u;
         }
     }
     if(!foregroundActualMotion) { if(reject!=0)motion=0; }
@@ -693,10 +696,12 @@ void taa(uint3 id:SV_DispatchThreadID) {
 // picture is H, which the game's tone pass reads next, so each colour is scaled by the pixel's own level (twice its luma, never below
 // .04): the hue survives the tone pass, the absolute value does not. green 1 joined, red 2 masked, blue 3 not a rig record, yellow 4
 // stale slot the depth check kept, pink 4 stale slot it refused (bit 7: the pixel shows the raw frame), magenta 5 corrupt, orange 6
-// stale stamp, cyan 12 first-person, white any other refusal, and a pixel with no engine slot is dimmed to a quarter.
+// stale stamp, cyan 12 first-person, white any other refusal, violet a pixel fix.steady_panels gave zero motion (class 0, reason bits 7),
+// and a pixel with no engine slot is dimmed to a quarter.
 float3 refusalPaint(float3 c,uint v) {
     const uint kind=v&0x0Fu;   // the class: bits 4-6 are a first-person pixel's reason and do not change its colour
     const float y=max(dot(c,float3(.2126,.7152,.0722)),.02)*2;
+    if(kind==kClassNone && (v&0x70u)==0x70u)return float3(.6*y,0,y);   // fix.steady_panels: a pixel the panels own (zero motion), violet
     return kind==kClassJoined?float3(0,y,0):kind==kClassSkinned?float3(0,y,.5*y):kind==kClassMasked?float3(y,0,0)
          :kind==kClassNotRig?float3(0,.3*y,y):kind==kClassStale?((v&0x80u)!=0?float3(y,.4*y,.7*y):float3(y,y,0))
          :kind==kClassCorrupt?float3(y,0,y):kind==kClassStaleStamp?float3(y,.5*y,0)
