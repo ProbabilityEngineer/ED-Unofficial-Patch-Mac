@@ -802,7 +802,7 @@ void flatUiLayerAtCopy(ID3D11DeviceContext* ctx, uint64_t frame, bool treated, u
     g_w.inH = td.Height;
     g_w.outW = outW;
     g_w.outH = outH;
-    // The door: the next frame's HUD is taken only behind a frame EDVR resolved to the display's size.
+    // The door: the next frame's HUD is taken only behind a frame EDVR resolved to the display's size or larger (SS above 1.0: the render's).
     if (flatUiLayerDoorArms(treated, td.Width, td.Height, outW, outH)) {
         uiLayerNoteTemporal(frame, 0, picture.Get());
         uiLayerDoorSeen(frame, 0, picture.Get());

@@ -755,11 +755,15 @@ inline bool flatUiToneConsumed(const FlatUiToneProof& p, uint64_t frame, const v
         if (p.consumed[i] == target) return true;
     return false;
 }
-// The door arms the next frame when EDVR resolved this one and the picture the game's output copy reads is the
-// display's own size: the layer is then made at D x target. A frame the resolve refused, or a resolve handed on at
-// another size (an evaluation size below the display's), arms nothing, and the next frame's HUD stays in the game's frame.
+// The door arms the next frame when EDVR resolved this one and the picture the game's output copy reads is at least the
+// display's size on both axes: the layer is then made at that picture's size x target (uiLayerDoorSeen). The display's size
+// below SS 1.0 and at 1.0; ABOVE 1.0 (2026-11-23) the picture is the render's, which the game's copy scales down to the display,
+// and the layer is made at the render's size, so the panels, the supercruise bars and the dust are taken there too (before,
+// every copy was refused as door-refused-size and the whole layer stood down at SS 1.25: the owner saw the bars break up).
+// A frame the resolve refused, or a picture smaller than the display (an evaluation size below the display's), arms nothing,
+// and the next frame's HUD stays in the game's frame.
 inline bool flatUiLayerDoorArms(bool treated, uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH) {
-    return treated && outW && outH && inW == outW && inH == outH;
+    return treated && outW && outH && inW >= outW && inH >= outH;
 }
 
 // THE HUD'S BLOOM (ui_layer.h UiGlowFeed). The HUD the layer takes is out of H, which the game's bloom chain reads, so it has no halo. The

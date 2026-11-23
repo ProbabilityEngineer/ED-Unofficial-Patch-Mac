@@ -2089,6 +2089,8 @@ void testFlatLayerRules() {
     check(flatUiLayerDoorArms(true, 3840, 2160, 3840, 2160), "flat layer: a resolved D-sized picture arms the next frame");
     check(!flatUiLayerDoorArms(false, 3840, 2160, 3840, 2160), "flat layer: a refused frame arms nothing");
     check(!flatUiLayerDoorArms(true, 1920, 1080, 3840, 2160), "flat layer: a picture at the render size (an E below D) arms nothing");
+    check(flatUiLayerDoorArms(true, 3780, 2455, 3024, 1964), "flat layer: a picture above the display's size (SS 1.25, the render's) arms the next frame");
+    check(!flatUiLayerDoorArms(true, 3780, 1900, 3024, 1964), "flat layer: a picture smaller than the display on one axis arms nothing");
     check(!flatUiLayerDoorArms(true, 0, 0, 0, 0), "flat layer: no display size arms nothing");
     // The HUD's bloom feed (2026-10-21): H' goes to the draw that writes a half-size target of H, the bloom chain's first level.
     check(flatUiGlowFeedShape(1248, 780, 624, 390), "glow feed: the flown 624x390 level of a 1248x780 H is the chain's first");
