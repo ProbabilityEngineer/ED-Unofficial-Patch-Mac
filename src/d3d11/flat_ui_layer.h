@@ -163,6 +163,9 @@ void flatUiGlowEnd(ID3D11DeviceContext* ctx, uint32_t slot, ID3D11ShaderResource
 // draw's issue. True: S' = S * T + HUD is bound for the game's issue, *original holds the game's view for flatUiLayerMergeEnd, and the re-issue
 // is not to run for this draw. False: the tone and the re-issue go as before.
 bool flatUiLayerMergeBegin(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView** original);
+// Whether the HUD was merged into the tone pass within the last second (SS >= 1.0 on the HDR route): HUD Anti-Aliasing does not reach the
+// HUD then, only the bars, dust, orbit lines, map icons and weapons fire. Any thread (the F8 menu's hint).
+bool flatUiLayerHudToneMergedRecently();
 void flatUiLayerMergeEnd(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* original, bool publish);
 
 // ResizeBuffers on the same device: every per-size reference the layer holds, released (shaders and contexts kept).

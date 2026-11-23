@@ -22,6 +22,7 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -759,12 +760,23 @@ void flatUiGlowEnd(ID3D11DeviceContext* ctx, uint32_t slot, ID3D11ShaderResource
     original->Release();
 }
 
+// When the HUD was last merged into the tone pass (GetTickCount64 ms): the F8 menu's HUD Anti-Aliasing hint reads it from its own thread.
+std::atomic<uint64_t> g_lastToneMergeMs{0};
+
 bool flatUiLayerMergeBegin(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView** original) {
     if (!ctx || !original || !flatUiLayerOn()) return false;
     FlatComputeInternalScope internal;
     const bool merged = uiLayerHudMergeBegin(ctx, original);
-    if (merged) ++g_w.toneMerged;
+    if (merged) {
+        ++g_w.toneMerged;
+        g_lastToneMergeMs.store(GetTickCount64(), std::memory_order_relaxed);
+    }
     return merged;
+}
+
+bool flatUiLayerHudToneMergedRecently() {
+    const uint64_t last = g_lastToneMergeMs.load(std::memory_order_relaxed);
+    return last != 0 && GetTickCount64() - last < 1000;
 }
 
 void flatUiLayerMergeEnd(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* original, bool publish) {
@@ -811,6 +823,14 @@ void flatUiLayerAtCopy(ID3D11DeviceContext* ctx, uint64_t frame, bool treated, u
     g_w.edgeKeyOn = smooth != HudAaMode::kOff;
     g_w.edgeKeyMode = smooth;
     uiLayerFlatSetEdgeSmoothing(smooth);
+    // On the HDR route (SS >= 1.0) the HUD goes into the tone pass's scene input (flatUiLayerMergeBegin) and never reaches this layer, so the
+    // smoothing acts on what is still here: the bars, dust, orbit lines, map icons and weapons fire. Said once; the F8 row's hint says it too.
+    static bool mergedAaNoted = false;
+    if (!mergedAaNoted && smooth != HudAaMode::kOff && flatUiLayerHudToneMergedRecently()) {
+        mergedAaNoted = true;
+        Log::get().note("flat ui layer aa: HUD Anti-Aliasing is %s, but at SS 1.0 and above the HUD is tonemapped with the scene and is not "
+                        "smoothed; it smooths the bars, dust, orbit lines, map icons and weapons fire only (said once).", hudAaWord(smooth));
+    }
     // When modifying `picture` in place via CS UAV, clear PS t0 first so D3D11 never sees the same
     // resource bound as both PS SRV and CS UAV simultaneously.
     if (ownedFrame) {

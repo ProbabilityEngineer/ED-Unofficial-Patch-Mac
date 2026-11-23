@@ -70,6 +70,7 @@
 #include "temporal_pass.h"
 #include "terrain_checkerboard.h"   // Elite's terrain checkerboard rendering in VR: the worker's tick and the word it publishes
 #include "ui_layer_math.h"  // uiQualityParse: the HUD Anti-Aliasing row dims while fix.ui_quality is off (or the anti-aliasing is), UI quality read as the layer reads it
+#include "flat_ui_layer.h"   // flatUiLayerHudToneMergedRecently: the HUD Anti-Aliasing row's hint at SS >= 1.0
 #include "ui_layer_hud_aa.h"  // hudAaParse/hudAaWord: the HUD Anti-Aliasing row shows and steps off | light | sharp
 #include "vscreen.h"        // vScreenRenderBelowEye: Elite's Supersampling below 1, from the sizes
 #include "concourse_pane.h"     // concoursePaneTakeToast: the concourse window mode's toast (TEMPORARY, docs\concourse-cull-2026-11-05.md)
@@ -540,6 +541,12 @@ bool hudAntiAliasingRowDisabled() {
 
 const char* hudAntiAliasingHint() {
     return "Needs anti-aliasing: turn it on to use this.";
+}
+
+// The row is live at SS 1.0 and above, but there the HUD is tonemapped with the scene (flatUiLayerMergeBegin) before the layer is smoothed, so the
+// smoothing reaches only the bars, dust, orbit lines, map icons and weapons fire. Said on the row's hint line while it is highlighted, nowhere else.
+const char* hudAntiAliasingMergedHint() {
+    return "At SS 1.0+ this smooths bars, dust and icons; the HUD itself is not smoothed.";
 }
 
 const char* hudAntiAliasingRefusal() {
@@ -3093,6 +3100,8 @@ void buildContent(MenuContent& c) {
                                   : kMenuRow;
             if (hi && dim && hudAaRow)
                 snprintf(c.hint, sizeof(c.hint), "%s", hudAntiAliasingHint());
+            else if (hi && hudAaRow && runtimeFlatProfile() && flatUiLayerHudToneMergedRecently())
+                snprintf(c.hint, sizeof(c.hint), "%s", hudAntiAliasingMergedHint());
             else if (hi && dim && glassDirtRow)
                 snprintf(c.hint, sizeof(c.hint), "%s", cockpitGlassDirtHint());
             else if (hi && dim && (windowDistanceRow || doorsRow))
