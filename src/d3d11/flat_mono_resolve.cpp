@@ -1645,13 +1645,10 @@ bool flatMonoResolve(ID3D11Device* device,ID3D11DeviceContext* context,const Fla
         constants.vehicleQuat[2]=f.vehicleQuat[1][0];constants.vehicleQuat[3]=f.vehicleQuat[1][1];
         std::memcpy(constants.vehicleSphere,f.vehicleSphere,sizeof(f.vehicleSphere));
     }
-    // fix.steady_panels (flat_panel_steady.h): the panels' mask at t19 (debug.w value 64) beside the scene's radiance: H's copy at t0 on the HDR
-    // route, the tone draw's snapshot of H at t20 on the copy route (value 128), whose t0 is the post-tone picture.
-    const bool steadyScene=!hdr && f.steadyPanels!=nullptr && f.steadyScene!=nullptr;
-    const bool steadyBound=f.steadyPanels!=nullptr && (hdr || steadyScene);
-    if(flatPanelSteadyOn())flatPanelSteadyNoteResolve(steadyBound,!hdr);
+    // fix.steady_panels (flat_panel_steady.h): the panels' mask at t19 beside the scene's colour at t0, HDR route only; debug.w value 64.
+    const bool steadyBound=hdr && f.steadyPanels!=nullptr;
+    if(hdr && flatPanelSteadyOn())flatPanelSteadyNoteResolve(steadyBound);
     if(steadyBound)constants.debug[3]|=64u;
-    if(steadyScene)constants.debug[3]|=128u;
     if(celestialBound){constants.debug[3]|=8u;std::memcpy(constants.celestialTanNow,f.celestialTanNow,sizeof(f.celestialTanNow));std::memcpy(constants.celestialTanPrev,f.celestialTanPrev,sizeof(f.celestialTanPrev));}
     constants.foregroundDepth[0]=sdkDepthScale;
     // MetalFX colour expansion has its own lane after upstream foreground depth.
@@ -1679,11 +1676,11 @@ bool flatMonoResolve(ID3D11Device* device,ID3D11DeviceContext* context,const Fla
     // stencil, null unless the pair was accepted above.
     // t0 (Color) only for mfx: prep widens it into the MetalFX colour (backend.x). Upstream 05f3dcac unbinds it, no other backend reads it.
     // t0 for fix.steady_panels too: the prep compares the panels' light with the scene's there (t19).
-    ID3D11ShaderResourceView* prepViews[]={(mfx||(steadyBound&&hdr))?g.color.srv.Get():nullptr,f.depth,f.engine.slots,f.engine.pool,
+    ID3D11ShaderResourceView* prepViews[]={(mfx||steadyBound)?g.color.srv.Get():nullptr,f.depth,f.engine.slots,f.engine.pool,
         nullptr,nullptr,nullptr,nullptr,depthCheck?g.depth[prevDepthIndex].srv.Get():nullptr,firstPersonMap,firstPersonStencil,
         nullptr,nullptr,f.untrustedCameraCoverage,nullptr,foreground?f.foregroundMotion:nullptr,nullptr,skin?f.engine.skin:nullptr,
-        celestialBound?f.celestialRecords:nullptr,steadyBound?f.steadyPanels:nullptr,steadyScene?f.steadyScene:nullptr};
-    const UINT prepViewCount=steadyScene?21:(steadyBound?20:(celestialBound?19:(skin?18:(foreground?16:14))));
+        celestialBound?f.celestialRecords:nullptr,steadyBound?f.steadyPanels:nullptr};
+    const UINT prepViewCount=steadyBound?20:(celestialBound?19:(skin?18:(foreground?16:14)));
     context->CSSetShaderResources(0,prepViewCount,prepViews);
     // u4 receives the MetalFX colour expansion in prep (backend.x); u5 is the refusal census's class texture. u3 (expected) is TAA's
     // alone (upstream 05f3dcac): every other backend leaves it unbound.
@@ -1692,7 +1689,7 @@ bool flatMonoResolve(ID3D11Device* device,ID3D11DeviceContext* context,const Fla
     context->CSSetUnorderedAccessViews(0,(needClass||mfx)?6:(taa?4:3),prepOutputs,nullptr);
     context->CSSetShader(g.prep.Get(),nullptr,0);
     context->Dispatch((f.renderWidth+7)/8,(f.renderHeight+7)/8,1);
-    ID3D11UnorderedAccessView* nullUavs[6]={};ID3D11ShaderResourceView* nullViews[21]={};
+    ID3D11UnorderedAccessView* nullUavs[6]={};ID3D11ShaderResourceView* nullViews[20]={};
     context->CSSetUnorderedAccessViews(0,6,nullUavs,nullptr);context->CSSetShaderResources(0,prepViewCount,nullViews);
     if(hdr)++stats.hdrPrepped;
     prepStep.close();

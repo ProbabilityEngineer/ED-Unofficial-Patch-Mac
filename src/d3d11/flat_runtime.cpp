@@ -7512,11 +7512,6 @@ FlatRuntimeDrawScope::FlatRuntimeDrawScope(ID3D11DeviceContext* context, uint32_
             uiSteadyH = k.height;
         }
     }
-    // Below SS 1.0 (the copy route resolves after the tonemap): at the game's tone draw, H as it reads it -- the panels drawn in -- is copied once,
-    // for the copy route's prep to compare the panels' light with (flatPanelSteadySnapshot). The HDR route resolved before this draw and reads H
-    // itself (s.hdrTreated): no snapshot.
-    if (flatPanelSteadyOn() && tone && !copy && !s.hdrTreated && pairFact.toneSlot < 2 && k.srvResource[pairFact.toneSlot])
-        flatPanelSteadySnapshot(ctx, const_cast<void*>(static_cast<const void*>(k.srvResource[pairFact.toneSlot])));
     if (flatUiLayerOn()) {
         FlatUiLayerAsk ask = FlatUiLayerAsk::kNotAsked;
         if (copy) {
@@ -7711,9 +7706,6 @@ FlatRuntimeDrawScope::FlatRuntimeDrawScope(ID3D11DeviceContext* context, uint32_
     }
     FlatMonoResolveFrame f{}; f.color = original; f.depth = s.depthView.Get(); f.renderWidth = selected.renderWidth; f.renderHeight = selected.renderHeight;
     f.outputWidth = selected.outputWidth; f.outputHeight = selected.outputHeight; f.frame = s.prefix.frame; f.mode = s.engine;
-    // fix.steady_panels below SS 1.0: the panels' mask and the snapshot of H the tone draw read (null when either is missing: the prep is as it was).
-    f.steadyPanels = flatPanelSteadyView(selected.renderWidth, selected.renderHeight);
-    f.steadyScene = f.steadyPanels ? flatPanelSteadySceneView(selected.renderWidth, selected.renderHeight) : nullptr;
     D3D11_SHADER_RESOURCE_VIEW_DESC copyView{};original->GetDesc(&copyView);
     f.fp16=copyView.Format==DXGI_FORMAT_R16G16B16A16_FLOAT;
     f.jitterCycle=s.phase.phaseCount;

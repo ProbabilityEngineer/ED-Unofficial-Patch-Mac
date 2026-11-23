@@ -38,8 +38,9 @@ enum class UiLayerFamily : uint8_t;
 // One relaxed load: fix.steady_panels is on in the flat profile (read at each frame boundary, so live).
 bool flatPanelSteadyOn();
 
-// A resolve (either route) asked for the mask within the last second (flatPanelSteadyView). Until one has, nothing is marked and the UI layer
-// keeps the panel families as UI quality says: the key acts only while this is true (anti-aliasing on, the frame treated).
+// The HDR route (SS 1.0 and above) asked for the mask within the last second (flatPanelSteadyView). Below SS 1.0 the resolve runs after the
+// tonemap (the copy route), where the panels' light cannot be compared with the scene's, so nothing is marked and the UI layer keeps the panel
+// families as UI quality says: the key acts only while this is true.
 bool flatPanelSteadyRouteLive();
 
 // The families it marks (see WHICH DRAWS). The backing pair is the caller's to leave out (flatUiPanelBackingPair).
@@ -54,20 +55,11 @@ void flatPanelSteadyFrame();
 bool flatPanelSteadyBegin(ID3D11DeviceContext* ctx, uint32_t width, uint32_t height);
 void flatPanelSteadyEnd(ID3D11DeviceContext* ctx);
 
-// The resolve, on either route: P's view when this frame marked panels at width x height, else null. After this call the frame's P is the
+// The resolve, on the HDR route: P's view when this frame marked panels at width x height, else null. After this call the frame's P is the
 // prep's: a later panel draw this frame is refused (counted as late), since the prep has already read P.
 ID3D11ShaderResourceView* flatPanelSteadyView(uint32_t width, uint32_t height);
 
-// BELOW SS 1.0 (the copy route): the resolve runs after the tonemap, on its LDR or HDR-output copy, where the panels' light cannot be compared
-// with the scene's. So at the game's tone draw -- whose input is H with the panels drawn into it, the scene radiance P is drawn in -- H is copied
-// once into a snapshot S of its own format and size (when this frame marked P at that size), and the copy route's prep compares P with S
-// (debug.w value 128, S at t20). The HDR route (SS 1.0 and above) resolves before the tonemap, reads H itself, and takes no snapshot.
-// `scene` is the tone draw's scene input (the registry's tone slot). False: no snapshot this frame (counted).
-bool flatPanelSteadySnapshot(ID3D11DeviceContext* ctx, void* scene);
-// The copy route's resolve: S's view when this frame took one at width x height, else null.
-ID3D11ShaderResourceView* flatPanelSteadySceneView(uint32_t width, uint32_t height);
-
-// The resolve says the prep ran with P bound (true) or refused it (false: no mask, no snapshot, a size), on which route, for the 30 s line.
-void flatPanelSteadyNoteResolve(bool bound, bool copyRoute);
+// The resolve says the prep ran with P bound (true) or refused it (false: the route, a reset, a size), for the 30 s line.
+void flatPanelSteadyNoteResolve(bool bound);
 
 }  // namespace edvr
