@@ -543,10 +543,10 @@ const char* hudAntiAliasingHint() {
     return "Needs anti-aliasing: turn it on to use this.";
 }
 
-// The row is live at SS 1.0 and above, but there the HUD is tonemapped with the scene (flatUiLayerMergeBegin) before the layer is smoothed, so the
-// smoothing reaches only the bars, dust, orbit lines, map icons and weapons fire. Said on the row's hint line while it is highlighted, nowhere else.
+// The row is live at SS 1.0 and above, but there the cockpit panels (side panels, flight HUD, target, radar) are tonemapped with the scene
+// (flatUiLayerMergeBegin) before the layer is smoothed, so the smoothing reaches only the bars, dust, orbit lines and map icons. Said on the row's hint line while it is highlighted, nowhere else.
 const char* hudAntiAliasingMergedHint() {
-    return "At SS 1.0+ this smooths bars, dust and icons; the HUD itself is not smoothed.";
+    return "At SS 1.0+ this smooths bars, dust and icons; cockpit panels are not smoothed.";
 }
 
 const char* hudAntiAliasingRefusal() {
