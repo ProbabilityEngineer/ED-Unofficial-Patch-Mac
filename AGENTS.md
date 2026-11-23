@@ -32,9 +32,13 @@ checks from game results.
 
 ## Ask first
 
-Each approval covers only the operation it names. Ask before:
+Each approval covers only the operation it names. Local commits on a work
+branch (not `main`, not `todo`) and local builds need no permission: commit
+and build as the work requires, and say what was committed and built. Ask
+before:
 
-- committing, merging, pushing, tagging for publication, releases;
+- merging, pushing, tagging for publication, releases, and any commit on
+  `main`;
 - remote CI or anything metered (the owner builds locally; no CI unless asked);
 - installing a DLL into a bottle or into CrossOver, or changing live settings;
 - destructive operations, including deleting branches, killing processes and
