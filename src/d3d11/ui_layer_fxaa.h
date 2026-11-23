@@ -32,6 +32,9 @@ struct UiLayerFxaa {
     Ptr<ID3D11ShaderResourceView> outSrv;
     uint32_t w = 0, h = 0;
     uint32_t failedW = 0, failedH = 0;
+    // The output's format follows the layer's, as SMAA's does: R16G16B16A16_FLOAT when the flat layer is (an fp16 door frame, e.g. HDR
+    // output), so HUD values above 1 are not clipped to 8 bits; R8G8B8A8_UNORM otherwise.
+    DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN, failedFormat = DXGI_FORMAT_UNKNOWN;
 
     void releaseTargets() {
         metrics.Reset();
@@ -39,26 +42,30 @@ struct UiLayerFxaa {
         outUav.Reset();
         outSrv.Reset();
         w = h = 0;
+        format = DXGI_FORMAT_UNKNOWN;
     }
     void releaseAll() {
         releaseTargets();
         fxaaCs.Reset();
         linear.Reset();
         failedW = failedH = 0;
+        failedFormat = DXGI_FORMAT_UNKNOWN;
     }
     bool ready() const { return outSrv && outUav && metrics && fxaaCs && linear && w && h; }
 };
 
-inline UiLayerSmaaState uiLayerFxaaEnsure(UiLayerFxaa& s, ID3D11Device* dev, uint32_t w, uint32_t h, UiLayerSmaaFail* fail) {
+inline UiLayerSmaaState uiLayerFxaaEnsure(UiLayerFxaa& s, ID3D11Device* dev, uint32_t w, uint32_t h, UiLayerSmaaFail* fail,
+                                         DXGI_FORMAT outputFormat = DXGI_FORMAT_R8G8B8A8_UNORM) {
     using namespace uilayersmaa_detail;
-    if (s.ready() && s.w == w && s.h == h) return UiLayerSmaaState::kReady;
-    if (s.failedW == w && s.failedH == h && w && h) return UiLayerSmaaState::kStoodDown;
+    if (s.ready() && s.w == w && s.h == h && s.format == outputFormat) return UiLayerSmaaState::kReady;
+    if (s.failedW == w && s.failedH == h && s.failedFormat == outputFormat && w && h) return UiLayerSmaaState::kStoodDown;
     s.releaseTargets();
     HRESULT hr = S_OK;
     const auto stand = [&](const char* what) {
         s.releaseTargets();
         s.failedW = w;
         s.failedH = h;
+        s.failedFormat = outputFormat;
         if (fail) {
             fail->what = what;
             fail->hr = hr;
@@ -69,7 +76,13 @@ inline UiLayerSmaaState uiLayerFxaaEnsure(UiLayerFxaa& s, ID3D11Device* dev, uin
         hr = E_INVALIDARG;
         return stand("no device or an empty layer");
     }
-    if (!formatStores(dev, DXGI_FORMAT_R8G8B8A8_UNORM, &hr)) return stand("no typed unordered-access store for R8G8B8A8_UNORM on this GPU");
+    if (outputFormat != DXGI_FORMAT_R8G8B8A8_UNORM && outputFormat != DXGI_FORMAT_R16G16B16A16_FLOAT) {
+        hr = E_INVALIDARG;
+        return stand("an output format other than R8G8B8A8_UNORM or R16G16B16A16_FLOAT");
+    }
+    if (!formatStores(dev, outputFormat, &hr))
+        return stand(outputFormat == DXGI_FORMAT_R16G16B16A16_FLOAT ? "no typed unordered-access store for R16G16B16A16_FLOAT on this GPU"
+                                                                     : "no typed unordered-access store for R8G8B8A8_UNORM on this GPU");
     if (!s.fxaaCs && FAILED(hr = dev->CreateComputeShader(kUiLayerFxaaBytecode, sizeof(kUiLayerFxaaBytecode), nullptr, s.fxaaCs.GetAddressOf())))
         return stand("the FXAA shader could not be created");
     if (!s.linear) {
@@ -89,10 +102,11 @@ inline UiLayerSmaaState uiLayerFxaaEnsure(UiLayerFxaa& s, ID3D11Device* dev, uin
         init.pSysMem = metrics;
         if (FAILED(hr = dev->CreateBuffer(&bd, &init, s.metrics.GetAddressOf()))) return stand("the metrics constant buffer could not be created");
     }
-    if (!makeTarget(dev, w, h, DXGI_FORMAT_R8G8B8A8_UNORM, s.out, s.outUav, s.outSrv, &hr))
-        return stand("the smoothed output (R8G8B8A8) could not be created");
+    if (!makeTarget(dev, w, h, outputFormat, s.out, s.outUav, s.outSrv, &hr))
+        return stand("the smoothed output could not be created");
     s.w = w;
     s.h = h;
+    s.format = outputFormat;
     return UiLayerSmaaState::kMade;
 }
 

@@ -3450,10 +3450,10 @@ UiLayerSmaa* edgeSmoothingFor(Eye& e, uint32_t eye, ID3D11Device* dev) {
 UiLayerFxaa* fxaaSmoothingFor(Eye& e, uint32_t eye, ID3D11Device* dev) {
     UiLayerSmaaFail fail;
     const char* who = runtimeFlatProfile() ? "flat ui layer fxaa" : eye == 0 ? "ui layer fxaa (left eye)" : "ui layer fxaa (right eye)";
-    switch (uiLayerFxaaEnsure(e.fxaa, dev, e.w, e.h, &fail)) {
+    switch (uiLayerFxaaEnsure(e.fxaa, dev, e.w, e.h, &fail, e.layerFormat)) {
         case UiLayerSmaaState::kMade:
-            Log::get().note("%s: ready at %ux%u -- output R8G8B8A8_UNORM, %.1f MB", who, e.w, e.h,
-                            uiLayerMB(uiLayerBytes(e.w, e.h, 4u)));
+            Log::get().note("%s: ready at %ux%u -- output %s (the layer's format), %.1f MB", who, e.w, e.h, viewName(e.layerFormat),
+                            uiLayerMB(uiLayerBytes(e.w, e.h, e.layerFormat == DXGI_FORMAT_R16G16B16A16_FLOAT ? 8u : 4u)));
             return &e.fxaa;
         case UiLayerSmaaState::kReady:
             return &e.fxaa;
