@@ -166,8 +166,8 @@ struct FlatRuntimeDrawScope {
     // The panels' frosted backing (flat_ui_layer.h flatUiLayerDecidedDim): decided, but issued into the game's frame as it is, and once more
     // into the HUD layer darken-only after that (uiReissue).
     bool uiDim=false;
-    // The game's output copy (pairFact.copyPair into the frame's output): fix.hdr's live nits read the copy's bound pixel shader for
-    // this draw (hdr_output.h HdrNitsScope), since the resolve above may leave the binding shadow not naming it.
+    // The game's output copy (pairFact.copyPair into the frame's output) or its tone draw (pairFact.toneSlot): fix.hdr's live nits read the
+    // draw's bound pixel shader from the context (hdr_output.h HdrNitsScope), since the resolve above may leave the binding shadow not naming it.
     bool outputCopy=false;
     uint64_t uiVs=0,uiPs=0;
     // The supercruise bars (2026-11-03, supercruise_bars.h): the decided draw is the bars family (uiBars; uiBarsVertices is its count), so its issue into the
