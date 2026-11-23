@@ -536,6 +536,14 @@ struct UiGlowStar {
 };
 ID3D11ShaderResourceView* uiLayerGlowFeed(ID3D11DeviceContext* ctx, uint64_t frame, uint32_t slot, const void* hdr, int* verdict,
                                           UiGlowStar* star = nullptr);
+// The HUD merged into the tone's scene input (flat, the HDR route; ui_layer.cpp "THE HUD MERGED INTO THE TONE'S SCENE INPUT"). Called right
+// before the game's issue of an admitted tone draw: true binds S' = S * T + HUD at the tone's HDR slot (*original holds the game's view, one
+// reference) and consumes the admission, so the re-issue does not run; false leaves everything as it was (the reason said once).
+// uiLayerHudMergeEnd, right after the issue: the game's view back and, with `publish`, the 8-bit layer published empty for the frame.
+bool uiLayerHudMergeBegin(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView** original);
+void uiLayerHudMergeEnd(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* original, bool publish);
+uint64_t uiLayerHudMerges();
+uint64_t uiLayerHudMergeDeclines();
 // The headset's first level (vr_star_glow.h; visual.star_glow's H' = H + m * S, and the HUD's bloom below). The flat feed above is gated on the flat profile and eye 0's HUD layer.
 // The HUD's bloom in the headset (docs/cockpit-hud-layer-design-2026-09-27.md, "2026-10-28: the HUD's bloom in the headset"). fix.ui_quality takes the cockpit's holo
 // panels, flight HUD and target sprite out of an eye's H into that eye's HDR HUD layer, and the bloom chain reads H: the HUD lost its halo in the headset exactly as

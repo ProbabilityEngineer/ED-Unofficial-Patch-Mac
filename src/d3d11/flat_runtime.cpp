@@ -7549,6 +7549,9 @@ FlatRuntimeDrawScope::FlatRuntimeDrawScope(ID3D11DeviceContext* context, uint32_
                     const uint32_t slot = tone ? pairFact.toneSlot : pairFact.mapToneSlot;
                     uiTone = flatUiLayerToneCandidate(ctx, s.prefix.frame, sceneRw, sceneRh, static_cast<int>(slot), k.vs, k.ps,
                                                       slot < 2 ? k.srvResource[slot] : nullptr, k.width, k.height, route);
+                    // The HDR route resolved the scene before this tone: the HUD can join the scene here, before the tonemap (flatUiLayerMergeBegin).
+                    // The registry's tone only (not the map or scanner tonemaps); any refusal there leaves the re-issue to serve the frame.
+                    uiMerge = uiTone && tone && s.hdrTreated;
                 }
             }
             // A plain copy reading the HUD's target names the copy the tone may read (the HDR route's post chain).
@@ -8321,6 +8324,8 @@ void FlatRuntimeDrawScope::beginActualDraw(ID3D11Buffer* indirectArgs,UINT indir
         const bool bound=flatUiGlowBegin(ctx,state().prefix.frame,glowSlot,glowHdr,glowVs,glowPs,glowHdrW,glowHdrH,glowTargetW,glowTargetH,&glowOriginal,haveStar?&star:nullptr);
         if(haveStar)flatStarGlowNoteFeed(star,bound,state().prefix.frame,glowSlot,glowVs,glowPs,glowHdrW,glowHdrH,glowTargetW,glowTargetH);
     }
+    // The admitted tone on the HDR route reads S' = S * T + HUD (the HUD tonemapped with the scene); endActualDraw puts the game's view back.
+    if(uiMerge && !uiMerged) uiMerged=flatUiLayerMergeBegin(ctx,&mergeOriginal);
     if(dofBlur && !dofBlurOriginal) {
         auto& s=state();
         flatDofBlurBegin(ctx,s.prefix.frame,s.phase.applied!=0,s.hdrTreated,s.phase.phaseCount,dofBlurPs,&dofBlurOriginal);
@@ -8624,6 +8629,7 @@ void FlatRuntimeDrawScope::endActualDraw() {
     if(uiBarsBound&&ctx){flatUiLayerBarsEnd(ctx);uiBarsBound=false;}
     if(uiTaken&&!uiEnded&&ctx){flatUiLayerEnd(ctx);uiEnded=true;}
     if(glowOriginal){flatUiGlowEnd(ctx,glowSlot,glowOriginal);glowOriginal=nullptr;}
+    if(uiMerged&&mergeOriginal){flatUiLayerMergeEnd(ctx,mergeOriginal,true);mergeOriginal=nullptr;}
     if(dofBlurOriginal){flatDofBlurEnd(ctx,dofBlurOriginal);dofBlurOriginal=nullptr;}
     if(drawPacket&&ctx){FlatComputeInternalScope internal;state().drawPackets.after(ctx,drawPacket);drawPacketExecuted=true;}
     if(drawPacketOnly)return;
@@ -8677,6 +8683,7 @@ FlatRuntimeDrawScope::~FlatRuntimeDrawScope() {
     if(uiBarsBound){flatUiLayerBarsEnd(ctx);uiBarsBound=false;}
     if(uiTaken&&!uiEnded){flatUiLayerEnd(ctx);uiEnded=true;}
     if(glowOriginal){flatUiGlowEnd(ctx,glowSlot,glowOriginal);glowOriginal=nullptr;}
+    if(uiMerged&&mergeOriginal){flatUiLayerMergeEnd(ctx,mergeOriginal,false);mergeOriginal=nullptr;}   // the issue never came back: the view only
     if(dofBlurOriginal){flatDofBlurEnd(ctx,dofBlurOriginal);dofBlurOriginal=nullptr;}
     FlatComputeInternalScope guard;
     if(domainStarted){

@@ -361,6 +361,46 @@ float4 main(float4 p : SV_POSITION) : SV_Target {
 }
 )HLSL";
 
+// The HUD merged into the tone's scene input (flat fix.ui_quality on the HDR route, 2026-11-22): S' = S * T + HUD, where S is the scene the
+// game's tone pass reads (H, or its plain copy, already resolved at the output size or above) and the HUD layer holds premultiplied radiance
+// with the transmittance T in alpha. The game's own tonemap then tonemaps the HUD WITH the scene, as it does with the AA off, instead of
+// the HUD being tonemapped alone and blended over the tonemapped picture (which no blend gets right: a faint line over a dark scene came out
+// brighter added as encoded values, darker added as light). The footprint loop is kUiGlowFeedPsHlsl's, carrying T as well. The scene's alpha
+// is kept; non-finite HUD texels read as nothing (zero light, T 1).
+constexpr char kUiHudMergePsHlsl[] = R"HLSL(
+Texture2D<float4> HudLayer : register(t0);
+Texture2D<float4> Scene : register(t1);
+float4 main(float4 p : SV_POSITION) : SV_Target {
+    uint sw, sh, lw, lh;
+    Scene.GetDimensions(sw, sh);
+    HudLayer.GetDimensions(lw, lh);
+    float2 span = float2(lw, lh) / float2(sw, sh);
+    float2 cut = max(span - 4.0, float2(0, 0)) * 0.5;
+    float2 x0 = (p.xy - 0.5) * span + cut;
+    float2 x1 = x0 + span - 2.0 * cut;
+    int2 k0 = max(int2(floor(x0)), int2(0, 0));
+    int2 k1 = min(int2(ceil(x1)) - 1, int2(lw - 1, lh - 1));
+    float4 acc = float4(0, 0, 0, 0);
+    float wsum = 0;
+    [loop] for (int j = k0.y; j <= min(k1.y, k0.y + 4); ++j) {
+        float wy = min(x1.y, (float)j + 1.0) - max(x0.y, (float)j);
+        if (wy <= 0) continue;
+        [loop] for (int i = k0.x; i <= min(k1.x, k0.x + 4); ++i) {
+            float wx = min(x1.x, (float)i + 1.0) - max(x0.x, (float)i);
+            if (wx <= 0) continue;
+            float4 c = HudLayer.Load(int3(i, j, 0));
+            c = all(isfinite(c)) ? float4(max(c.rgb, float3(0, 0, 0)), saturate(c.a)) : float4(0, 0, 0, 1);
+            acc += c * (wx * wy);
+            wsum += wx * wy;
+        }
+    }
+    float4 hud = wsum > 0 ? acc / wsum : float4(0, 0, 0, 1);
+    float4 s = Scene.Load(int3(p.xy, 0));
+    float3 o = s.rgb * hud.a + hud.rgb;
+    return float4(min(o, float3(60000, 60000, 60000)), s.a);
+}
+)HLSL";
+
 // The star light for the game's bloom (visual.star_glow): one fullscreen pass that reads the star layer S (the star draws alone, replayed as the game
 // issued them) and writes it as it is. It is blended into H' with a blend factor of (m, m, m, 0) -- source BLEND_FACTOR, destination ONE, ADD -- so
 // H' = H [+ HUD] + m * S with m the setting's k - 1; the weight is the blend's, not a constant buffer's, so the shader has one texture and nothing

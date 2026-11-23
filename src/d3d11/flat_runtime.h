@@ -179,6 +179,11 @@ struct FlatRuntimeDrawScope {
     // chain's first level. Begin binds H' = H + the HUD layer's light at `glowSlot` for the game's issue (glowOriginal holds the game's view then),
     // End puts the game's view back.
     bool uiGlow=false;
+    // The HUD merged into the tone's scene input (flat_ui_layer.h flatUiLayerMergeBegin): this is the admitted tone draw on the HDR route. Begin binds
+    // S' = S * T + HUD for the game's issue (mergeOriginal holds the game's view then; uiMerged: it did, so the re-issue does not run), End puts the
+    // game's view back and publishes the layer empty.
+    bool uiMerge=false,uiMerged=false;
+    ID3D11ShaderResourceView* mergeOriginal=nullptr;
     // visual.star_glow (flat_star_glow.h): this draw is a star pass the gates let through (starReplay: issue it once more into the star layer, right after
     // the game's own issue; starRole is the pass), or any star pass of any target (starTouched: kept out of the offscreen fast path); starW/H is its colour
     // target. starFeed: this is the trigger draw and the star layer holds light, so the first-level draw reads it added to H' (beginActualDraw).
@@ -209,7 +214,7 @@ struct FlatRuntimeDrawScope {
     forward_light::Issue forwardIssue{};
     uint64_t lightPayloadToken=0;
     const FlatProjectionBindingPlan* lightPayloadPlan=nullptr;
-    bool needsActualDraw() const { return forwardIssue.kind!=forward_light::Issue::None || lightPayloadToken || drawPacket || domainPlanned || uiTake || uiComposite || uiGlow || dofBlur ||
+    bool needsActualDraw() const { return forwardIssue.kind!=forward_light::Issue::None || lightPayloadToken || drawPacket || domainPlanned || uiTake || uiComposite || uiGlow || uiMerge || dofBlur ||
                                           flatRuntimeNeedsActualDraw(weaponFootprintStarted, overlayPlanned,
                                                                      foregroundPlanned, untrustedPlanned); }
     // After the game's own issue and endActualDraw: the second issues fix.ui_quality's flat layer asks for, each the game's
@@ -225,7 +230,8 @@ struct FlatRuntimeDrawScope {
         if (starReplay && flatStarGlowReplayBegin(ctx, starRole, starW, starH)) { issue(); flatStarGlowReplayEnd(ctx); }
         // The weapons' light is re-issued through the same draw before the HUD's (the weapons fire: the layer binds each step's source and blend and says when
         // none is left); with only the HUD in the layer the plan is one step and the loop never runs.
-        if (uiTone && flatUiLayerToneBegin(ctx)) { issue(); while (flatUiLayerToneNext(ctx)) issue(); flatUiLayerToneEnd(ctx); }
+        // A tone the merge served (uiMerged) has the HUD in the game's own tonemap already: no re-issue.
+        if (uiTone && !uiMerged && flatUiLayerToneBegin(ctx)) { issue(); while (flatUiLayerToneNext(ctx)) issue(); flatUiLayerToneEnd(ctx); }
     }
     ID3D11Texture2D* overlayHdr = nullptr;
     ID3D11DepthStencilView* overlayDsv = nullptr;
