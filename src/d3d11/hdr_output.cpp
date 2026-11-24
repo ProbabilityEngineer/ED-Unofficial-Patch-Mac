@@ -1252,6 +1252,7 @@ void hdrOutputAttach(ID3D11Device* device) {
     const D3D_SHADER_MACRO copyMacros[] = {{"EDVR_LIVE_NITS", "1"},
                                            {"DIFFUSE_WHITE_NITS", n.scene},
                                            {"GRAPHICS_WHITE_NITS", n.ui},
+                                           {"OUTDECODE_SRGB", g.srgbDecode ? "1" : "0"},
                                            {nullptr, nullptr}};
     ID3DBlob* tone = compileHlsl(kHdrToneReplacementPs, "tone_hdr_ps", "ps_5_0", "m", bloom);
     ID3DBlob* toneNoBloom = compileHlsl(kHdrToneReplacementPs, "tone_hdr_no_bloom_ps",
