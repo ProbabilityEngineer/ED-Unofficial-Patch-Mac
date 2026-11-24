@@ -2015,7 +2015,7 @@ void addFlatVisualRows(Page& p) {
 void addFlatDebugRows(Page& p) {
     Entry h;
     h.kind = EntryKind::Heading;
-    h.text = "For bug reports. Leave both off unless asked for them.";
+    h.text = "For bug reports. Leave off unless asked.";
     p.entries.push_back(h);
     for (int i = 0; i < kRowDefCount; ++i) {
         const MenuRowDef& d = kMenuRows[i];
