@@ -128,14 +128,11 @@ inline bool flatSharpenRowDim(bool flatProfile, bool antiAliasingOn) {
     return flatProfile && !antiAliasingOn;
 }
 
-// Whether the HUD Anti-Aliasing row is dimmed (and ignores steps): it smooths the UI layer, which runs only while the flat anti-aliasing is on (flat_ui_layer.cpp:
-// flatUiLayerOn is uiLayerCrispOn, whose stand-down reason with no mode is "no temporal mode is on"). UI quality does not gate it (2026-11-23, the owner's ask): with
-// UI quality off the layer still carries the supercruise bars, the dust, the orbit lines, the map icons and the weapons fire at the display's size, and the smoothing
-// acts on those. `uiQualityOn` is kept as a parameter so the truth table the rig checks stays whole; it changes nothing.
-// Flat only (VR's menu has no such row). menu.cpp asks it and nothing else.
+// Whether the HUD Anti-Aliasing row is dimmed (and ignores steps): it smooths the HUD layer, which is live only while fix.ui_quality is not off AND the flat
+// anti-aliasing is on (flat_ui_layer.cpp: flatUiLayerOn is uiLayerCrispOn, whose stand-down reason with no mode is "no temporal mode is on"), so with either off
+// there is nothing for it to act on. Flat only (VR's menu has no such row). One function so a rig can read the whole truth table; menu.cpp asks it and nothing else.
 inline bool hudAntiAliasingRowDim(bool uiQualityOn, bool antiAliasingOn) {
-    (void)uiQualityOn;
-    return !antiAliasingOn;
+    return !uiQualityOn || !antiAliasingOn;
 }
 
 // The first Allowlist row whose dotted key `allows` refuses, or null. `allows` is
