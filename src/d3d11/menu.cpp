@@ -650,7 +650,7 @@ bool rowWaiting(int def) { return g_rows[def].pending || rowConditionalState(def
 
 
 // visual.star_glow (the Star glow row). It strengthens the halo of Elite's own bloom, so with Elite's Bloom option off it changes nothing, and the
-// menus say so (star_glow_bloom.h: the flat panel's Visual tab as a note under the rows, the VR menu as the hint line while this row is highlighted).
+// menus say so (star_glow_bloom.h: the hint line while this row is highlighted, in the flat panel while it is greyed out, in VR under the setting's condition).
 // The row is never dimmed for it: a dimmed row stops responding, and the setting is still the player's to make. Matched by key, so the hint follows
 // the row wherever it is drawn (`menu visual` since 2026-10-27: the flat Visual tab and VR's Visual page both draw it).
 static_assert(sgb::kStockPercent == kStarGlowStock, "the hint's threshold is the setting's stock value");
@@ -2015,7 +2015,7 @@ void addFlatVisualRows(Page& p) {
 void addFlatDebugRows(Page& p) {
     Entry h;
     h.kind = EntryKind::Heading;
-    h.text = "For bug reports. Both are off unless you turn them on.";
+    h.text = "For bug reports. Leave both off unless asked for them.";
     p.entries.push_back(h);
     for (int i = 0; i < kRowDefCount; ++i) {
         const MenuRowDef& d = kMenuRows[i];
@@ -3111,12 +3111,12 @@ void buildContent(MenuContent& c) {
                 snprintf(c.hint, sizeof(c.hint), "%s", hdrWhiteHint());
             else if (hi && dim && sharpenRow && runtimeFlatProfile())
                 snprintf(c.hint, sizeof(c.hint), "%s", "Turn anti-aliasing on to sharpen.");
-            // Star glow, greyed out while Elite's Bloom is off (the Visual tab's note says it in full). It used to fall through to the DLSS preset's
-            // hint above, a row this port does not have.
-            else if (hi && dim && isStarGlowRow(d) && runtimeFlatProfile())
-                snprintf(c.hint, sizeof(c.hint), "%s", "Bloom is off in Elite's graphics options: Star glow needs it.");
+            // Star glow, greyed out in the flat panel while Elite's Bloom is off. It used to fall through to the DLSS preset's hint above, a row this
+            // port does not have.
+            else if (const char* flatBloomHint = sgb::flatRowHint(runtimeFlatProfile(), hi && isStarGlowRow(d), s.starGlowBloom.state()))
+                snprintf(c.hint, sizeof(c.hint), "%s", flatBloomHint);
             // The Star glow row, highlighted, in the VR menu: Elite's Bloom is off, so the setting changes nothing. The row keeps its style (no dim). The flat panel
-            // says it as a note under the Visual tab's rows instead.
+            // has its own hint (above).
             if (const char* bloomHint = sgb::rowHint(runtimeFlatProfile(), hi && isStarGlowRow(d), s.starGlowBloom.percent(), s.starGlowBloom.state()))
                 snprintf(c.hint, sizeof(c.hint), "%s", bloomHint);
             if (hi && openxrScaleRow) {
@@ -3252,20 +3252,6 @@ void buildContent(MenuContent& c) {
                             "The status page says why.";
                 body += std::string("\n\n") + (d.detail[0] ? d.detail : d.hint);
                 strncpy(c.popup, body.c_str(), sizeof(c.popup) - 1);
-            }
-        }
-        // The Star glow's Bloom note (flat only, on the Visual tab only, and only with the setting above 100 and Elite's Bloom known to be off): a blank
-        // line, then the words wrapped to the note face's width. The row stays live.
-        if (const char* bloomNote = sgb::tabNote(runtimeFlatProfile(), strcmp(p.name, kFlatTabNames[1]) == 0, s.starGlowBloom.percent(),
-                                                 s.starGlowBloom.state())) {
-            FlatWarnRuler ruler{c.capPx * 8 / 7};   // the note face's em (menu_panel.cpp, Font::Hint)
-            FlatSettingsWarning note;
-            flatWrapWarning(bloomNote, c.cardPx - 2 * (c.capPx * 8 / 10), &flatWarnMeasure, &ruler, &note);
-            if (c.lineCount < kMenuMaxLines) c.lines[c.lineCount++].style = kMenuNote;
-            for (int i = 0; i < note.count && c.lineCount < kMenuMaxLines; ++i) {
-                MenuLine& l = c.lines[c.lineCount++];
-                strncpy(l.left, note.line[i], sizeof(l.left) - 1);
-                l.style = kMenuNote;
             }
         }
         // The settings warning (flat only, and only while frames are refused for the shape of the post chain): its words are on the Status tab

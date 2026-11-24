@@ -191,11 +191,12 @@ bool sourceGatesHudAaRow(const std::string& menuCpp) {
            mode.find("runtimeFlatProfile() ?") != std::string::npos &&
            mode.find("temporalModeEnabledFor(Config::get().getString(\"fix.temporal_aa\", \"off\"), false)") != std::string::npos &&
            disabled.find("hudAntiAliasingRowDim(hudAntiAliasingUiQualityOn(), hudAntiAliasingModeOn())") != std::string::npos &&
-           // Since 2026-11-23 the row dims for the anti-aliasing alone (UI quality off still leaves the layer the bars, dust, orbit lines, map icons and
-           // weapons fire), so the hint and the refused step name the anti-aliasing and never UI quality.
-           hint.find("return \"Needs anti-aliasing: turn it on to use this.\";") != std::string::npos && hint.find("UI quality") == std::string::npos &&
-           refusal.find("return \"HUD Anti-Aliasing is inactive: turn anti-aliasing on first.\";") != std::string::npos &&
-           refusal.find("UI quality") == std::string::npos &&
+           // Upstream's rule again (2026-11-24): the row dims with UI quality off or the anti-aliasing off (with UI quality off the layer holds only the weapons
+           // fire), and the hint and the refused step name the cause that applies, UI quality first when it is off.
+           hint.find("return hudAntiAliasingUiQualityOn() ? \"Needs anti-aliasing: turn it on to use this.\" : \"Needs UI quality: turn it on to use this.\";") !=
+               std::string::npos &&
+           refusal.find("return hudAntiAliasingUiQualityOn() ? \"HUD Anti-Aliasing is inactive: turn anti-aliasing on first.\"") != std::string::npos &&
+           refusal.find(": \"HUD Anti-Aliasing is inactive: turn UI quality on above first.\";") != std::string::npos &&
            // At SS 1.0 and above the cockpit panels are tonemapped with the scene and the smoothing does not reach them: the live row's hint says so while a merge runs.
            functionBody(menuCpp, "const char* hudAntiAliasingMergedHint() {").find("cockpit panels are not smoothed") != std::string::npos &&
            menuCpp.find("else if (hi && hudAaRow && runtimeFlatProfile() && flatUiLayerHudToneMergedRecently())") != std::string::npos &&
@@ -228,12 +229,12 @@ bool sourceSaysStarGlowBloom(const std::string& menuCpp) {
     const size_t dimAt = build.find("const bool dim =");
     const size_t dimEnd = dimAt == std::string::npos ? std::string::npos : build.find(';', dimAt);
     const std::string dim = dimEnd == std::string::npos ? std::string() : build.substr(dimAt, dimEnd - dimAt);
-    const size_t note = build.find("sgb::tabNote(runtimeFlatProfile(), strcmp(p.name, kFlatTabNames[1]) == 0, s.starGlowBloom.percent(),");
-    const size_t warning = build.find("if (runtimeFlatProfile() && s.flatWarnActive) {");
+    const size_t flatHint = build.find("sgb::flatRowHint(runtimeFlatProfile(), hi && isStarGlowRow(d), s.starGlowBloom.state())");
     return !build.empty() && !dim.empty() && !tick.empty() && !opened.empty() && !configure.empty() && !row.empty() && !step.empty() && !openMenu.empty() && !menuConfigure.empty() &&
-           // the flat note: on the Visual tab (the table's own name for it), by the placement function, wrapped like the settings warning, above it
-           note != std::string::npos && warning != std::string::npos && note < warning && occurrences(menuCpp, "sgb::tabNote(") == 1 &&
-           build.find("s.starGlowBloom.state())) {", note) != std::string::npos && build.find("flatWrapWarning(bloomNote,", note) != std::string::npos && build.find("kMenuNote", note) < warning &&
+           // the flat hint (2026-11-24, in place of the Visual tab's standing note): the highlighted, greyed-out Star glow row, by the placement function, into
+           // the hint line; no note under the rows
+           flatHint != std::string::npos && occurrences(menuCpp, "sgb::flatRowHint(") == 1 && occurrences(menuCpp, "sgb::tabNote(") == 0 &&
+           build.find("snprintf(c.hint, sizeof(c.hint), \"%s\", flatBloomHint);", flatHint) != std::string::npos &&
            // the VR hint: the highlighted Star glow row, by the placement function, into the hint line
            build.find("sgb::rowHint(runtimeFlatProfile(), hi && isStarGlowRow(d), s.starGlowBloom.percent(), s.starGlowBloom.state())") != std::string::npos &&
            occurrences(menuCpp, "sgb::rowHint(") == 1 && build.find("snprintf(c.hint, sizeof(c.hint), \"%s\", bloomHint);") != std::string::npos &&
@@ -241,7 +242,7 @@ bool sourceSaysStarGlowBloom(const std::string& menuCpp) {
            // refusal of its own in the step
            row.find("strcmp(d.section, \"visual\") == 0 && strcmp(d.key, \"star_glow\") == 0") != std::string::npos &&
            dim.find("(isStarGlowRow(d) && sgb::dimRow(runtimeFlatProfile(), s.starGlowBloom.state()))") != std::string::npos &&
-           step.find("tarGlow") == std::string::npos && occurrences(menuCpp, "isStarGlowRow(") == 3 &&
+           step.find("tarGlow") == std::string::npos && occurrences(menuCpp, "isStarGlowRow(") == 4 &&
            // read when the config's generation moved, never per frame; a menu opening reads again; both profiles configure it and tick it
            tick.find("if (s.starGlowBloomGenSeen && generation == s.starGlowBloomGen) return;") != std::string::npos && tick.find("Config::get().generation()") != std::string::npos &&
            tick.find("starGlowPercent(Config::get())") != std::string::npos && tick.find("s.starGlowBloom.noteSetting(percent, &line)") != std::string::npos &&
@@ -442,9 +443,10 @@ void panelTable(const std::string& root, const std::string& gen) {
                                               "temporalModeEnabledFor(Config::get().getString(\"fix.temporal_aa\", \"off\"), true)");
     const std::string hudModeVrFlatGate = mutated("temporalModeEnabledFor(Config::get().getString(\"fix.temporal_aa\", \"off\"), false)",
                                                   "temporalModeEnabledFor(Config::get().requestedTemporalMode(), true)");
-    const std::string hudHintOneCause = mutated("return \"Needs anti-aliasing: turn it on to use this.\";", "return \"Needs UI quality: turn it on to use this.\";");
-    const std::string hudRefusalOneCause = mutated("return \"HUD Anti-Aliasing is inactive: turn anti-aliasing on first.\";",
-                                                   "return \"HUD Anti-Aliasing is inactive: turn UI quality on above first.\";");
+    const std::string hudHintOneCause = mutated("return hudAntiAliasingUiQualityOn() ? \"Needs anti-aliasing: turn it on to use this.\" : \"Needs UI quality: turn it on to use this.\";",
+                                                "return \"Needs anti-aliasing: turn it on to use this.\";");
+    const std::string hudRefusalOneCause = mutated("return hudAntiAliasingUiQualityOn() ? \"HUD Anti-Aliasing is inactive: turn anti-aliasing on first.\"",
+                                                   "return true ? \"HUD Anti-Aliasing is inactive: turn anti-aliasing on first.\"");
     const std::string hudMergedHintGone = mutated("else if (hi && hudAaRow && runtimeFlatProfile() && flatUiLayerHudToneMergedRecently())", "else if (false)");
     check(!hudNoDraw.empty() && !sourceGatesHudAaRow(hudNoDraw), "control: a HUD Anti-Aliasing row that never dims when drawn is caught");
     check(!hudNoStep.empty() && !sourceGatesHudAaRow(hudNoStep), "control: a dimmed HUD Anti-Aliasing row that still takes a step is caught");
@@ -455,8 +457,8 @@ void panelTable(const std::string& root, const std::string& gen) {
           "control: a row that reads the mode through the flat gate's fix.temporal_aa (it reads off there) is caught");
     check(!hudModeVrFlatGate.empty() && !sourceGatesHudAaRow(hudModeVrFlatGate),
           "control: a VR row that reads the flat mode (VR's own is fix.temporal_aa, as uiLayerConfigure reads it) is caught");
-    check(!hudHintOneCause.empty() && !sourceGatesHudAaRow(hudHintOneCause), "control: a hint that blames UI quality is caught");
-    check(!hudRefusalOneCause.empty() && !sourceGatesHudAaRow(hudRefusalOneCause), "control: a refused step that does not name the anti-aliasing is caught");
+    check(!hudHintOneCause.empty() && !sourceGatesHudAaRow(hudHintOneCause), "control: a hint that never names UI quality is caught");
+    check(!hudRefusalOneCause.empty() && !sourceGatesHudAaRow(hudRefusalOneCause), "control: a refused step that never names UI quality is caught");
     check(!hudMergedHintGone.empty() && !sourceGatesHudAaRow(hudMergedHintGone), "control: a row that never says the merged HUD is not smoothed is caught");
 
     // THE FLAT-ONLY PLACEMENT (2026-10-24). The flat Performance tab ignores the page token; VR's Performance page is exactly the rows whose token is `menu performance`.
@@ -519,30 +521,24 @@ void panelTable(const std::string& root, const std::string& gen) {
         const std::string unmade = mutated("case MenuPageSource::FlatVisual: addFlatVisualRows(p); break;", "");
         check(!unmade.empty() && !sourceBuildsFlatVisualFromTable(unmade), "control: a Visual tab the page table's maker never builds is caught");
     }
-    // THE STAR GLOW'S BLOOM HINT (2026-10-27). Said on the Visual tab only, under the condition, as a note; in the VR menu on the highlighted Star glow row, as the hint line.
+    // THE STAR GLOW'S BLOOM HINT (2026-10-27; the flat panel's Visual-tab note became a hint line 2026-11-24). Said on the highlighted Star glow row, as the hint
+    // line: in the flat panel while the row is greyed out, in the VR menu under the setting's condition.
     {
         using edvr::sgb::Bloom;
-        int tabsWithNote = 0, visualTab = -1;
-        for (size_t t = 0; t < kFlatTabCount; ++t) {
-            const bool visual = std::strcmp(kFlatTabNames[t], "Visual") == 0;
-            if (visual) visualTab = static_cast<int>(t);
-            if (edvr::sgb::tabNote(true, visual, 150, Bloom::Off)) ++tabsWithNote;
-        }
-        check(tabsWithNote == 1 && visualTab == 1, "the flat panel's Bloom note is on exactly one of the three tabs, the Visual tab");
         bool visualTable = true;
         for (int percent : {100, 125, 150, 175, 200})
             for (Bloom state : {Bloom::Unknown, Bloom::Off, Bloom::On}) {
                 const bool want = percent > 100 && state == Bloom::Off;
-                // The flat note follows the greyed-out row (Bloom off, any setting; 2026-11-21); the VR hint keeps the setting's condition.
-                visualTable = visualTable && (edvr::sgb::tabNote(true, true, percent, state) != nullptr) == (state == Bloom::Off) && edvr::sgb::tabNote(true, false, percent, state) == nullptr &&
+                // The flat hint follows the greyed-out row (Bloom off, any setting; 2026-11-21); the VR hint keeps the setting's condition.
+                visualTable = visualTable && (edvr::sgb::flatRowHint(true, true, state) != nullptr) == (state == Bloom::Off) && edvr::sgb::flatRowHint(true, false, state) == nullptr &&
                               (edvr::sgb::rowHint(false, true, percent, state) != nullptr) == want && edvr::sgb::rowHint(false, false, percent, state) == nullptr &&
-                              edvr::sgb::rowHint(true, true, percent, state) == nullptr && edvr::sgb::tabNote(false, true, percent, state) == nullptr;
+                              edvr::sgb::rowHint(true, true, percent, state) == nullptr && edvr::sgb::flatRowHint(false, true, state) == nullptr;
             }
-        check(visualTable, "the Bloom note (Visual tab) shows with Bloom off at any setting and the VR hint (highlighted Star glow row) for 125..400 with Bloom off, for no other Bloom state, and the other profile's place stays empty");
+        check(visualTable, "the flat hint (highlighted Star glow row) shows with Bloom off at any setting and the VR hint for 125..400 with Bloom off, for no other Bloom state, and the other profile's hint stays empty");
         check(sourceSaysStarGlowBloom(menuCpp),
-              "menu.cpp says it: the note on the Visual tab above the settings warning, the hint on the highlighted Star glow row, the row greyed out exactly while Bloom is off and never refused, read at a menu opening and a change of the setting");
-        const std::string noteEveryTab = mutated("strcmp(p.name, kFlatTabNames[1]) == 0, s.starGlowBloom.percent(),", "true, s.starGlowBloom.percent(),");
-        const std::string noteInVr = mutated("sgb::tabNote(runtimeFlatProfile(),", "sgb::tabNote(true,");
+              "menu.cpp says it: the flat hint and the VR hint on the highlighted Star glow row, no note under the rows, the row greyed out exactly while Bloom is off and never refused, read at a menu opening and a change of the setting");
+        const std::string flatHintEveryRow = mutated("sgb::flatRowHint(runtimeFlatProfile(), hi && isStarGlowRow(d),", "sgb::flatRowHint(runtimeFlatProfile(), hi,");
+        const std::string flatHintInVr = mutated("sgb::flatRowHint(runtimeFlatProfile(),", "sgb::flatRowHint(true,");
         const std::string hintEveryRow = mutated("hi && isStarGlowRow(d), s.starGlowBloom.percent()", "hi, s.starGlowBloom.percent()");
         const std::string hintInFlat = mutated("sgb::rowHint(runtimeFlatProfile(),", "sgb::rowHint(false,");
         const std::string rowDimmed = mutated("(isStarGlowRow(d) && sgb::dimRow(runtimeFlatProfile(), s.starGlowBloom.state()))", "isStarGlowRow(d)");
@@ -552,8 +548,8 @@ void panelTable(const std::string& root, const std::string& gen) {
         const std::string noOpenRead = mutated("starGlowBloomMenuOpened();   // Elite's Bloom option is read again", "// Elite's Bloom option is read again");
         const std::string noVrTick = mutated("        starGlowBloomTick();\n        dimRowsTick();", "        dimRowsTick();");
         const std::string noVrConfigure = mutated("        starGlowBloomConfigure();\n        initKeys();", "        initKeys();");
-        check(!noteEveryTab.empty() && !sourceSaysStarGlowBloom(noteEveryTab), "control: a note on every tab is caught");
-        check(!noteInVr.empty() && !sourceSaysStarGlowBloom(noteInVr), "control: a note asked of a profile other than the running one is caught");
+        check(!flatHintEveryRow.empty() && !sourceSaysStarGlowBloom(flatHintEveryRow), "control: a flat hint on every highlighted row is caught");
+        check(!flatHintInVr.empty() && !sourceSaysStarGlowBloom(flatHintInVr), "control: a flat hint asked of a profile other than the running one is caught");
         check(!hintEveryRow.empty() && !sourceSaysStarGlowBloom(hintEveryRow), "control: a VR hint on every highlighted row is caught");
         check(!hintInFlat.empty() && !sourceSaysStarGlowBloom(hintInFlat), "control: a VR hint asked of a profile other than the running one is caught");
         check(!rowDimmed.empty() && !sourceSaysStarGlowBloom(rowDimmed), "control: a Star glow row greyed out whatever Bloom is (it would stop responding) is caught");

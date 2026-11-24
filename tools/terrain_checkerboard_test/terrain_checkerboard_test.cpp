@@ -1087,8 +1087,8 @@ void caseT7() {
                 for (int a = 0; a < 2; ++a) {
                     const bool cond = percent > 100 && state == Bloom::Off;
                     const bool b = a != 0;
-                    const char* flatNote = sgb::tabNote(true, b, percent, state);
-                    const char* vrNote = sgb::tabNote(false, b, percent, state);
+                    const char* flatNote = sgb::flatRowHint(true, b, state);
+                    const char* vrNote = sgb::flatRowHint(false, b, state);
                     const char* flatHint = sgb::rowHint(true, b, percent, state);
                     const char* vrHint = sgb::rowHint(false, b, percent, state);
                     flatTab = flatTab && ((flatNote != nullptr) == (state == Bloom::Off && b)) && vrNote == nullptr;
@@ -1097,12 +1097,12 @@ void caseT7() {
                     dim = dim && sgb::dimRow(true, state) == (state == Bloom::Off) && !sgb::dimRow(false, state);
                 }
         check(dim, "T7c: the flat Star glow row is greyed out exactly while Bloom is known to be off, at any setting; never in VR");
-        check(flatTab, "T7c: the flat panel's note shows on the Visual tab only, whenever the row is greyed out, and never in the VR menu");
+        check(flatTab, "T7c: the flat panel's hint shows on the highlighted Star glow row whenever it is greyed out, and never in the VR menu");
         check(vrRow, "T7c: the VR hint shows only while the Star glow row is highlighted, under the condition, and never in the flat panel");
         check(exclusive, "T7c: the note and the hint are never both said in one profile");
-        check(sgb::tabNote(true, true, 150, Bloom::Off) == sgb::hint(150, Bloom::Off) && sgb::rowHint(false, true, 150, Bloom::Off) == sgb::hint(150, Bloom::Off) &&
-                  sgb::tabNote(true, true, 100, Bloom::Off) == sgb::hint(150, Bloom::Off),
-              "T7c: both places say the very same words, the note at 100 too");
+        check(sgb::rowHint(false, true, 150, Bloom::Off) == sgb::hint(150, Bloom::Off) && sgb::flatRowHint(true, true, Bloom::Off) == sgb::kFlatRowHint &&
+                  std::strlen(sgb::kFlatRowHint) <= 78,
+              "T7c: the VR hint is the full sentence; the flat hint is its one-line form, which fits the hint line (78 characters)");
     }
     // d. the reader, on fixture folders
     {

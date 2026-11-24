@@ -196,7 +196,7 @@ int wmain(int argc, wchar_t** argv) {
         dbg.tabCount = 1;
         std::snprintf(dbg.tabs[0], sizeof(dbg.tabs[0]), "Debug");
         dbg.lineCount = 1;
-        std::snprintf(dbg.lines[0].left, sizeof(dbg.lines[0].left), "For bug reports. Both are off unless you turn them on.");
+        std::snprintf(dbg.lines[0].left, sizeof(dbg.lines[0].left), "For bug reports. Leave both off unless asked for them.");
         dbg.lines[0].style = edvr::kMenuHeading;
         std::strcpy(dbg.footer, "keys");
         int hx0 = 0, hy0 = 0, hx1 = 0, hy1 = 0;
