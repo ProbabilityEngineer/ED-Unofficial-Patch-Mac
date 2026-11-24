@@ -161,7 +161,7 @@ int wmain(int argc, wchar_t** argv) {
         const int hintH = page.capPx * 34 / 10;
         check(hintH > 0, "the hint box has a height at this cap");
         const char* hints[] = {
-            "Choose DLSS to change its model preset.",
+            "Bloom is off in Elite's graphics options: Star glow needs it.",
             "No runtime width on record yet; the panel stays at the game's own 1920x1080 until a session with VR running has completed once.",
             "Turn anti-aliasing on to sharpen.",
             "Currently resolves to 3840x2160.",

@@ -3108,10 +3108,12 @@ void buildContent(MenuContent& c) {
                 snprintf(c.hint, sizeof(c.hint), "%s", stationWindowDistanceHint());
             else if (hi && dim && hdrWhiteRow)
                 snprintf(c.hint, sizeof(c.hint), "%s", hdrWhiteHint());
-            else if (hi && dim && runtimeFlatProfile())
-                snprintf(c.hint, sizeof(c.hint), "%s",
-                         sharpenRow ? "Turn anti-aliasing on to sharpen."
-                                    : "Choose DLSS to change its model preset.");
+            else if (hi && dim && sharpenRow && runtimeFlatProfile())
+                snprintf(c.hint, sizeof(c.hint), "%s", "Turn anti-aliasing on to sharpen.");
+            // Star glow, greyed out while Elite's Bloom is off (the Visual tab's note says it in full). It used to fall through to the DLSS preset's
+            // hint above, a row this port does not have.
+            else if (hi && dim && isStarGlowRow(d) && runtimeFlatProfile())
+                snprintf(c.hint, sizeof(c.hint), "%s", "Bloom is off in Elite's graphics options: Star glow needs it.");
             // The Star glow row, highlighted, in the VR menu: Elite's Bloom is off, so the setting changes nothing. The row keeps its style (no dim). The flat panel
             // says it as a note under the Visual tab's rows instead.
             if (const char* bloomHint = sgb::rowHint(runtimeFlatProfile(), hi && isStarGlowRow(d), s.starGlowBloom.percent(), s.starGlowBloom.state()))
