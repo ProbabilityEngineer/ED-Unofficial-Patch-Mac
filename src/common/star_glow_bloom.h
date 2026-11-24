@@ -10,9 +10,10 @@
 //
 //   state    on, off or unknown (no folder, no file, an unreadable file, a user-made preset, a tag that is not there or holds no number)
 //   hint     the setting is above 100 AND Bloom is known to be off. Unknown and on say nothing: a hint that may be wrong is worse than none.
-//   where    flat F8 panel: a note under the Visual tab's rows. VR menu: the hint line while the Star glow row is highlighted. Never both.
+//   where    flat F8 panel: the hint line while the greyed-out Star glow row is highlighted (flatRowHint; the Visual tab's standing note
+//            was removed 2026-11-24, it said the same thing twice). VR menu: the hint line while the Star glow row is highlighted. Never both.
 //   dim      flat F8 panel (2026-11-21): with Bloom known to be off the Star glow row is greyed out at any setting (a dimmed row stops
-//            responding: the setting does nothing then), and the Visual tab's note says why at any setting too (dimRow, tabNote).
+//            responding: the setting does nothing then), and its hint line says why at any setting too (dimRow, flatRowHint).
 #pragma once
 
 #include <cstdio>
@@ -59,13 +60,13 @@ inline const char* hint(int percent, Bloom state) {
 }
 // The flat F8 panel's Star glow row is greyed out while Bloom is known to be off, whatever the setting. Not in VR.
 inline bool dimRow(bool flatProfile, Bloom state) { return flatProfile && state == Bloom::Off; }
-// The flat F8 panel's note, under the Visual tab's rows and on no other tab: whenever the row is greyed out, so the grey has its reason.
+// The flat F8 panel's hint line, while the Star glow row is highlighted and greyed out, so the grey has its reason. One line (the hint box's).
 // Not in VR.
-inline const char* tabNote(bool flatProfile, bool visualTab, int percent, Bloom state) {
-    (void)percent;
-    return flatProfile && visualTab && dimRow(flatProfile, state) ? kHint : nullptr;
+inline constexpr char kFlatRowHint[] = "Bloom is off in Elite's graphics options: Star glow needs it.";
+inline const char* flatRowHint(bool flatProfile, bool starGlowRowHighlighted, Bloom state) {
+    return flatProfile && starGlowRowHighlighted && dimRow(flatProfile, state) ? kFlatRowHint : nullptr;
 }
-// VR's hint line, while the Star glow row is the highlighted one. Not in the flat panel, whose note already says it.
+// VR's hint line, while the Star glow row is the highlighted one. Not in the flat panel, which has its own (flatRowHint).
 inline const char* rowHint(bool flatProfile, bool starGlowRowHighlighted, int percent, Bloom state) {
     return !flatProfile && starGlowRowHighlighted ? hint(percent, state) : nullptr;
 }

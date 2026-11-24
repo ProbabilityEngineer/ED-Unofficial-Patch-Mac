@@ -516,10 +516,10 @@ bool sharpenRowDisabled() {
 }
 
 // fix.hud_antialiasing (the HUD Anti-Aliasing row, 2026-10-24 on the flat panel; on VR's Performance page too since 2026-11-03). It smooths the UI layer, which is
-// live only while the profile's own anti-aliasing is on (flat_ui_layer.cpp for flat, ui_layer.cpp's uiLayerConfigure for VR), so with it off the row stays on the
-// page, dimmed, and stops responding. UI quality does not gate it (2026-11-23): off, the layer still carries the supercruise bars, dust, orbit lines, map icons and
-// weapons fire at the display's size. The anti-aliasing is read as the running profile reads it (flat: the flat mode, requestedTemporalMode; VR: fix.temporal_aa),
-// live, every time the page is drawn or a row is touched. UI quality is read for the row's own display (hudAntiAliasingUiQualityOn).
+// live only while fix.ui_quality is not off AND the profile's own anti-aliasing is on (flat_ui_layer.cpp for flat, ui_layer.cpp's uiLayerConfigure for VR), so with
+// either off the row stays on the page, dimmed, and stops responding. UI quality is read as the layer reads it (uiQualityParse, the shipped 100 for a missing line)
+// and the anti-aliasing as the running profile reads it (flat: the flat mode, requestedTemporalMode; VR: fix.temporal_aa), live, every time the page is drawn or a
+// row is touched. The hint and the refused step name the cause that applies: UI quality first when it is off, else the anti-aliasing.
 bool isHudAntiAliasingRow(const MenuRowDef& d) {
     return strcmp(d.section, "fix") == 0 && strcmp(d.key, "hud_antialiasing") == 0;
 }
@@ -540,7 +540,7 @@ bool hudAntiAliasingRowDisabled() {
 }
 
 const char* hudAntiAliasingHint() {
-    return "Needs anti-aliasing: turn it on to use this.";
+    return hudAntiAliasingUiQualityOn() ? "Needs anti-aliasing: turn it on to use this." : "Needs UI quality: turn it on to use this.";
 }
 
 // The row is live at SS 1.0 and above, but there the cockpit panels (side panels, flight HUD, target, radar) are tonemapped with the scene
@@ -550,7 +550,8 @@ const char* hudAntiAliasingMergedHint() {
 }
 
 const char* hudAntiAliasingRefusal() {
-    return "HUD Anti-Aliasing is inactive: turn anti-aliasing on first.";
+    return hudAntiAliasingUiQualityOn() ? "HUD Anti-Aliasing is inactive: turn anti-aliasing on first."
+                                        : "HUD Anti-Aliasing is inactive: turn UI quality on above first.";
 }
 
 // fix.xess_frame_generation and fix.xess_generated_frames (the XeSS Frame Generation and XeSS-FG frames rows, flat Performance tab only, 2026-11-12). Both are
@@ -649,7 +650,7 @@ bool rowWaiting(int def) { return g_rows[def].pending || rowConditionalState(def
 
 
 // visual.star_glow (the Star glow row). It strengthens the halo of Elite's own bloom, so with Elite's Bloom option off it changes nothing, and the
-// menus say so (star_glow_bloom.h: the flat panel's Visual tab as a note under the rows, the VR menu as the hint line while this row is highlighted).
+// menus say so (star_glow_bloom.h: the hint line while this row is highlighted, in the flat panel while it is greyed out, in VR under the setting's condition).
 // The row is never dimmed for it: a dimmed row stops responding, and the setting is still the player's to make. Matched by key, so the hint follows
 // the row wherever it is drawn (`menu visual` since 2026-10-27: the flat Visual tab and VR's Visual page both draw it).
 static_assert(sgb::kStockPercent == kStarGlowStock, "the hint's threshold is the setting's stock value");
@@ -691,12 +692,13 @@ const char* roomsBehindDoorsRefusal() { return "Skip closed rooms is inactive: t
 const char* stationWindowDistanceRefusal() { return "Window 3D distance is inactive: turn Optimized stations on above first."; }
 
 // advanced.hdr_scene_nits and advanced.hdr_ui_nits (the HDR scene white and HDR UI white rows, directly under HDR output on the flat panel's Visual tab,
-// 2026-11-20). They set HDR output's brightness, so they act only while HDR is RUNNING, and are dimmed and refused otherwise, the way the Legacy glass rows
+// 2026-11-20), and advanced.hdr_peak_nits (the HDR peak row under them, 2026-11-24). They set HDR output's brightness, so they act only while HDR is RUNNING, and are dimmed and refused otherwise, the way the Legacy glass rows
 // are. Judged by the running state (hdrOutputOn: fix.hdr was on at launch, and HDR did not stand down), not by the setting: fix.hdr takes a restart, so
 // switching it on in the menu leaves these dimmed until the next game start, and HDR that was set on but stood down (an SDR display, shaders that would not
 // build) leaves them dimmed too. The hint says which of the three it is.
 bool isHdrWhiteRow(const MenuRowDef& d) {
-    return strcmp(d.section, "advanced") == 0 && (strcmp(d.key, "hdr_scene_nits") == 0 || strcmp(d.key, "hdr_ui_nits") == 0);
+    return strcmp(d.section, "advanced") == 0 &&
+           (strcmp(d.key, "hdr_scene_nits") == 0 || strcmp(d.key, "hdr_ui_nits") == 0 || strcmp(d.key, "hdr_peak_nits") == 0);
 }
 
 bool hdrWhiteRowDisabled() { return !hdrOutputOn(); }
@@ -716,9 +718,9 @@ const char* hdrWhiteHint() {
 }
 
 const char* hdrWhiteRefusal() {
-    if (!hdrRowOn(false)) return "HDR white is inactive: turn HDR output on above first.";
-    if (!hdrRowOn(true)) return "HDR white is inactive until the game restarts with HDR on.";
-    return "HDR white is inactive: HDR output could not start (see the log).";
+    if (!hdrRowOn(false)) return "HDR brightness is inactive: turn HDR output on above first.";
+    if (!hdrRowOn(true)) return "HDR brightness is inactive until the game restarts with HDR on.";
+    return "HDR brightness is inactive: HDR output could not start (see the log).";
 }
 
 // The on-foot panel's width: "auto", or a width in pixels -- never a list, so
@@ -2014,7 +2016,7 @@ void addFlatVisualRows(Page& p) {
 void addFlatDebugRows(Page& p) {
     Entry h;
     h.kind = EntryKind::Heading;
-    h.text = "For bug reports. Both are off unless you turn them on.";
+    h.text = "For bug reports. Leave off unless asked.";
     p.entries.push_back(h);
     for (int i = 0; i < kRowDefCount; ++i) {
         const MenuRowDef& d = kMenuRows[i];
@@ -3108,12 +3110,14 @@ void buildContent(MenuContent& c) {
                 snprintf(c.hint, sizeof(c.hint), "%s", stationWindowDistanceHint());
             else if (hi && dim && hdrWhiteRow)
                 snprintf(c.hint, sizeof(c.hint), "%s", hdrWhiteHint());
-            else if (hi && dim && runtimeFlatProfile())
-                snprintf(c.hint, sizeof(c.hint), "%s",
-                         sharpenRow ? "Turn anti-aliasing on to sharpen."
-                                    : "Choose DLSS to change its model preset.");
+            else if (hi && dim && sharpenRow && runtimeFlatProfile())
+                snprintf(c.hint, sizeof(c.hint), "%s", "Turn anti-aliasing on to sharpen.");
+            // Star glow, greyed out in the flat panel while Elite's Bloom is off. It used to fall through to the DLSS preset's hint above, a row this
+            // port does not have.
+            else if (const char* flatBloomHint = sgb::flatRowHint(runtimeFlatProfile(), hi && isStarGlowRow(d), s.starGlowBloom.state()))
+                snprintf(c.hint, sizeof(c.hint), "%s", flatBloomHint);
             // The Star glow row, highlighted, in the VR menu: Elite's Bloom is off, so the setting changes nothing. The row keeps its style (no dim). The flat panel
-            // says it as a note under the Visual tab's rows instead.
+            // has its own hint (above).
             if (const char* bloomHint = sgb::rowHint(runtimeFlatProfile(), hi && isStarGlowRow(d), s.starGlowBloom.percent(), s.starGlowBloom.state()))
                 snprintf(c.hint, sizeof(c.hint), "%s", bloomHint);
             if (hi && openxrScaleRow) {
@@ -3249,20 +3253,6 @@ void buildContent(MenuContent& c) {
                             "The status page says why.";
                 body += std::string("\n\n") + (d.detail[0] ? d.detail : d.hint);
                 strncpy(c.popup, body.c_str(), sizeof(c.popup) - 1);
-            }
-        }
-        // The Star glow's Bloom note (flat only, on the Visual tab only, and only with the setting above 100 and Elite's Bloom known to be off): a blank
-        // line, then the words wrapped to the note face's width. The row stays live.
-        if (const char* bloomNote = sgb::tabNote(runtimeFlatProfile(), strcmp(p.name, kFlatTabNames[1]) == 0, s.starGlowBloom.percent(),
-                                                 s.starGlowBloom.state())) {
-            FlatWarnRuler ruler{c.capPx * 8 / 7};   // the note face's em (menu_panel.cpp, Font::Hint)
-            FlatSettingsWarning note;
-            flatWrapWarning(bloomNote, c.cardPx - 2 * (c.capPx * 8 / 10), &flatWarnMeasure, &ruler, &note);
-            if (c.lineCount < kMenuMaxLines) c.lines[c.lineCount++].style = kMenuNote;
-            for (int i = 0; i < note.count && c.lineCount < kMenuMaxLines; ++i) {
-                MenuLine& l = c.lines[c.lineCount++];
-                strncpy(l.left, note.line[i], sizeof(l.left) - 1);
-                l.style = kMenuNote;
             }
         }
         // The settings warning (flat only, and only while frames are refused for the shape of the post chain): its words are on the Status tab

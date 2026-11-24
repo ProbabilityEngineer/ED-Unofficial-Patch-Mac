@@ -499,6 +499,13 @@ bool sceneNitsAuto(const Config& cfg) {
     return v.empty() || _stricmp(v.c_str(), "auto") == 0;
 }
 
+// advanced.hdr_peak_nits: a value in nits, or auto (the F8 row's word, 2026-11-24), unset or 0, which all ask the display. 0 means ask; auto is
+// read as 0 here so getFloat never sees the word (it would log it as "not a number").
+float configuredPeakNits(const Config& cfg) {
+    if (_stricmp(cfg.getString("advanced.hdr_peak_nits", "").c_str(), "auto") == 0) return 0.0f;
+    return cfg.getFloat("advanced.hdr_peak_nits", 0.0f);
+}
+
 // The live settings (2026-11-16): advanced.hdr_scene_nits, hdr_ui_nits, hdr_peak_nits, hdr_highlights and hdr_grading are read
 // again whenever the config changes (the ini is re-read when its file changes), so an A/B comparison needs no restart. fix.hdr,
 // hdr_encode, hdr_gamma and hdr_widen still take a restart (the swapchain, the transform's domain and the textures are settled early).
@@ -511,7 +518,7 @@ void refreshSettings(ID3D11DeviceContext* context) {
     const bool autoUi = _stricmp(cfg.getString("advanced.hdr_ui_nits", "").c_str(), "auto") == 0;
     const float scene = autoScene ? 0.0f : cfg.getFloat("advanced.hdr_scene_nits", 0.0f);
     const float ui = autoUi ? 0.0f : cfg.getFloat("advanced.hdr_ui_nits", 0.0f);
-    const float peak = cfg.getFloat("advanced.hdr_peak_nits", 0.0f);
+    const float peak = configuredPeakNits(cfg);
     const bool hue = _stricmp(cfg.getString("advanced.hdr_highlights", "hue").c_str(), "channel") != 0;
     const bool grading = _stricmp(cfg.getString("advanced.hdr_grading", "game").c_str(), "off") != 0;
     if (autoScene == g.autoScene && autoUi == g.autoUi && scene == g.cfgScene && ui == g.cfgUi && peak == g.cfgPeak &&
@@ -996,7 +1003,7 @@ void hdrOutputStartup() {
     g.autoUi = _stricmp(cfg.getString("advanced.hdr_ui_nits", "").c_str(), "auto") == 0;
     g.cfgScene = g.autoScene ? 0.0f : cfg.getFloat("advanced.hdr_scene_nits", 0.0f);
     g.cfgUi = g.autoUi ? 0.0f : cfg.getFloat("advanced.hdr_ui_nits", 0.0f);
-    g.cfgPeak = cfg.getFloat("advanced.hdr_peak_nits", 0.0f);
+    g.cfgPeak = configuredPeakNits(cfg);
     const std::string gamma = cfg.getString("advanced.hdr_gamma", "srgb");
     g.srgbDecode = _stricmp(gamma.c_str(), "2.2") != 0;
     const std::string widen = cfg.getString("advanced.hdr_widen", "auto");
@@ -1245,6 +1252,7 @@ void hdrOutputAttach(ID3D11Device* device) {
     const D3D_SHADER_MACRO copyMacros[] = {{"EDVR_LIVE_NITS", "1"},
                                            {"DIFFUSE_WHITE_NITS", n.scene},
                                            {"GRAPHICS_WHITE_NITS", n.ui},
+                                           {"OUTDECODE_SRGB", g.srgbDecode ? "1" : "0"},
                                            {nullptr, nullptr}};
     ID3DBlob* tone = compileHlsl(kHdrToneReplacementPs, "tone_hdr_ps", "ps_5_0", "m", bloom);
     ID3DBlob* toneNoBloom = compileHlsl(kHdrToneReplacementPs, "tone_hdr_no_bloom_ps",

@@ -196,7 +196,7 @@ MENU_ROW_SECTIONS = ('fix', 'visual', 'menu')
 # developer tier loses nothing by their having no row of their own there. Their page is `debug`, which only the flat panel builds.
 # The HDR whites (2026-11-18, ed-metalfx): auto or a value in nits, rows of the flat Visual tab, live.
 MENU_ADVANCED_EXCEPTIONS = ('advanced.flat_cpu_timing', 'advanced.flat_refusal_view',
-                            'advanced.hdr_scene_nits', 'advanced.hdr_ui_nits')
+                            'advanced.hdr_scene_nits', 'advanced.hdr_ui_nits', 'advanced.hdr_peak_nits')
 # Settings that were taken off every menu on purpose, and must stay off.
 #
 # The three field-of-view trims were [fix] rows on the Performance page until

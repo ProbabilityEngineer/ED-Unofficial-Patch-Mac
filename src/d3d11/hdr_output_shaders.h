@@ -434,7 +434,8 @@ inline constexpr char kHdrCopyScalePs[] = R"HLSL(
 // ends disagree by 261/500 and every scene pixel arrives ~2x too bright in
 // display-referred terms (~4x after the decode). This scale is the unit
 // conversion between them. It MUST happen in linear light - DecodeSafe, scale,
-// EncodeSafe - exactly as RenoDX orders it. Scaling the gamma-encoded value
+// EncodeSafe - exactly as RenoDX orders it, with the curve the output decodes
+// with (OUTDECODE_SRGB below). Scaling the gamma-encoded value
 // directly would be a different (wrong) operation.
 //
 // Alpha passes through untouched, exactly as RenoDX's copy does.
@@ -460,14 +461,39 @@ cbuffer edvrHdrNits : register(b13) { float4 edvrNits; };
 #define GRAPHICS_WHITE_NITS  500.0
 #endif
 #define DISPLAY_GAMMA        2.2
+// The curve the output transform decodes with (outdecode_ps.hlsl decodeDisplay, advanced.hdr_gamma). The scale must decode and
+// encode with that same curve, or scene/UI stops being a pure gain: RenoDX uses 2.2 at both ends, and this port's default output
+// decode is sRGB. With 2.2 here against an sRGB output (2026-11-24), the UI white leaked into the scene: at scene 203 the shadows
+// came out 37% too bright with UI white 500, 87% with 1000, and exact only where the two whites were equal.
+#ifndef OUTDECODE_SRGB
+#define OUTDECODE_SRGB 1
+#endif
+
+float3 decodeOut(float3 e) {
+#if OUTDECODE_SRGB
+    float3 srgb = (e <= 0.04045) ? e / 12.92 : pow((e + 0.055) / 1.055, 2.4);
+    return (e <= 1.0) ? srgb : pow(e, DISPLAY_GAMMA);
+#else
+    return pow(e, DISPLAY_GAMMA);
+#endif
+}
+
+float3 encodeOut(float3 l) {
+#if OUTDECODE_SRGB
+    float3 srgb = (l <= 0.0031308) ? l * 12.92 : 1.055 * pow(l, 1.0 / 2.4) - 0.055;
+    return (l <= 1.0) ? srgb : pow(l, 1.0 / DISPLAY_GAMMA);
+#else
+    return pow(l, 1.0 / DISPLAY_GAMMA);
+#endif
+}
 
 float4 m(float2 v0 : TEXCOORD0) : SV_Target {
     float4 c = t0.Sample(s0_s, v0.xy);
 
-    // RenoDX GameScaleAndGrain, grain omitted (installed strength 0):
-    float3 lin = pow(max(c.rgb, 0.0), DISPLAY_GAMMA);   // DecodeSafe
+    // RenoDX GameScaleAndGrain, grain omitted (installed strength 0), on the output's curve:
+    float3 lin = decodeOut(max(c.rgb, 0.0));            // DecodeSafe
     lin *= DIFFUSE_WHITE_NITS / GRAPHICS_WHITE_NITS;    // scene units -> UI units
-    float3 enc = pow(max(lin, 0.0), 1.0 / DISPLAY_GAMMA); // EncodeSafe
+    float3 enc = encodeOut(max(lin, 0.0));              // EncodeSafe
 
     return float4(enc, c.a);
 }

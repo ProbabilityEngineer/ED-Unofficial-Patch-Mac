@@ -161,7 +161,7 @@ int wmain(int argc, wchar_t** argv) {
         const int hintH = page.capPx * 34 / 10;
         check(hintH > 0, "the hint box has a height at this cap");
         const char* hints[] = {
-            "Choose DLSS to change its model preset.",
+            "Bloom is off in Elite's graphics options: Star glow needs it.",
             "No runtime width on record yet; the panel stays at the game's own 1920x1080 until a session with VR running has completed once.",
             "Turn anti-aliasing on to sharpen.",
             "Currently resolves to 3840x2160.",
@@ -196,7 +196,7 @@ int wmain(int argc, wchar_t** argv) {
         dbg.tabCount = 1;
         std::snprintf(dbg.tabs[0], sizeof(dbg.tabs[0]), "Debug");
         dbg.lineCount = 1;
-        std::snprintf(dbg.lines[0].left, sizeof(dbg.lines[0].left), "For bug reports. Both are off unless you turn them on.");
+        std::snprintf(dbg.lines[0].left, sizeof(dbg.lines[0].left), "For bug reports. Leave off unless asked.");
         dbg.lines[0].style = edvr::kMenuHeading;
         std::strcpy(dbg.footer, "keys");
         int hx0 = 0, hy0 = 0, hx1 = 0, hy1 = 0;
