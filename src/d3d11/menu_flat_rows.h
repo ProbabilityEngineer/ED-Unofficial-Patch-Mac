@@ -80,6 +80,8 @@ inline constexpr FlatPageRow kFlatVisualRows[] = {
     // Dimmed unless HDR is running (menu.cpp hdrWhiteRowDisabled), so also until the restart after HDR output is switched on.
     {"advanced", "hdr_scene_nits", FlatRowRead::Allowlist},
     {"advanced", "hdr_ui_nits", FlatRowRead::Allowlist},
+    // HDR peak (2026-11-24): advanced.hdr_peak_nits, auto (the display's answer) or a display's peak in nits; live, dimmed like the whites.
+    {"advanced", "hdr_peak_nits", FlatRowRead::Allowlist},
 };
 inline constexpr size_t kFlatVisualRowCount = sizeof(kFlatVisualRows) / sizeof(kFlatVisualRows[0]);
 

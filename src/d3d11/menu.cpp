@@ -692,12 +692,13 @@ const char* roomsBehindDoorsRefusal() { return "Skip closed rooms is inactive: t
 const char* stationWindowDistanceRefusal() { return "Window 3D distance is inactive: turn Optimized stations on above first."; }
 
 // advanced.hdr_scene_nits and advanced.hdr_ui_nits (the HDR scene white and HDR UI white rows, directly under HDR output on the flat panel's Visual tab,
-// 2026-11-20). They set HDR output's brightness, so they act only while HDR is RUNNING, and are dimmed and refused otherwise, the way the Legacy glass rows
+// 2026-11-20), and advanced.hdr_peak_nits (the HDR peak row under them, 2026-11-24). They set HDR output's brightness, so they act only while HDR is RUNNING, and are dimmed and refused otherwise, the way the Legacy glass rows
 // are. Judged by the running state (hdrOutputOn: fix.hdr was on at launch, and HDR did not stand down), not by the setting: fix.hdr takes a restart, so
 // switching it on in the menu leaves these dimmed until the next game start, and HDR that was set on but stood down (an SDR display, shaders that would not
 // build) leaves them dimmed too. The hint says which of the three it is.
 bool isHdrWhiteRow(const MenuRowDef& d) {
-    return strcmp(d.section, "advanced") == 0 && (strcmp(d.key, "hdr_scene_nits") == 0 || strcmp(d.key, "hdr_ui_nits") == 0);
+    return strcmp(d.section, "advanced") == 0 &&
+           (strcmp(d.key, "hdr_scene_nits") == 0 || strcmp(d.key, "hdr_ui_nits") == 0 || strcmp(d.key, "hdr_peak_nits") == 0);
 }
 
 bool hdrWhiteRowDisabled() { return !hdrOutputOn(); }
@@ -717,9 +718,9 @@ const char* hdrWhiteHint() {
 }
 
 const char* hdrWhiteRefusal() {
-    if (!hdrRowOn(false)) return "HDR white is inactive: turn HDR output on above first.";
-    if (!hdrRowOn(true)) return "HDR white is inactive until the game restarts with HDR on.";
-    return "HDR white is inactive: HDR output could not start (see the log).";
+    if (!hdrRowOn(false)) return "HDR brightness is inactive: turn HDR output on above first.";
+    if (!hdrRowOn(true)) return "HDR brightness is inactive until the game restarts with HDR on.";
+    return "HDR brightness is inactive: HDR output could not start (see the log).";
 }
 
 // The on-foot panel's width: "auto", or a width in pixels -- never a list, so

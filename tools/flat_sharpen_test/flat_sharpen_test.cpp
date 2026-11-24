@@ -493,7 +493,7 @@ void panelTable(const std::string& root, const std::string& gen) {
         check(same, "the Performance tab has the flat page's nine rows in their order (HUD Anti-Aliasing directly under UI quality, "
                     "Window 3D distance directly under Optimized stations, Skip closed rooms under that, then the two frame-rate readout rows)");
     }
-    check(kFlatVisualRowCount == 10 && std::strcmp(kFlatVisualRows[0].section, "visual") == 0 && std::strcmp(kFlatVisualRows[0].key, "intro_video") == 0 &&
+    check(kFlatVisualRowCount == 11 && std::strcmp(kFlatVisualRows[0].section, "visual") == 0 && std::strcmp(kFlatVisualRows[0].key, "intro_video") == 0 &&
               std::strcmp(kFlatVisualRows[1].section, "visual") == 0 && std::strcmp(kFlatVisualRows[1].key, "star_glow") == 0 &&
               std::strcmp(kFlatVisualRows[2].section, "visual") == 0 && std::strcmp(kFlatVisualRows[2].key, "star_light_colour") == 0 &&
               std::strcmp(kFlatVisualRows[3].section, "visual") == 0 && std::strcmp(kFlatVisualRows[3].key, "cockpit_glass") == 0 &&
@@ -503,11 +503,12 @@ void panelTable(const std::string& root, const std::string& gen) {
               std::strcmp(kFlatVisualRows[7].section, "fix") == 0 && std::strcmp(kFlatVisualRows[7].key, "hdr") == 0 &&
               std::strcmp(kFlatVisualRows[8].section, "advanced") == 0 && std::strcmp(kFlatVisualRows[8].key, "hdr_scene_nits") == 0 &&
               std::strcmp(kFlatVisualRows[9].section, "advanced") == 0 && std::strcmp(kFlatVisualRows[9].key, "hdr_ui_nits") == 0 &&
-              flatProfileReadsKey("advanced.hdr_scene_nits") && flatProfileReadsKey("advanced.hdr_ui_nits") &&
+              std::strcmp(kFlatVisualRows[10].section, "advanced") == 0 && std::strcmp(kFlatVisualRows[10].key, "hdr_peak_nits") == 0 &&
+              flatProfileReadsKey("advanced.hdr_scene_nits") && flatProfileReadsKey("advanced.hdr_ui_nits") && flatProfileReadsKey("advanced.hdr_peak_nits") &&
               flatVisualHasRow("visual", "star_glow") && flatVisualHasRow("visual", "cockpit_glass") && flatVisualHasRow("visual", "cockpit_glass_dirt") &&
               !flatVisualHasRow("fix", "particle_billboard") && !flatVisualHasRow("fix", "temporal_aa") && !flatProfileReadsKey("fix.particle_billboard") &&
               flatProfileReadsKey("visual.cockpit_glass_dirt") && flatVisualHasRow("visual", "cockpit_glass_lights") && flatProfileReadsKey("visual.cockpit_glass_lights"),
-          "the Visual tab has the Intro movie, the Star glow, the Cockpit glass, its Legacy glass dirt and lights, and no Billboards row since 2026-11-19 (the tab follows the table's order since 2026-11-18, so the HDR whites sit under HDR output), and the flat gate reads the dirt and lights keys");
+          "the Visual tab has the Intro movie, the Star glow, the Cockpit glass, its Legacy glass dirt and lights, and no Billboards row since 2026-11-19 (the tab follows the table's order since 2026-11-18, so the HDR whites and the HDR peak sit under HDR output), and the flat gate reads the dirt and lights keys");
     check(!flatPageHasRow("fix", "particle_billboard") && !flatDebugHasRow("fix", "particle_billboard"), "the Billboards row is gone from every tab (always steady)");
     check(!flatPageHasRow("visual", "star_glow") && !flatDebugHasRow("visual", "star_glow") && !flatVisualHasRow("advanced", "flat_cpu_timing"),
           "no key is on two tabs");
